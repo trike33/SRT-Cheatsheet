@@ -18,7 +18,7 @@ CVE check -> nuclei
 
 *Unauthenticated testing*
 
-XSS -> find a tool capable of mass scanning
+XSS -> Dalfox, a bit slow but effective
 
 SQLI -> find a tool capable of mass scanning
 
