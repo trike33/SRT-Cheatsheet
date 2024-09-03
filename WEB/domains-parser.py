@@ -37,7 +37,7 @@ def format_output(include_set, exclude_set):
     return f"{green_output}\n{red_output}"
 
 # Example usage
-if len(sys.argv[0]) != 2:
+if len(sys.argv) != 2:
 	print(f"usage: python3 {sys.argv[0]} <scope_jsonfile>")
 	sys.exit(1)
 
