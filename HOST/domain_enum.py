@@ -64,4 +64,3 @@ resolved_subdomains = resolve_subdomains(subdomains)
 for subdomain, ip in resolved_subdomains.items():
     if ip in scope_ips:
         print(subdomain)
-print("(+) Done")
