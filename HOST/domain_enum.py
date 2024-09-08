@@ -40,7 +40,7 @@ for entry in scope_entries:
 
 # Remove duplicates by converting list to a set and back to a list
 scope_ips = list(set(scope_ips))
-print("(+) scope read successfully")
+#print("(+) scope read successfully") only for debugging purposes
 
 # Function to resolve subdomains
 def resolve_subdomains(subdomains):
@@ -63,5 +63,5 @@ resolved_subdomains = resolve_subdomains(subdomains)
 # Check if any resolved IP matches an IP in scope
 for subdomain, ip in resolved_subdomains.items():
     if ip in scope_ips:
-        print(f"(+) {subdomain}({ip})")
+        print(subdomain)
 print("(+) Done")
