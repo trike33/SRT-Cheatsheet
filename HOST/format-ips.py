@@ -2,7 +2,7 @@ import sys
 
 def format_ips(file_path):
     # List of ports to append to each IP address
-    ports = [80, 443, 8080, 8443]
+    ports = [8080, 8443]
 
     try:
         with open(file_path, 'r') as file:
