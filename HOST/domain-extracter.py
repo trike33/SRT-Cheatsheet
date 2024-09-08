@@ -24,6 +24,6 @@ def extract_domains(file_path):
 # Ensure script is run from the command line with a file argument
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python script.py <file_path>")
+        print(f"Usage: python3 {sys.argv[0]} <httpx_out>")
     else:
         extract_domains(sys.argv[1])
