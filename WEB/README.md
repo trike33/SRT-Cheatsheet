@@ -8,4 +8,6 @@ python3 domain-parser.py target_assets.json >> scope
 for line in $(cat scope);do grep $line katana_out;done >> crawl_scope
 
 httpx -l crawl_scope -sc -cl -fr -o crawl_results
+
+nuclei -t /home/AMBERJACK/vfea0rousv/nuclei-templates/http/exposures/ -l crawl_results -no-mhe -ni
 ```
