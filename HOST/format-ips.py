@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 
 def format_ips(file_path):
