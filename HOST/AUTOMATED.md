@@ -31,5 +31,5 @@ python3 format-ips.py scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_
 #Enumerating HTTP and HTTPS on additional ports
 httpx -title -tech-detect -sc -cl -fr -o httpx_out_extraports -l naabu_out
 
-ffuf -w scope:URL -w /opt/dirbuster/directory-list-2.3-medium.txt:FUZZ -mc 200 -c -s -v -u URL/FUZZ
+ffuf -w scope:URL -w /opt/dirbuster/directory-list-2.3-medium.txt:FUZZ -mc 200 -c -s -v -u URL/FUZZ -u ffuf_full
 ```
