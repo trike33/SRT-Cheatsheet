@@ -13,5 +13,5 @@ grep 200 crawl_results | grep js >> valid_js
 
 nuclei -t /home/AMBERJACK/vfea0rousv/nuclei-templates/http/exposures/ -l valid_js -no-mhe -ni
 
-ffuf -w scope:URL -w /opt/dirbuster/directory-list-2.3-medium.txt:FUZZ -mc 200 -c -s -v -u URL/FUZZ
+ffuf -w scope:URL -w /opt/dirbuster/directory-list-2.3-medium.txt:FUZZ -mc 200 -c -s -v -u URL/FUZZ -u fuff_full
 ```
