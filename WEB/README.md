@@ -14,4 +14,6 @@ grep 200 crawl_results | grep js >> valid_js
 nuclei -t /home/AMBERJACK/vfea0rousv/nuclei-templates/http/exposures/ -l valid_js -no-mhe -ni
 
 ffuf -w scope:URL -w /opt/dirbuster/directory-list-2.3-medium.txt:FUZZ -mc 200 -c -s -v -u URL/FUZZ -u fuff_full
+
+ffuf -u https://example.com/FUZZ -w /opt/dirbuster/directory-list-2.3-medium.txt -recursion -recursion-depth 5 -H 'Cookie: MoodleSession=value' -c -mc 200 -x http://127.0.0.1:8080
 ```
