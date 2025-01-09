@@ -32,5 +32,5 @@ python3 format-ips.py scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_
 httpx -title -tech-detect -sc -cl -fr -o httpx_out_extraports -l naabu_out
 
 #FUZZ recursivvely
-ffuf -recursion -u <url>/FUZZ -w /usr/share/SecLists-master/Discovery/Web-Content/raft-medium-directories.txt -c
+ffuf -recursion -u <url>/FUZZ -w /usr/share/SecLists-master/Discovery/Web-Content/raft-medium-directories.txt -c -recursion-strategy greedy
 ```
