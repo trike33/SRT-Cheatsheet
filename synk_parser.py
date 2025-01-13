@@ -10,92 +10,149 @@ from tabulate import tabulate
 """
 
 def normalize_version(version):
-    """
-    Normalize shorthand version inputs to full XX.XX.XX format.
-    Examples:
-        '3' -> '3.0.0'
-        '3.7' -> '3.7.0'
-        '3.7.2' -> '3.7.2' (unchanged)
-    """
-    parts = version.split(".")
-    while len(parts) < 3:
-        parts.append("0")
-    return ".".join(parts[:3])
+	"""
+	Normalize shorthand version inputs to full XX.XX.XX format.
+	Examples:
+		'3' -> '3.0.0'
+		'3.7' -> '3.7.0'
+		'3.7.2' -> '3.7.2'
+	"""
+	parts = version.split(".")
+	while len(parts) < 3:
+		parts.append("0")
+	return ".".join(parts[:3])
 
-def parse_constraints(constraints_string):
-    """
-    Parse a string of constraints into a list of individual constraints.
-    Example input: '<3.1.12>=3.2.0, <3.2.9>=3.3.0, <3.3.6>=3.4.0, <3.4.3'
-    Output: ['<3.1.12', '>=3.2.0', '<3.2.9', '>=3.3.0', '<3.3.6', '>=3.4.0', '<3.4.3']
-    """
-    # Split the string by commas and spaces, keeping relational operators intact
-    return re.findall(r"[<>]=?\d+\.\d+\.\d+", constraints_string)
+def check_for_recursion(constraint):
+	"""
+	Checks if a constraint needs recurion and returns the number of rounds needed to parse it
+	"""
+	lower_than_count = constraint.count("<")
+	greater_than_count = constraint.count(">")
 
-def is_valid_version(version):
-    """
-    Validate the version format XX.XX.XX.
-    """
-    pattern = r"^\d{1,2}\.\d{1,2}\.\d{1,2}$"
-    return bool(re.match(pattern, version))
+	return lower_than_count+greater_than_count
 
-def compare_versions(version1, version2):
-    """
-    Compare two valid versions.
-    Returns:
-        -1 if version1 < version2
-         0 if version1 == version2
-         1 if version1 > version2
-    """
-    v1_parts = list(map(int, version1.split(".")))
-    v2_parts = list(map(int, version2.split(".")))
+def find_first_matched(target_chars, string):
+	"""
+	Find the first character or substring from target_chars that appears in the string.
 
-    for v1, v2 in zip(v1_parts, v2_parts):
-        if v1 < v2:
-            return -1
-        elif v1 > v2:
-            return 1
-    return 0
+	Args:
+		target_chars (list): A list of characters or substrings to search for.
+		string (str): The string to search in.
 
-def is_version_vulnerable(version, constraint):
-    """
-    Check if a version is vulnerable based on a constraint.
-    Supports constraints like >=4.4.0, <4.4.4.
-    """
-    # Parse the constraint
-    match = re.match(r"([<>]=?|==)\s*(\d+\.\d+\.\d+)", constraint)
-    if not match:
-        raise ValueError(f"Invalid constraint format: {constraint}")
+	Returns:
+		str: The first matched character or substring.
+		None: If no characters or substrings are matched.
+	"""
+	# Sort target_chars to check longer substrings first (so '<=' and '>=' are matched before '<' and '>')
+	target_chars.sort(key=lambda x: -len(x))  # Sort by length in descending order
+	matches = ((char, string.find(char)) for char in target_chars if string.find(char) != -1)
 
-    operator, target_version = match.groups()
-    if not is_valid_version(version) or not is_valid_version(target_version):
-        raise ValueError("Invalid version format. Expected format is XX.XX.XX")
+	# Get the first match (smallest index)
+	first_match = min(matches, key=lambda x: x[1], default=(None, -1))
+	return first_match[0]
 
-    # Compare the versions
-    comparison = compare_versions(version, target_version)
 
-    # Evaluate based on the operator
-    if operator == ">=":
-        return comparison >= 0
-    elif operator == "<=":
-        return comparison <= 0
-    elif operator == ">":
-        return comparison > 0
-    elif operator == "<":
-        return comparison < 0
-    elif operator == "==":
-        return comparison == 0
-    else:
-        raise ValueError(f"Unsupported operator: {operator}")
+def version_extractor(constraint, start_character):
+	# Find the start and end positions of the version
+	start = constraint.find(start_character) + 1
+	end = min(
+		(constraint.find(op, start) for op in ("<", ">") if constraint.find(op, start) != -1),
+		default=len(constraint)
+	)
+	version = constraint[start:end].strip()
+	version = version.replace("=", "")
+	version = version.replace("-beta", "")
+	return version
 
-def check_vulnerabilities(version, constraints_string):
-    """
-    Check if a version is vulnerable based on constraints stored as a string.
-    """
-    constraints = parse_constraints(constraints_string)
-    for constraint in constraints:
-        if is_version_vulnerable(version, constraint):
-            return True
-    return False
+def parse_global_constraints(constraints):
+	"""
+	Parse constraint strings into a list of tuples.
+	Each tuple contains the comparator and the normalized version.
+	Examples:
+	'<2.4.1' -> ('<', '2.4.1')
+	"""
+	global_parsed = []
+	for constraint in constraints.split(","):
+		constraint = constraint.strip()
+		local_parsed = []
+		rounds = check_for_recursion(constraint)
+		target_chars = ["<", ">", "<=", ">="]
+		for i in range(rounds):
+			result = find_first_matched(target_chars, constraint)
+			if result == ">=":
+				comparator = ">="
+				version = version_extractor(constraint, comparator)
+				remove = f"{comparator}{version}"
+				local_parsed.append((comparator, normalize_version(version)))
+				constraint = constraint.replace(version, "") # we remove to avoid duplicates
+			elif result == "<=":
+				comparator = "<="
+				version = version_extractor(constraint, comparator)
+				remove = f"{comparator}{version}"
+				local_parsed.append((comparator, normalize_version(version)))
+				constraint = constraint.replace(remove, "") #we remove to avoid duplicates
+			elif result == ">":
+				comparator = ">"
+				version = version_extractor(constraint, comparator)
+				remove = f"{comparator}{version}"
+				local_parsed.append((comparator, normalize_version(version)))
+				constraint = constraint.replace(remove, "") #we remove to avoid duplicates
+			elif result == "<":
+				comparator = "<"
+				version = version_extractor(constraint, comparator)
+				remove = f"{comparator}{version}"
+				local_parsed.append((comparator, normalize_version(version)))
+				constraint = constraint.replace(remove, "") #we remove to avoid duplicates
+			else:
+				print(f"Unkown operand in constraint: {constraint}")
+		global_parsed.append(local_parsed)
+	return global_parsed
+
+def is_version_allowed(target_version, constraints):
+	"""
+	Check if a version is allowed under the given constraints.
+
+	Args:
+	version (str): The version string to check.
+	constraints (list): A list of tuples containing comparator and version strings.
+
+	Returns:
+	bool: True if the version is allowed, False otherwise.
+	"""
+	global_result = True #only set it to true if complies with all constraints
+	local_result = True
+	for constraint in constraints:
+		for comparator, constraint_version in constraint:
+			if comparator == "<" and not target_version < constraint_version:
+				local_result =  False
+				global_result = False
+			elif comparator == ">" and not target_version > constraint_version:
+				local_result =  False
+				global_result = False
+			elif comparator == "<=" and not target_version <= constraint_version:
+				local_result =  False
+				global_result = False
+			elif comparator == ">=" and not target_version >= constraint_version:
+				local_result =  False
+				global_result = False
+
+		"""if local_result:
+			print(f"Version {target_version} is inside {constraint}")
+		else:
+			print(f"Version {target_version} is not inside {constraint}") 
+		"""
+	return global_result
+
+def check_vulnerabilities(target_version, constraints_string):
+	# Parse constraints
+	constraints = parse_global_constraints(constraints_string)
+
+	#print("Constraints:", constraints)
+
+	target_version = normalize_version(target_version)
+	result = is_version_allowed(target_version, constraints)
+
+	return result
 
 def print_table(headers, data):
 	"""
@@ -156,11 +213,8 @@ def main():
 						cell_data.append(a_tag["href"])
 				
 				constraints_string = cell_data[1]
-				if not is_valid_version(version):
-					print("Invalid input version format. Use the format XX.XX.XX.")
-				else:
-					if check_vulnerabilities(version, constraints_string):
-						global_data.append(cell_data)
+				if check_vulnerabilities(version, constraints_string):
+					global_data.append(cell_data)
 
 			if len(global_data) <= 1:
 				print("No vulnerailities found!")
