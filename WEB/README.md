@@ -9,7 +9,7 @@ for line in $(cat scope);do grep $line katana_out;done >> crawl_scope
 
 httpx -l crawl_scope -sc -cl -fr -o crawl_results -mc 200
 
-grep 200 crawl_results | grep js >> valid_js
+ grep js crawl_results >> valid_js
 
 nuclei -t /home/AMBERJACK/vfea0rousv/nuclei-templates/http/exposures/ -l valid_js -no-mhe -ni
 
