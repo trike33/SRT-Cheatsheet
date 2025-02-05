@@ -36,7 +36,7 @@ python3 format-ips.py scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_
 httpx -title -tech-detect -sc -cl -fr -o httpx_out_extraports -l naabu_out
 
 #Nmap Scan(slow)
-while IFS=: read -r ip port; do echo "Scan results for IP: $ip" >> all_scans.txt; nmap -p "$port" "$ip" >> all_scans.txt; echo -e "\n\n" >> all_scans.txt; done < naabu_out
+while IFS=: read -r ip port; do echo "Scan results for IP: $ip" >> all_scans.txt; nmap -p "$port" -sCV -Pn "$ip" >> all_scans.txt; echo -e "\n\n" >> all_scans.txt; done < naabu_out
 
 
 #FUZZ recursivvely
