@@ -20,7 +20,7 @@ python3 domain-enum.py httpx_out_domains scopeips >> domains
 subfinder -dL domains -o subfinder_out
 
 #Reverse DNS lookup
-while read -r ip; do echo -n "$ip -> " >> reverse_dns_out; nslookup "$ip" | awk '/name =/ {print $4}' >> reverse_dns_out; done < scopeips
+while read -r ip; do nslookup "$ip" | awk '/name =/ {print $4}' >> reverse_dns_out; done < scopeips
 
 #Checking that the subdomains found are in scope
 python3 domain-enum.py subfinder_out scopeips >> subdomains
