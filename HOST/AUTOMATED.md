@@ -27,7 +27,7 @@ python3 domain-enum.py subfinder_out scopeips >> subdomains
 python3 domain-enum.py reverse_dns_out scopeips >> subdomains
 
 #Enumerating subdomains in scope
-httpx -title -tech-detect -sc -cl -fr -o subdomains_enum -l subdomains
+httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains
 
 #Enumerating HTTP and HTTPS on ports 8080 and 8443
 python3 format-ips.py scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_out_80808443
