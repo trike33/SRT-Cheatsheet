@@ -452,7 +452,7 @@ class CommandExecutorApp(QMainWindow):
         if is_sequence_command:
             self.current_sequence_process = process
             self.update_sequence_navigation_buttons()
-        process.start(command_text)
+        process.start("bash", ["-c", command_text])
         self.statusBar().showMessage(f"Executing '{command_name}' in Slot {slot_idx+1}...")
 
     def read_output(self, process, slot_idx, execution_id):
