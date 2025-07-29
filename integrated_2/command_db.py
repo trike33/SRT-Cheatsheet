@@ -21,20 +21,17 @@ DEFAULT_COMMANDS = [
     {'text': 'httpx -title -tech-detect -sc -cl -fr -o httpx_out_extraports -l naabu_out', 'shell': False, 'order': 120, 'bg': False}
 ]
 
-# --- Default Theme Stylesheets ---
+# --- Updated Theme Stylesheets ---
 DARK_THEME_STYLESHEET = """
 QWidget {
     background-color: #2b2b2b;
     color: #f0f0f0;
     border: none;
 }
-QMainWindow {
+QMainWindow, QDialog {
     background-color: #2b2b2b;
 }
-QDialog {
-    background-color: #3c3c3c;
-}
-QLineEdit, QTextEdit, QSpinBox {
+QLineEdit, QTextEdit, QSpinBox, QListWidget, QTreeWidget {
     background-color: #3c3c3c;
     color: #f0f0f0;
     border: 1px solid #555;
@@ -48,33 +45,30 @@ QPushButton {
     border-radius: 4px;
     padding: 8px;
 }
-QPushButton:hover {
-    background-color: #666;
+QPushButton:hover { background-color: #666; }
+QPushButton:pressed { background-color: #777; }
+#StartButton { background-color: #007BFF; font-weight: bold; }
+#StartButton:hover { background-color: #008cff; }
+#StopButton { background-color: #DC3545; font-weight: bold; }
+#StopButton:hover { background-color: #ef4656; }
+QHeaderView::section { background-color: #555; padding: 4px; border: 1px solid #666; }
+QTableWidget { gridline-color: #555; }
+QTabBar::tab {
+    color: #f0f0f0;
+    background: #444;
+    padding: 10px;
+    border: 1px solid #555;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
 }
-QPushButton:pressed {
-    background-color: #777;
-}
-#StartButton {
-    background-color: #007BFF;
+QTabBar::tab:selected {
+    background: #2b2b2b;
     font-weight: bold;
 }
-#StartButton:hover {
-    background-color: #008cff;
-}
-#StopButton {
-    background-color: #DC3545;
-    font-weight: bold;
-}
-#StopButton:hover {
-    background-color: #ef4656;
-}
-QHeaderView::section {
-    background-color: #555;
-    padding: 4px;
-    border: 1px solid #666;
-}
-QTableWidget {
-    gridline-color: #555;
+QTabWidget::pane {
+    border: 1px solid #555;
+    border-top: none;
 }
 """
 
@@ -84,13 +78,10 @@ QWidget {
     color: #000000;
     border: none;
 }
-QMainWindow {
+QMainWindow, QDialog {
     background-color: #f0f0f0;
 }
-QDialog {
-    background-color: #ffffff;
-}
-QLineEdit, QTextEdit, QSpinBox {
+QLineEdit, QTextEdit, QSpinBox, QListWidget, QTreeWidget {
     background-color: #ffffff;
     color: #000000;
     border: 1px solid #ccc;
@@ -104,35 +95,29 @@ QPushButton {
     border-radius: 4px;
     padding: 8px;
 }
-QPushButton:hover {
-    background-color: #d0d0d0;
-}
-QPushButton:pressed {
-    background-color: #c0c0c0;
-}
-#StartButton {
-    background-color: #007BFF;
-    color: white;
-    font-weight: bold;
-}
-#StartButton:hover {
-    background-color: #008cff;
-}
-#StopButton {
-    background-color: #DC3545;
-    color: white;
-    font-weight: bold;
-}
-#StopButton:hover {
-    background-color: #ef4656;
-}
-QHeaderView::section {
-    background-color: #e0e0e0;
-    padding: 4px;
+QPushButton:hover { background-color: #d0d0d0; }
+QPushButton:pressed { background-color: #c0c0c0; }
+#StartButton { background-color: #007BFF; color: white; font-weight: bold; }
+#StartButton:hover { background-color: #008cff; }
+#StopButton { background-color: #DC3545; color: white; font-weight: bold; }
+#StopButton:hover { background-color: #ef4656; }
+QHeaderView::section { background-color: #e0e0e0; padding: 4px; border: 1px solid #ccc; }
+QTableWidget { gridline-color: #ccc; }
+QTabBar::tab {
+    background: #d0d0d0;
+    padding: 10px;
     border: 1px solid #ccc;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
 }
-QTableWidget {
-    gridline-color: #ccc;
+QTabBar::tab:selected {
+    background: #f0f0f0;
+    font-weight: bold;
+}
+QTabWidget::pane {
+    border: 1px solid #ccc;
+    border-top: none;
 }
 """
 
