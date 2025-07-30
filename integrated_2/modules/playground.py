@@ -1,24 +1,25 @@
 import os
 import re
 from urllib.parse import urlparse
-from collections import Counter, defaultdict
+from collections import Counter
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QDialog,
     QTableView, QHeaderView, QMessageBox, QPushButton, QHBoxLayout,
-    QTextEdit, QDialogButtonBox, QTabWidget, QListWidget
+    QTextEdit, QDialogButtonBox, QTabWidget, QListWidget, QLabel
 )
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor
+from utils import db as command_db
 
 # --- Matplotlib Integration ---
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
+# (StatsChartCanvas and StatisticsDialog classes remain the same)
 class StatsChartCanvas(FigureCanvas):
     """A custom canvas for displaying matplotlib charts within a PyQt dialog."""
     def __init__(self, parent=None, width=5, height=4, dpi=100):
-        # Set the color scheme based on the application's theme
         is_dark_theme = "dark" in parent.styleSheet().lower()
         
         if is_dark_theme:
@@ -39,7 +40,6 @@ class StatsChartCanvas(FigureCanvas):
         self.setParent(parent)
 
     def plot_histogram(self, data, title):
-        """Generates a histogram for numeric data."""
         self.axes.clear()
         self.axes.hist(data, bins=20, color='#5e81ac', edgecolor='black')
         self.axes.set_title(title)
@@ -49,13 +49,12 @@ class StatsChartCanvas(FigureCanvas):
         self.draw()
 
     def plot_bar_chart(self, labels, values, title):
-        """Generates a horizontal bar chart for categorical data."""
         self.axes.clear()
         y_pos = range(len(labels))
         self.axes.barh(y_pos, values, align='center', color='#a3be8c')
         self.axes.set_yticks(y_pos)
         self.axes.set_yticklabels(labels)
-        self.axes.invert_yaxis() # labels read top-to-bottom
+        self.axes.invert_yaxis()
         self.axes.set_xlabel('Count')
         self.axes.set_title(title)
         self.fig.tight_layout()
@@ -68,22 +67,15 @@ class StatisticsDialog(QDialog):
         self.model = model
         self.setWindowTitle("Dataset Statistics")
         self.setGeometry(200, 200, 800, 600)
-        
         layout = QVBoxLayout(self)
-        
-        # Main Tab Widget
         tab_widget = QTabWidget()
         layout.addWidget(tab_widget)
-
-        # --- Text Stats Tab ---
         text_stats_widget = QWidget()
         text_layout = QVBoxLayout(text_stats_widget)
         self.stats_text_edit = QTextEdit(readOnly=True)
         self.stats_text_edit.setFontFamily("Courier New")
         text_layout.addWidget(self.stats_text_edit)
         tab_widget.addTab(text_stats_widget, "Textual Report")
-
-        # --- Charts Tab ---
         charts_widget = QWidget()
         charts_layout = QHBoxLayout(charts_widget)
         self.column_list = QListWidget()
@@ -93,38 +85,29 @@ class StatisticsDialog(QDialog):
         charts_layout.addWidget(self.column_list)
         charts_layout.addWidget(self.chart_canvas)
         tab_widget.addTab(charts_widget, "Charts")
-
-        # Dialog buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok)
         button_box.accepted.connect(self.accept)
         layout.addWidget(button_box)
-        
         self.process_data_for_display()
 
     def process_data_for_display(self):
-        """Calculates stats and populates both the text report and chart view."""
         self.calculate_and_display_text_stats()
         self.populate_chart_columns()
 
     def calculate_and_display_text_stats(self):
-        """Calculates and formats statistics for the text report."""
         stats_report = []
         for col in range(self.model.columnCount()):
             header = self.model.horizontalHeaderItem(col).text()
             stats_report.append(f"--- Statistics for Column: '{header}' ---\n")
-            
             values = [self.model.item(row, col).text() for row in range(self.model.rowCount()) if self.model.item(row, col)]
             if not values:
                 stats_report.append("No data in this column.\n\n")
                 continue
-
             try:
                 numeric_values = [float(v) for v in values]
                 is_numeric = True
             except (ValueError, TypeError):
-                numeric_values = []
                 is_numeric = False
-
             if is_numeric and header.lower() in ['status code', 'length']:
                 count, mean, median, std_dev = len(numeric_values), sum(numeric_values) / len(numeric_values), sorted(numeric_values)[len(numeric_values) // 2], (sum((x - (sum(numeric_values) / len(numeric_values))) ** 2 for x in numeric_values) / len(numeric_values)) ** 0.5
                 stats_report.extend([f"  Type: Numeric", f"  Count: {count}", f"  Mean: {mean:.2f}", f"  Median: {median}", f"  Std Dev: {std_dev:.2f}", f"  Min: {min(numeric_values)}", f"  Max: {max(numeric_values)}\n"])
@@ -134,28 +117,22 @@ class StatisticsDialog(QDialog):
                 stats_report.extend([f"    - '{value}': {count} occurrences" for value, count in value_counts.most_common(15)])
                 if len(value_counts) > 15: stats_report.append("    - ...and more.\n")
             stats_report.append("\n")
-
         self.stats_text_edit.setText("\n".join(stats_report))
 
     def populate_chart_columns(self):
-        """Adds column headers to the list widget in the Charts tab."""
         for col in range(self.model.columnCount()):
             header = self.model.horizontalHeaderItem(col).text()
             self.column_list.addItem(header)
 
     def update_chart(self, item):
-        """Generates and displays a chart for the selected column."""
         col_name = item.text()
         col_index = [i for i in range(self.model.columnCount()) if self.model.horizontalHeaderItem(i).text() == col_name][0]
-
         values = [self.model.item(row, col_index).text() for row in range(self.model.rowCount())]
-        
         try:
             numeric_values = [float(v) for v in values]
             is_numeric = True
         except (ValueError, TypeError):
             is_numeric = False
-        
         if is_numeric and col_name.lower() in ['status code', 'length']:
             self.chart_canvas.plot_histogram(numeric_values, f"Distribution of {col_name}")
         else:
@@ -164,21 +141,74 @@ class StatisticsDialog(QDialog):
             labels, data = zip(*top_15)
             self.chart_canvas.plot_bar_chart(labels, data, f"Top 15 Most Common {col_name}s")
 
+class RiskAnalysisDialog(QDialog):
+    """A dedicated window to display categorized, high-risk URLs."""
+    def __init__(self, urls, parent=None):
+        super().__init__(parent)
+        self.urls = urls
+        self.setWindowTitle("URL Risk Analysis")
+        self.setGeometry(250, 250, 800, 600)
+
+        # --- Load Keywords from Database ---
+        self.HIGH_RISK_KEYWORDS = command_db.get_high_risk_keywords()
+        self.INTERESTING_KEYWORDS = command_db.get_interesting_keywords()
+        
+        # --- Layout ---
+        layout = QVBoxLayout(self)
+        
+        # High Risk Section
+        layout.addWidget(QLabel("<h2>High Risk URLs</h2>"))
+        self.high_risk_display = QTextEdit(readOnly=True)
+        layout.addWidget(self.high_risk_display)
+        
+        # Interesting Section
+        layout.addWidget(QLabel("<h2>Potentially Interesting URLs</h2>"))
+        self.interesting_display = QTextEdit(readOnly=True)
+        layout.addWidget(self.interesting_display)
+        
+        close_button = QDialogButtonBox(QDialogButtonBox.Close)
+        close_button.rejected.connect(self.reject)
+        layout.addWidget(close_button)
+        
+        self.analyze_and_display_urls()
+
+    def analyze_and_display_urls(self):
+        """Categorizes URLs and displays them in the appropriate text box."""
+        high_risk_html = []
+        interesting_html = []
+
+        for url in self.urls:
+            is_high_risk = any(keyword in url.lower() for keyword in self.HIGH_RISK_KEYWORDS)
+            is_interesting = any(keyword in url.lower() for keyword in self.INTERESTING_KEYWORDS)
+
+            if is_high_risk:
+                high_risk_html.append(f'<span style="color: #bf616a;">{url}</span>')
+            elif is_interesting:
+                interesting_html.append(f'<span style="color: #ebcb8b;">{url}</span>')
+        
+        self.high_risk_display.setHtml("<br>".join(high_risk_html))
+        self.interesting_display.setHtml("<br>".join(interesting_html))
 
 class PlaygroundWindow(QDialog):
-    """A window for viewing and analyzing one or more httpx result files."""
+    """
+    A window for viewing httpx results, with a separate dialog for risk analysis.
+    """
     def __init__(self, file_paths, parent=None):
         super().__init__(parent)
         self.file_paths = file_paths
         
         title = f"Playground Viewer - {os.path.basename(file_paths[0])}" if len(file_paths) == 1 else f"Playground Viewer - {len(file_paths)} files"
         self.setWindowTitle(title)
-        self.setGeometry(150, 150, 1000, 700)
+        self.setGeometry(150, 150, 1100, 700)
 
         main_layout = QVBoxLayout(self)
         top_bar_layout = QHBoxLayout()
+        self.risk_button = QPushButton("Analyze URL Risks") # <-- New Button
+        self.risk_button.clicked.connect(self.show_risk_analysis)
         self.stats_button = QPushButton("View Stats")
         self.stats_button.clicked.connect(self.show_stats)
+        
+        top_bar_layout.addWidget(self.risk_button) # <-- Add to layout
         top_bar_layout.addStretch()
         top_bar_layout.addWidget(self.stats_button)
         main_layout.addLayout(top_bar_layout)
@@ -190,67 +220,82 @@ class PlaygroundWindow(QDialog):
         self.model = QStandardItemModel()
         self.load_and_parse_data()
 
+    def load_and_parse_data(self):
+        """Loads data into the main table view without risk analysis."""
+        self.all_records = [rec for fp in self.file_paths for rec in self.parse_httpx_file(fp)]
+        if not self.all_records:
+            QMessageBox.warning(self, "No Data", "No valid data could be parsed.")
+            return
+
+        headers = ['Schema', 'Host', 'Path', 'Extension', 'Status Code', 'Length', 'Technology']
+        self.model.setHorizontalHeaderLabels(headers)
+
+        for record in self.all_records:
+            row_items = [
+                QStandardItem(str(record.get('schema'))),
+                QStandardItem(str(record.get('host'))),
+                QStandardItem(str(record.get('path'))),
+                QStandardItem(str(record.get('extension'))),
+                QStandardItem(str(record.get('status_code'))),
+                QStandardItem(str(record.get('length'))),
+                QStandardItem(str(record.get('technology')))
+            ]
+            self.model.appendRow(row_items)
+
+        self.table_view.setModel(self.model)
+        self.table_view.resizeColumnsToContents()
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+
+    def show_risk_analysis(self):
+        """Opens the new dialog for viewing categorized risks."""
+        if not hasattr(self, 'all_records') or not self.all_records:
+            QMessageBox.information(self, "No Data", "There are no URLs to analyze.")
+            return
+        
+        # Compile a list of full URLs to pass to the dialog
+        full_urls = [
+            f"{rec.get('schema', '')}://{rec.get('host', '')}{rec.get('path', '')}" 
+            for rec in self.all_records
+        ]
+        
+        dialog = RiskAnalysisDialog(full_urls, self)
+        dialog.exec_()
+
     def parse_httpx_file(self, file_path):
+        """Parses a single httpx output file."""
         records = []
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        line_regex = re.compile(r"^(?P<url>https?://[^\s]+)\s+\[\s*(?P<status_code>[\d,\s]+)\s*\]\s+\[\s*(?P<length>\d+)\s*\]\s+(?:\[\s*(?P<technology>[^\]]+)\s*\])?")
-
+        line_regex = re.compile(
+            r"^(?P<url>https?://[^\s]+)\s+"
+            r"\[\s*(?P<status_code>[\d,\s]+)\s*\]\s+"
+            r"\[\s*(?P<length>\d+)\s*\]\s+"
+            r"(?:\[\s*(?P<technology>[^\]]+)\s*\])?"
+        )
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
                     clean_line = ansi_escape.sub('', line).strip()
                     match = line_regex.match(clean_line)
                     if not match: continue
-
                     data = match.groupdict()
                     parsed_url = urlparse(data['url'])
                     final_status_code = data['status_code'].split(',')[-1].strip()
                     _, extension = os.path.splitext(parsed_url.path)
-
                     records.append({
-                        'schema': parsed_url.scheme,
-                        'host': parsed_url.hostname,
-                        'path': parsed_url.path,
-                        'extension': extension if extension else 'N/A',
-                        'status_code': int(final_status_code),
-                        'length': int(data['length']),
-                        'technology': data.get('technology', 'N/A').strip()
+                        'schema': parsed_url.scheme, 'host': parsed_url.hostname, 'path': parsed_url.path,
+                        'extension': extension if extension else 'N/A', 'status_code': int(final_status_code),
+                        'length': int(data['length']), 'technology': data.get('technology', 'N/A').strip()
                     })
         except Exception as e:
-            QMessageBox.critical(self, "File Error", f"Could not read or parse {os.path.basename(file_path)}: {e}")
+            QMessageBox.critical(self, "File Error", f"Could not read/parse {os.path.basename(file_path)}: {e}")
         return records
 
-    def load_and_parse_data(self):
-        all_records = [rec for fp in self.file_paths for rec in self.parse_httpx_file(fp)]
-
-        if not all_records:
-            QMessageBox.warning(self, "No Data", "No valid data could be parsed from the selected file(s).")
-            return
-
-        headers = ['schema', 'host', 'path', 'extension', 'status_code', 'length', 'technology']
-        self.model.setHorizontalHeaderLabels([h.replace('_', ' ').title() for h in headers])
-
-        for record in all_records:
-            row_items = []
-            for header in headers:
-                value = record.get(header)
-                item = QStandardItem(str(value))
-                if header in ['status_code', 'length']:
-                    item.setData(value, Qt.UserRole)
-                row_items.append(item)
-            self.model.appendRow(row_items)
-
-        self.table_view.setModel(self.model)
-        self.table_view.resizeColumnsToContents()
-        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        
     def show_stats(self):
         if self.model.rowCount() == 0:
             QMessageBox.information(self, "No Data", "There is no data to analyze.")
             return
         dialog = StatisticsDialog(self.model, self)
         dialog.exec_()
-
 
 class PlaygroundTabWidget(QWidget):
     """The main widget for the 'Playground' tab, using a grouped tree view."""
@@ -276,65 +321,48 @@ class PlaygroundTabWidget(QWidget):
         self.refresh_playground()
 
     def refresh_playground(self):
-        """Reloads and groups the contents of the CWD into the tree view."""
         self.tree_widget.clear()
-        
         folder_icon = QIcon(os.path.join(self.icon_path, "folder.svg"))
         file_icon = QIcon(os.path.join(self.icon_path, "file.svg"))
-        bag_icon = QIcon(os.path.join(self.icon_path, "bag.svg")) # Assuming you have a 'bag.svg'
+        bag_icon = QIcon(os.path.join(self.icon_path, "bag.svg"))
 
-        bags = {} # To hold parent "bag" items
+        bags = {}
 
         try:
             for item_name in sorted(os.listdir(self.working_directory)):
                 full_path = os.path.join(self.working_directory, item_name)
-                
                 if os.path.isdir(full_path):
-                    # Add directories as top-level items
                     dir_item = QTreeWidgetItem(self.tree_widget, [item_name])
                     dir_item.setIcon(0, folder_icon)
                     dir_item.setData(0, Qt.UserRole, full_path)
-                
                 elif "_" in item_name:
-                    # Group files with an underscore into a "bag"
                     prefix = item_name.split('_')[0]
                     if prefix not in bags:
-                        # Create a new bag if it doesn't exist
                         bags[prefix] = QTreeWidgetItem(self.tree_widget, [prefix])
                         bags[prefix].setIcon(0, bag_icon)
-                    
-                    # Add the file as a child of the bag
                     file_item = QTreeWidgetItem(bags[prefix], [item_name])
                     file_item.setIcon(0, file_icon)
                     file_item.setData(0, Qt.UserRole, full_path)
-                
                 else:
-                    # Add ungrouped files as top-level items
                     file_item = QTreeWidgetItem(self.tree_widget, [item_name])
                     file_item.setIcon(0, file_icon)
                     file_item.setData(0, Qt.UserRole, full_path)
-                    
         except Exception as e:
             QTreeWidgetItem(self.tree_widget, [f"Error reading directory: {e}"])
 
     def open_selected_items(self):
-        """Opens the playground window for all selected files."""
         selected_items = self.tree_widget.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "No Selection", "Please select one or more files to open.")
             return
-            
         file_paths = []
         for item in selected_items:
             path = item.data(0, Qt.UserRole)
-            # Ensure the item is a file (has a path and is not a directory)
             if path and os.path.isfile(path):
                 file_paths.append(path)
-        
         if not file_paths:
-            QMessageBox.warning(self, "No Files Selected", "Your selection does not contain any valid files. (Select the file names, not the bags).")
+            QMessageBox.warning(self, "No Files Selected", "Your selection does not contain any valid files.")
             return
-
         viewer_window = PlaygroundWindow(file_paths=file_paths, parent=self)
         viewer_window.exec_()
 

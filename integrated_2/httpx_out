@@ -2,3 +2,5 @@ https://216.99.82.16 [[31m403[0m] [[35m215[0m] [[35mF5 BigIP[0m]
 https://62.244.14.54 [[31m403[0m] [[35m101[0m] [[36mACME Access Only[0m]
 http://216.99.65.51 [[33m301[0m,[32m200[0m] [[35m2483[0m] [[36mCisco Systems, Inc. VPN 3000 Concentrator [C3KIBD0022][0m] [[35mhttp://216.99.65.51/admin.html[0m]
 http://216.99.65.50 [[33m301[0m,[32m200[0m] [[35m2483[0m] [[36mCisco Systems, Inc. VPN 3000 Concentrator [C3KIBD0017][0m] [[35mhttp://216.99.65.50/admin.html[0m]
+http://216.99.65.50/url
+http://216.99.65.50/rest/services
