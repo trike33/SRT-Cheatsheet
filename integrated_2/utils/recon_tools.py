@@ -64,8 +64,7 @@ def run_domain_extracter(input_file_path, output_file_path):
 def run_format_ips(input_file_path):
     """
     Reads a file of IPs, formats them with ports 8080 and 8443,
-    and returns the formatted list as a string.
-    This is designed to be piped to another command.
+    and returns the formatted list as a string to be piped.
     """
     ports = [8080, 8443]
     formatted_list = []
@@ -79,7 +78,6 @@ def run_format_ips(input_file_path):
         for port in ports:
             formatted_list.append(f"{ip}:{port}")
     
-    # Return as a single string with newlines, simulating stdout
     return True, "\n".join(formatted_list)
 
 # --- From domain_enum.py ---
@@ -88,7 +86,6 @@ def run_domain_enum(subdomains_file_path, scope_file_path, output_file_path):
     Reads a list of subdomains, resolves them, and appends the ones
     that are within the given scope to an output file.
     """
-    # 1. Read and parse the scope file to get a set of allowed IPs
     scope_ips = set()
     try:
         with open(scope_file_path, 'r') as file:
@@ -97,14 +94,12 @@ def run_domain_enum(subdomains_file_path, scope_file_path, output_file_path):
     except FileNotFoundError:
         return False, f"Scope file not found: {scope_file_path}"
 
-    # 2. Read the subdomains to check
     try:
         with open(subdomains_file_path, 'r') as file:
             subdomains = [line.strip() for line in file if line.strip()]
     except FileNotFoundError:
         return False, f"Subdomains file not found: {subdomains_file_path}"
 
-    # 3. Resolve subdomains and check against scope
     in_scope_domains = []
     for subdomain in subdomains:
         try:
@@ -112,10 +107,8 @@ def run_domain_enum(subdomains_file_path, scope_file_path, output_file_path):
             if ip_address in scope_ips:
                 in_scope_domains.append(subdomain)
         except socket.gaierror:
-            # Could not resolve, so it can't be in scope.
             continue
     
-    # 4. Append the results to the output file
     with open(output_file_path, 'a') as out_file:
         for domain in in_scope_domains:
             out_file.write(f"{domain}\n")
