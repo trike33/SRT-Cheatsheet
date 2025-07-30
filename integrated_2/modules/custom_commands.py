@@ -1,24 +1,29 @@
 import os
-import re
 import shlex
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFrame, QTextEdit, QLineEdit, QPushButton, QHBoxLayout, QLabel
-from PyQt5.QtCore import QProcess, QTimer, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QProcess, QTimer, Qt, QSize
+from PyQt5.QtGui import QFont, QIcon
 
 class CustomCommandsWidget(QWidget):
     """
     A widget that provides multiple terminal-like slots for running custom commands.
     """
-    def __init__(self, working_directory, parent=None):
+    def __init__(self, working_directory, icon_path, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
-        self.processes = {}  # Using a dictionary to manage processes per slot
+        self.icon_path = icon_path
+        self.processes = {}
         self.timers = {}
         self.num_slots = 4
+        self.slots = []  # To hold references to each slot's widgets
+
+        # --- Load Icons ---
+        self.running_icon = QIcon(os.path.join(self.icon_path, "run.svg"))
+        self.stopped_icon = QIcon(os.path.join(self.icon_path, "stop.svg"))
 
         main_layout = QVBoxLayout(self)
 
-        # "Stop All" button at the top
+        # "Stop All" button
         stop_all_layout = QHBoxLayout()
         stop_all_layout.addStretch()
         stop_all_button = QPushButton("Stop All Running Commands")
@@ -26,42 +31,41 @@ class CustomCommandsWidget(QWidget):
         stop_all_layout.addWidget(stop_all_button)
         main_layout.addLayout(stop_all_layout)
 
+        # Create and connect each terminal slot
         for i in range(self.num_slots):
-            frame, layout = self.create_terminal_slot(i)
-            main_layout.addWidget(frame)
+            slot_widgets = self.create_terminal_slot()
+            self.slots.append(slot_widgets)
+            main_layout.addWidget(slot_widgets['frame'])
+            
+            # Connect signals using direct references
+            slot_widgets['input'].returnPressed.connect(lambda idx=i: self.start_process(idx))
+            slot_widgets['start_btn'].clicked.connect(lambda idx=i: self.start_process(idx))
+            slot_widgets['stop_btn'].clicked.connect(lambda idx=i: self.stop_process(idx))
 
-    def create_terminal_slot(self, slot_index):
-        """Creates a single terminal slot with its widgets and layouts."""
+    def create_terminal_slot(self):
+        """Creates widgets for a single slot and returns them in a dictionary."""
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         layout = QVBoxLayout(frame)
 
-        # Output display
         output_display = QTextEdit(readOnly=True)
         output_display.setFont(QFont("Courier", 10))
-        output_display.setObjectName(f"output_{slot_index}")
         layout.addWidget(output_display)
 
-        # Timer label
         timer_label = QLabel("Elapsed: 00:00:00")
-        timer_label.setObjectName(f"timer_label_{slot_index}")
         timer_label.setAlignment(Qt.AlignRight)
 
-        # Input and buttons
         input_layout = QHBoxLayout()
+        status_icon_label = QLabel()
+        status_icon_label.setPixmap(self.stopped_icon.pixmap(QSize(16, 16)))
+        input_layout.addWidget(status_icon_label)
+        
         command_input = QLineEdit()
-        command_input.setObjectName(f"input_{slot_index}")
         command_input.setPlaceholderText("Enter command and press Enter")
-        command_input.returnPressed.connect(lambda idx=slot_index: self.start_process(idx))
         
         start_button = QPushButton("Run")
-        start_button.setObjectName(f"start_button_{slot_index}")
-        start_button.clicked.connect(lambda idx=slot_index: self.start_process(idx))
-        
         stop_button = QPushButton("Stop")
-        stop_button.setObjectName(f"stop_button_{slot_index}")
         stop_button.setEnabled(False)
-        stop_button.clicked.connect(lambda idx=slot_index: self.stop_process(idx))
 
         input_layout.addWidget(command_input)
         input_layout.addWidget(start_button)
@@ -72,31 +76,34 @@ class CustomCommandsWidget(QWidget):
         bottom_layout.addWidget(timer_label, 1)
         layout.addLayout(bottom_layout)
 
-        return frame, layout
+        return {
+            'frame': frame, 'output': output_display, 'input': command_input,
+            'start_btn': start_button, 'stop_btn': stop_button,
+            'timer_lbl': timer_label, 'status_icon': status_icon_label
+        }
 
     def start_process(self, index):
-        """Starts a new process in the specified terminal slot."""
+        """Starts a new process using direct widget references."""
         if index in self.processes and self.processes[index]['process'].state() == QProcess.Running:
             return
 
-        command_input = self.findChild(QLineEdit, f"input_{index}")
+        slot = self.slots[index]
+        command_input = slot['input']
         command_text = command_input.text()
         if not command_text:
             return
 
-        output_display = self.findChild(QTextEdit, f"output_{index}")
-        output_display.clear()
+        slot['output'].clear()
         
         process = QProcess()
         self.processes[index] = {'process': process, 'elapsed_time': 0}
         
         process.setProcessChannelMode(QProcess.MergedChannels)
-        process.readyReadStandardOutput.connect(lambda idx=index: self.handle_output(idx))
-        process.finished.connect(lambda idx=index: self.handle_finish(idx))
+        process.readyReadStandardOutput.connect(lambda: self.handle_output(index))
+        process.finished.connect(lambda: self.handle_finish(index))
         
-        # Setup and start the timer
         self.timers[index] = QTimer()
-        self.timers[index].timeout.connect(lambda idx=index: self.update_timer(idx))
+        self.timers[index].timeout.connect(lambda: self.update_timer(index))
         self.timers[index].start(1000)
 
         process.start(shlex.split(command_text)[0], shlex.split(command_text)[1:])
@@ -104,67 +111,59 @@ class CustomCommandsWidget(QWidget):
         self.update_ui_for_start(index)
     
     def stop_process(self, index):
-        """Stops the process running in the specified slot."""
         if index in self.processes and self.processes[index]['process'].state() == QProcess.Running:
             self.processes[index]['process'].kill()
 
     def handle_output(self, index):
-        """Appends new output from the process to its display."""
         process = self.processes[index]['process']
         output = process.readAllStandardOutput().data().decode(errors='ignore')
-        output_display = self.findChild(QTextEdit, f"output_{index}")
-        output_display.append(output)
+        self.slots[index]['output'].append(output)
 
     def handle_finish(self, index):
-        """Cleans up after a process has finished."""
         if index in self.timers:
             self.timers[index].stop()
         self.update_ui_for_finish(index)
         
     def stop_all_processes(self):
-        """Stops all currently running commands."""
-        # Iterate over a copy of the items since the dictionary might change during the loop
         for i, process_info in list(self.processes.items()):
             process = process_info['process']
             if process.state() == QProcess.Running:
-                # *** FIX: Block signals to prevent handle_finish from being called automatically ***
                 process.blockSignals(True)
                 process.kill()
-                process.waitForFinished(1000) # Give it a moment to die
+                process.waitForFinished(1000)
                 process.blockSignals(False)
                 
-                # Manually stop the timer and update the UI
                 if i in self.timers:
                     self.timers[i].stop()
                 self.update_ui_for_finish(i)
 
     def update_timer(self, index):
-        """Updates the elapsed time display for a running process."""
         if index in self.processes:
             self.processes[index]['elapsed_time'] += 1
             elapsed = self.processes[index]['elapsed_time']
             hours, rem = divmod(elapsed, 3600)
             minutes, seconds = divmod(rem, 60)
-            timer_label = self.findChild(QLabel, f"timer_label_{index}")
-            timer_label.setText(f"Elapsed: {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}")
+            self.slots[index]['timer_lbl'].setText(f"Elapsed: {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}")
 
     def update_ui_for_start(self, index):
-        """Updates UI elements when a process starts."""
-        self.findChild(QPushButton, f"start_button_{index}").setEnabled(False)
-        self.findChild(QPushButton, f"stop_button_{index}").setEnabled(True)
-        self.findChild(QLineEdit, f"input_{index}").setEnabled(False)
+        slot = self.slots[index]
+        slot['start_btn'].setEnabled(False)
+        slot['stop_btn'].setEnabled(True)
+        slot['input'].setEnabled(False)
+        slot['status_icon'].setPixmap(self.running_icon.pixmap(QSize(16, 16)))
 
     def update_ui_for_finish(self, index):
-        """Resets UI elements when a process finishes."""
-        if self.findChild(QPushButton, f"start_button_{index}"):
-            self.findChild(QPushButton, f"start_button_{index}").setEnabled(True)
-            self.findChild(QPushButton, f"stop_button_{index}").setEnabled(False)
-            self.findChild(QLineEdit, f"input_{index}").setEnabled(True)
+        if index < len(self.slots):
+            slot = self.slots[index]
+            slot['start_btn'].setEnabled(True)
+            slot['stop_btn'].setEnabled(False)
+            slot['input'].setEnabled(True)
+            slot['status_icon'].setPixmap(self.stopped_icon.pixmap(QSize(16, 16)))
+            
         if index in self.processes:
             del self.processes[index]
         if index in self.timers:
             del self.timers[index]
             
     def set_working_directory(self, path):
-        """Updates the working directory for new commands."""
         self.working_directory = path

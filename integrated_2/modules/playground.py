@@ -1,11 +1,11 @@
 import os
 import re
 from urllib.parse import urlparse
-from collections import Counter
+from collections import Counter, defaultdict
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QDialog,
+    QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QDialog,
     QTableView, QHeaderView, QMessageBox, QPushButton, QHBoxLayout,
-    QTextEdit, QDialogButtonBox, QTabWidget
+    QTextEdit, QDialogButtonBox, QTabWidget, QListWidget
 )
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
@@ -253,19 +253,18 @@ class PlaygroundWindow(QDialog):
 
 
 class PlaygroundTabWidget(QWidget):
+    """The main widget for the 'Playground' tab, using a grouped tree view."""
     def __init__(self, working_directory, icon_path, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
         self.icon_path = icon_path
         
         layout = QVBoxLayout(self)
-        self.playground_list = QListWidget()
-        self.playground_list.setViewMode(QListWidget.IconMode)
-        self.playground_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.playground_list.setIconSize(QSize(64, 64))
-        self.playground_list.setSpacing(15)
-        self.playground_list.itemDoubleClicked.connect(self.open_selected_items)
-        layout.addWidget(self.playground_list)
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderHidden(True)
+        self.tree_widget.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.tree_widget.itemDoubleClicked.connect(self.open_selected_items)
+        layout.addWidget(self.tree_widget)
         
         open_button_layout = QHBoxLayout()
         open_button = QPushButton("Open Selected File(s)")
@@ -277,30 +276,63 @@ class PlaygroundTabWidget(QWidget):
         self.refresh_playground()
 
     def refresh_playground(self):
-        self.playground_list.clear()
+        """Reloads and groups the contents of the CWD into the tree view."""
+        self.tree_widget.clear()
+        
         folder_icon = QIcon(os.path.join(self.icon_path, "folder.svg"))
         file_icon = QIcon(os.path.join(self.icon_path, "file.svg"))
-        
+        bag_icon = QIcon(os.path.join(self.icon_path, "bag.svg")) # Assuming you have a 'bag.svg'
+
+        bags = {} # To hold parent "bag" items
+
         try:
             for item_name in sorted(os.listdir(self.working_directory)):
                 full_path = os.path.join(self.working_directory, item_name)
-                icon = folder_icon if os.path.isdir(full_path) else file_icon
-                item = QListWidgetItem(icon, item_name)
-                item.setData(Qt.UserRole, full_path)
-                self.playground_list.addItem(item)
+                
+                if os.path.isdir(full_path):
+                    # Add directories as top-level items
+                    dir_item = QTreeWidgetItem(self.tree_widget, [item_name])
+                    dir_item.setIcon(0, folder_icon)
+                    dir_item.setData(0, Qt.UserRole, full_path)
+                
+                elif "_" in item_name:
+                    # Group files with an underscore into a "bag"
+                    prefix = item_name.split('_')[0]
+                    if prefix not in bags:
+                        # Create a new bag if it doesn't exist
+                        bags[prefix] = QTreeWidgetItem(self.tree_widget, [prefix])
+                        bags[prefix].setIcon(0, bag_icon)
+                    
+                    # Add the file as a child of the bag
+                    file_item = QTreeWidgetItem(bags[prefix], [item_name])
+                    file_item.setIcon(0, file_icon)
+                    file_item.setData(0, Qt.UserRole, full_path)
+                
+                else:
+                    # Add ungrouped files as top-level items
+                    file_item = QTreeWidgetItem(self.tree_widget, [item_name])
+                    file_item.setIcon(0, file_icon)
+                    file_item.setData(0, Qt.UserRole, full_path)
+                    
         except Exception as e:
-            self.playground_list.addItem(QListWidgetItem(f"Error reading directory: {e}"))
+            QTreeWidgetItem(self.tree_widget, [f"Error reading directory: {e}"])
 
     def open_selected_items(self):
-        selected_items = self.playground_list.selectedItems()
+        """Opens the playground window for all selected files."""
+        selected_items = self.tree_widget.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "No Selection", "Please select one or more files to open.")
             return
             
-        file_paths = [item.data(Qt.UserRole) for item in selected_items if os.path.isfile(item.data(Qt.UserRole))]
+        file_paths = []
+        for item in selected_items:
+            path = item.data(0, Qt.UserRole)
+            # Ensure the item is a file (has a path and is not a directory)
+            if path and os.path.isfile(path):
+                file_paths.append(path)
         
         if not file_paths:
-            QMessageBox.warning(self, "No Files Selected", "Your selection does not contain any valid files.")
+            QMessageBox.warning(self, "No Files Selected", "Your selection does not contain any valid files. (Select the file names, not the bags).")
             return
 
         viewer_window = PlaygroundWindow(file_paths=file_paths, parent=self)

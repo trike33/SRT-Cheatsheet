@@ -29,7 +29,7 @@ class ReconAutomatorApp(QMainWindow):
         # --- Instantiate Modular Widgets ---
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path)
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path)
-        self.terminal_tab = CustomCommandsWidget(self.working_directory)
+        self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
 
 
         # --- Add Widgets as Tabs ---
