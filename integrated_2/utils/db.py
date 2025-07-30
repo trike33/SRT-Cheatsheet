@@ -145,14 +145,12 @@ def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
 def initialize_db():
-    """Initializes the database with necessary tables and default data."""
-    if os.path.exists(DB_FILE):
-        return
-
+    """Initializes the database only if it doesn't already exist."""
+    db_exists = os.path.exists(DB_FILE)
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Commands Table
+
+    # Create tables if they don't exist
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS commands (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,30 +160,42 @@ def initialize_db():
         execution_order INTEGER UNIQUE
     )""")
     
-    # Settings Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )""")
-    
-    # Default commands and settings
-    default_commands = [
-        ('internal:run_domain_extracter --input root_domains.txt --output subdomains.txt', 0, 0, 1),
-        ('subfinder -dL scope_domains.txt -o subfinder_out.txt', 1, 0, 2),
-        ('internal:run_domain_enum --subdomains subdomains.txt --scope scope_domains.txt --output final_subdomains.txt', 0, 0, 3)
-    ]
-    
-    cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
-    
-    default_settings = {
-        'dark_theme_stylesheet': dark_theme_stylesheet,
-        'light_theme_stylesheet': light_theme_stylesheet,
-        'active_theme': 'dark'
-    }
-    
-    for key, value in default_settings.items():
-        cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    # If the database was just created, populate it with default data
+    if not db_exists:
+        default_commands = [
+            # Command, is_background, use_shell, order
+            ("internal:run_ipparser --scope_file {scope_file} --output scopeips", 0, 0, 1),
+            ("httpx -title -tech-detect -sc -cl -fr -o httpx_out -l scopeips", 0, 0, 2),
+            ("sudo naabu -hL scopeips -ports full -exclude-ports 80,443,8080,8443 -Pn -o naabu_out", 1, 0, 3),
+            ("internal:run_domain_extracter --input httpx_out --output httpx_out_domains", 0, 0, 4),
+            ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 5),
+            ("subfinder -dL domains -o subfinder_out", 1, 0, 6),
+            # FIX: Use {{}} to escape braces for .format()
+            ("while read -r ip; do nslookup \"$ip\" | awk '/name =/ {{print $4}}' >> reverse_dns_out; done < scopeips", 0, True, 7),
+            ("internal:run_domain_enum --subdomains subfinder_out --scope scopeips --output subdomains", 0, 0, 8),
+            ("internal:run_domain_enum --subdomains reverse_dns_out --scope scopeips --output subdomains", 0, 0, 9),
+            ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 10),
+            ("internal:run_format_ips --input scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, True, 11),
+            ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_extraports -l naabu_out", 0, 0, 12),
+            ("katana -list subdomains -jc -o katana_out_subdomains", 1, 0, 13)
+        ]
+        cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
+ 
+        cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
+        
+        default_settings = {
+            'dark_theme_stylesheet': dark_theme_stylesheet,
+            'light_theme_stylesheet': light_theme_stylesheet,
+            'active_theme': 'dark'
+        }
+        for key, value in default_settings.items():
+            cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     conn.commit()
     conn.close()
@@ -207,6 +217,19 @@ def save_commands(commands):
     cursor.execute("DELETE FROM commands")
     cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)",
                        [(c['command_text'], c['run_in_background'], c['use_shell'], c['execution_order']) for c in commands])
+    conn.commit()
+    conn.close()
+
+# --- NEW FUNCTION ---
+def update_command(command_id, text, use_shell, order, background):
+    """Updates a single command in the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE commands
+        SET command_text = ?, use_shell = ?, execution_order = ?, run_in_background = ?
+        WHERE id = ?
+    """, (text, use_shell, order, background, command_id))
     conn.commit()
     conn.close()
 
