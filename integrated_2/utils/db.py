@@ -169,6 +169,17 @@ def initialize_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS interesting_keywords ( id INTEGER PRIMARY KEY, keyword TEXT NOT NULL UNIQUE )""")
 
+   # Report templates table 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS report_templates (
+        id INTEGER PRIMARY KEY,
+        category TEXT NOT NULL UNIQUE,
+        description TEXT,
+        impact TEXT,
+        validation_steps TEXT,
+        fix_recommendation TEXT
+    )""")
+
     # --- Populate with default data ONLY if the database file is new ---
     if not db_exists:
         # (Default commands and sudo_commands insertion remains the same)
@@ -197,8 +208,8 @@ def initialize_db():
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out -l scopeips", 0, 0, 2),
             ("internal:run_domain_extracter --input httpx_out --output httpx_out_domains", 0, 0, 4),
             ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 5),
-            ("subfinder -dL domains -o subfinder_out", 1, 0, 6),
-            ("while read -r ip; do nslookup \"$ip\" | awk '/name =/ {{print $4}}' >> reverse_dns_out; done < scopeips", 0, True, 7),
+            ("subfinder -dL domains -o subfinder_out", 0, 0, 6),
+            ("internal:run_reverse_dns --input scopeips --output reverse_dns_out", 0, 0, 7),
             ("internal:run_domain_enum --subdomains subfinder_out --scope scopeips --output subdomains", 0, 0, 8),
             ("internal:run_domain_enum --subdomains reverse_dns_out --scope scopeips --output subdomains", 0, 0, 9),
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 10),
@@ -221,6 +232,28 @@ def initialize_db():
         }
         for key, value in default_settings.items():
             cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+       # Default templates   
+        default_templates = [
+            (
+                'Cross-Site Scripting (XSS)',
+                "The application is vulnerable to Cross-Site Scripting (XSS). The endpoint at {URL} does not properly sanitize user-supplied input, allowing an attacker to inject malicious scripts. These scripts are then executed in the victim's browser.",
+                "An attacker could hijack user sessions, deface the website, or redirect users to malicious sites, leading to credential theft and a loss of trust in the application.",
+                "1. Navigate to the vulnerable URL.\n2. Insert a standard XSS payload, such as `<script>alert('XSS')</script>`, into the affected parameter.\n3. Observe that the script executes in the browser.",
+                "Implement context-aware output encoding on all user-supplied data. Utilize a Content Security Policy (CSP) to restrict the sources from which scripts can be loaded."
+            ),
+            (
+                'SQL Injection (SQLi)',
+                "The application is vulnerable to SQL Injection. A parameter at the specified URL ({URL}) is directly used in a database query without proper sanitization, allowing an attacker to manipulate the query's logic.",
+                "Successful exploitation could lead to unauthorized access to sensitive data, modification or deletion of data, and potentially full server compromise.",
+                "1. Identify the vulnerable parameter in the URL.\n2. Submit a payload like `' OR 1=1 --`.\n3. Confirm that the application's response is altered, indicating that the query was manipulated (e.g., a successful login without a valid password).",
+                "Use parameterized queries (prepared statements) for all database interactions. Avoid building SQL queries with string concatenation. Enforce the principle of least privilege for database users."
+            )
+        ]
+        cursor.executemany("""
+            INSERT INTO report_templates (category, description, impact, validation_steps, fix_recommendation)
+            VALUES (?, ?, ?, ?, ?)
+        """, default_templates)
 
     conn.commit()
     conn.close()
@@ -351,3 +384,62 @@ def get_interesting_keywords():
     cursor = conn.cursor()
     cursor.execute("SELECT keyword FROM interesting_keywords")
     return [row[0] for row in cursor.fetchall()]
+
+def get_all_template_categories():
+    """Retrieves all available vulnerability categories for the report generator."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT category FROM report_templates ORDER BY category")
+    return [row[0] for row in cursor.fetchall()]
+
+def get_report_template(category):
+    """Retrieves the template text for a specific vulnerability category."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT template_text FROM report_templates WHERE category = ?", (category,))
+    result = cursor.fetchone()
+    return result[0] if result else ""
+
+def get_all_templates():
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM report_templates ORDER BY category")
+    return [dict(row) for row in cursor.fetchall()]
+
+def get_template_by_category(category):
+    """Retrieves a single, structured template."""
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM report_templates WHERE category = ?", (category,))
+    result = cursor.fetchone()
+    return dict(result) if result else None
+
+def add_template(category, desc, impact, validation, fix):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO report_templates (category, description, impact, validation_steps, fix_recommendation)
+        VALUES (?, ?, ?, ?, ?)
+    """, (category, desc, impact, validation, fix))
+    conn.commit()
+    conn.close()
+
+def update_template(tpl_id, category, desc, impact, validation, fix):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE report_templates SET category=?, description=?, impact=?, validation_steps=?, fix_recommendation=?
+        WHERE id = ?
+    """, (category, desc, impact, validation, fix, tpl_id))
+    conn.commit()
+    conn.close()
+
+def delete_template(template_id):
+    """Deletes a report template by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM report_templates WHERE id = ?", (template_id,))
+    conn.commit()
+    conn.close()

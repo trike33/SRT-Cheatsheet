@@ -114,3 +114,29 @@ def run_domain_enum(subdomains_file_path, scope_file_path, output_file_path):
             out_file.write(f"{domain}\n")
             
     return True, f"Found and saved {len(in_scope_domains)} domains in scope."
+
+def run_reverse_dns(input_file_path, output_file_path):
+    """
+    Performs a reverse DNS lookup for each IP in the input file and saves
+    the hostnames to the output file.
+    """
+    try:
+        with open(input_file_path, 'r') as file:
+            ips = [line.strip() for line in file if line.strip()]
+    except FileNotFoundError:
+        return False, f"Input file for reverse DNS not found: {input_file_path}"
+
+    hostnames = []
+    for ip in ips:
+        try:
+            hostname, _, _ = socket.gethostbyaddr(ip)
+            hostnames.append(hostname)
+        except (socket.herror, socket.gaierror):
+            # Ignore IPs that don't resolve
+            continue
+    
+    with open(output_file_path, 'a') as out_file:
+        for host in hostnames:
+            out_file.write(f"{host}\n")
+            
+    return True, f"Found {len(hostnames)} hostnames from reverse DNS lookups."

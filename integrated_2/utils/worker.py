@@ -53,6 +53,7 @@ class Worker(QThread):
                 "run_domain_extracter": recon_tools.run_domain_extracter,
                 "run_domain_enum": recon_tools.run_domain_enum,
                 "run_format_ips": recon_tools.run_format_ips,
+                "run_reverse_dns": recon_tools.run_reverse_dns,
             }
 
             if args.command in tool_map:
@@ -70,6 +71,9 @@ class Worker(QThread):
                     tool_args['output_file_path'] = os.path.join(self.output_dir, args.output)
                 elif args.command == 'run_format_ips':
                     tool_args['input_file_path'] = os.path.join(self.output_dir, args.input)
+                elif args.command == 'run_reverse_dns':
+                    tool_args['input_file_path'] = os.path.join(self.output_dir, args.input)
+                    tool_args['output_file_path'] = os.path.join(self.output_dir, args.output)
 
                 success, message = tool_map[args.command](**tool_args)
 

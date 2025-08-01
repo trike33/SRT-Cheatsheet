@@ -10,6 +10,7 @@ from modules.scan_control import ScanControlWidget
 from modules.playground import PlaygroundTabWidget
 from modules.custom_commands import CustomCommandsWidget
 from modules.sudo_terminal import SudoTerminalWidget
+from modules.report_tab import ReportTabWidget
 
 class ReconAutomatorApp(QMainWindow):
     """
@@ -32,6 +33,7 @@ class ReconAutomatorApp(QMainWindow):
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
+        self.report_tab = ReportTabWidget()
 
 
         # --- Add Widgets as Tabs ---
@@ -39,6 +41,7 @@ class ReconAutomatorApp(QMainWindow):
         self.tabs.addTab(self.playground_tab, "Playground")
         self.tabs.addTab(self.terminal_tab, "Terminal")
         self.tabs.addTab(self.sudo_terminal_tab, "Sudo Terminal")
+        self.tabs.addTab(self.report_tab, "Reporting")
 
 
         # --- Connect Signals Between Modules ---
