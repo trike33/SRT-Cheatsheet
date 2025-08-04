@@ -159,6 +159,8 @@ class CustomCommandsWidget(QWidget):
             slot['stop_btn'].setEnabled(False)
             slot['input'].setEnabled(True)
             slot['status_icon'].setPixmap(self.stopped_icon.pixmap(QSize(16, 16)))
+            # Reset the timer label's text
+            slot['timer_lbl'].setText("Elapsed: 00:00:00")
             
         if index in self.processes:
             del self.processes[index]

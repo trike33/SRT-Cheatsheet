@@ -6,7 +6,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon, QFont
 from utils import db as command_db
 from modules.dialogs import TemplateEditorDialog
-import markdown
+import markdown, re
 
 class ReportTabWidget(QWidget):
     """A tab for generating vulnerability reports from templates."""
@@ -136,7 +136,13 @@ class ReportTabWidget(QWidget):
         self.impact_preview.setHtml(markdown.markdown(custom_impact if custom_impact else template_data.get('impact', '')))
         self.fix_preview.setHtml(markdown.markdown(template_data.get('fix_recommendation', '')))
         
-        self.validation_steps = [step.strip() for step in template_data.get('validation_steps', '').splitlines() if step.strip()]
+                # Get the full markdown text for validation steps
+        validation_text = template_data.get('validation_steps', '')
+        # Split the text into steps using the "## STEP <number>:" pattern as a delimiter
+        steps = re.split(r'(?=## STEP \d+:)', validation_text)
+        # Filter out any empty strings that might result from the split and strip whitespace
+        self.validation_steps = [step.strip() for step in steps if step.strip()]
+
         self.current_step_index = 0
         self.update_validation_step_view()
 
