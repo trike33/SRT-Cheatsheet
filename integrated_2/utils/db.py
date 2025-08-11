@@ -213,8 +213,9 @@ def initialize_db():
             ("internal:run_domain_enum --subdomains subfinder_out --scope scopeips --output subdomains", 0, 0, 8),
             ("internal:run_domain_enum --subdomains reverse_dns_out --scope scopeips --output subdomains", 0, 0, 9),
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 10),
-            ("internal:run_format_ips --input scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, True, 11),
-            ("katana -list subdomains -jc -o katana_out_subdomains", 1, 0, 12)
+            ("internal:run_format_ips --input scopeips --output scopeips_80808443", 0, 0, 11),
+            ("httpx -l scopeips_80808443 -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, 0, 12),
+            ("katana -list subdomains -jc -o katana_out_subdomains", 1, 0, 13)
         ]
         cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
         

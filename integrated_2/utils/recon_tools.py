@@ -61,13 +61,24 @@ def run_domain_extracter(input_file_path, output_file_path):
     return True, f"Extracted and saved {len(unique_domains)} unique domains."
 
 # --- From format-ips.py ---
-def run_format_ips(input_file_path):
+def run_format_ips(input_file_path, output_file_path=None):
     """
-    Reads a file of IPs, formats them with ports 8080 and 8443,
-    and returns the formatted list as a string to be piped.
+    Reads a file of IPs and formats them with ports 8080 and 8443.
+
+    If an output_file_path is provided, it writes the result to that file.
+    Otherwise, it returns the formatted list as a string.
+
+    Args:
+        input_file_path (str): The path to the input file containing IPs.
+        output_file_path (str, optional): The path to the output file.
+                                          Defaults to None.
+
+    Returns:
+        tuple: A tuple containing a boolean for success and a message.
     """
     ports = [8080, 8443]
     formatted_list = []
+
     try:
         with open(input_file_path, 'r') as file:
             ips = [line.strip() for line in file if line.strip()]
@@ -78,7 +89,19 @@ def run_format_ips(input_file_path):
         for port in ports:
             formatted_list.append(f"{ip}:{port}")
     
-    return True, "\n".join(formatted_list)
+    output_data = "\n".join(formatted_list)
+
+    # Check if an output file path was provided
+    if output_file_path:
+        try:
+            with open(output_file_path, 'w') as out_file:
+                out_file.write(output_data)
+            return True, f"Formatted IPs successfully written to {output_file_path}"
+        except IOError as e:
+            return False, f"Error writing to file: {e}"
+    else:
+        # If no output path, return the data as a string (original behavior)
+        return True, output_data
 
 # --- From domain_enum.py ---
 def run_domain_enum(subdomains_file_path, scope_file_path, output_file_path):

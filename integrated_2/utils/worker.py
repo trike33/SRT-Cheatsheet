@@ -44,6 +44,7 @@ class Worker(QThread):
         parser.add_argument('--output')
         parser.add_argument('--subdomains')
         parser.add_argument('--scope')
+        parser.add_argument('--scope_file')
 
         try:
             args = parser.parse_args(shlex.split(command_text.replace("internal:", "")))
@@ -71,6 +72,8 @@ class Worker(QThread):
                     tool_args['output_file_path'] = os.path.join(self.output_dir, args.output)
                 elif args.command == 'run_format_ips':
                     tool_args['input_file_path'] = os.path.join(self.output_dir, args.input)
+                    if args.output:
+                        tool_args['output_file_path'] = os.path.join(self.output_dir, args.output)
                 elif args.command == 'run_reverse_dns':
                     tool_args['input_file_path'] = os.path.join(self.output_dir, args.input)
                     tool_args['output_file_path'] = os.path.join(self.output_dir, args.output)
@@ -125,7 +128,10 @@ class Worker(QThread):
             if not self.is_running:
                 break
             
-            command_text = cmd_row['command_text'].format(target_name=self.target_name)
+            command_text = cmd_row['command_text'].format(
+    target_name=self.target_name, 
+    scope_file=self.scope_file
+)
             
             self.progress.emit(f"\n<span style='color: #007acc;'>--- Running Step {i+1}/{total_commands}: {command_text} ---</span>")
             self.progress_updated.emit(i + 1, total_commands)
