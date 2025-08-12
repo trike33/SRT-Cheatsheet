@@ -114,33 +114,33 @@ class Worker(QThread):
             self.error.emit(f"Error executing '{command_text}': {e}")
     
     def run(self):
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
         commands = command_db.get_all_commands()
         total_commands = len(commands)
 
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-        
         # Initial IP Parser run
         self.progress.emit("[*] Starting with IP parsing...")
-        self.run_internal_command(f"internal:run_ipparser --input {self.scope_file} --output scopeips")
+        self.run_internal_command(f"internal:run_ipparser --scope_file {self.scope_file} --output scopeips")
 
         for i, cmd_row in enumerate(commands):
             if not self.is_running:
                 break
-            
+
             command_text = cmd_row['command_text'].format(
-    target_name=self.target_name, 
-    scope_file=self.scope_file
-)
-            
+                target_name=self.target_name,
+                scope_file=self.scope_file
+            )
+
             self.progress.emit(f"\n<span style='color: #007acc;'>--- Running Step {i+1}/{total_commands}: {command_text} ---</span>")
             self.progress_updated.emit(i + 1, total_commands)
-            
+
             if cmd_row['run_in_background']:
                 self.run_background_command(command_text)
             elif command_text.startswith("internal:"):
                 self.run_internal_command(command_text)
             else:
                 self.run_external_command(command_text, cmd_row['use_shell'])
-        
+
         self.finished.emit()

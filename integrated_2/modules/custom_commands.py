@@ -169,3 +169,10 @@ class CustomCommandsWidget(QWidget):
             
     def set_working_directory(self, path):
         self.working_directory = path
+
+    def add_command_to_slot(self, command):
+        for i in range(self.num_slots):
+            if not self.slots[i]['input'].text():
+                self.slots[i]['input'].setText(command)
+                return
+        QMessageBox.information(self, "No Empty Slots", "All command slots are full. Please clear one to add the new command.")

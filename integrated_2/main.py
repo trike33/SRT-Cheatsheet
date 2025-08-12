@@ -21,7 +21,13 @@ class ReconAutomatorApp(QMainWindow):
         self.setWindowTitle("Reconnaissance Automator")
         self.setGeometry(100, 100, 1200, 800)
         
-        self.working_directory = os.path.expanduser("~")
+        # Load the last used CWD from the database
+        last_cwd = command_db.get_setting('last_cwd')
+        if last_cwd and os.path.exists(last_cwd):
+            self.working_directory = last_cwd
+        else:
+            self.working_directory = os.path.expanduser("~")
+        
         self.base_path = os.path.dirname(os.path.abspath(__file__))
         self.icon_path = os.path.join(self.base_path, "resources", "img")
 
@@ -30,11 +36,10 @@ class ReconAutomatorApp(QMainWindow):
 
         # --- Instantiate Modular Widgets ---
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path)
-        self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
+        self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
         self.report_tab = ReportTabWidget()
-
 
         # --- Add Widgets as Tabs ---
         self.tabs.addTab(self.scan_control_tab, "Scan Control")
@@ -42,7 +47,6 @@ class ReconAutomatorApp(QMainWindow):
         self.tabs.addTab(self.terminal_tab, "Terminal")
         self.tabs.addTab(self.sudo_terminal_tab, "Sudo Terminal")
         self.tabs.addTab(self.report_tab, "Reporting")
-
 
         # --- Connect Signals Between Modules ---
         self.scan_control_tab.scan_updated.connect(self.playground_tab.refresh_playground)
@@ -52,10 +56,12 @@ class ReconAutomatorApp(QMainWindow):
         self.apply_theme()
 
     def on_cwd_changed(self, new_path):
-        """Broadcasts the CWD change to all interested modules."""
+        """Broadcasts the CWD change to all interested modules and saves it."""
         self.working_directory = new_path
         self.playground_tab.set_working_directory(new_path)
         self.terminal_tab.set_working_directory(new_path)
+        # Save the new CWD to the database
+        command_db.set_setting('last_cwd', new_path)
 
     def apply_theme(self):
         """Applies the current theme and reloads icons for all modules."""

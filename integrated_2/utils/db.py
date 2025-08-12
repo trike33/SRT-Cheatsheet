@@ -206,16 +206,15 @@ def initialize_db():
         default_commands = [
             ("internal:run_ipparser --scope_file {scope_file} --output scopeips", 0, 0, 1),
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out -l scopeips", 0, 0, 2),
-            ("internal:run_domain_extracter --input httpx_out --output httpx_out_domains", 0, 0, 4),
-            ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 5),
-            ("subfinder -dL domains -o subfinder_out", 0, 0, 6),
-            ("internal:run_reverse_dns --input scopeips --output reverse_dns_out", 0, 0, 7),
-            ("internal:run_domain_enum --subdomains subfinder_out --scope scopeips --output subdomains", 0, 0, 8),
-            ("internal:run_domain_enum --subdomains reverse_dns_out --scope scopeips --output subdomains", 0, 0, 9),
-            ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 10),
-            ("internal:run_format_ips --input scopeips --output scopeips_80808443", 0, 0, 11),
-            ("httpx -l scopeips_80808443 -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, 0, 12),
-            ("katana -list subdomains -jc -o katana_out_subdomains", 1, 0, 13)
+            ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 3),
+            ("subfinder -dL domains -o subfinder_out", 0, 0, 4),
+            ("internal:run_reverse_dns --input scopeips --output reverse_dns_out", 0, 0, 5),
+            ("internal:run_domain_enum --subdomains subfinder_out --scope scopeips --output subdomains", 0, 0, 6),
+            ("internal:run_domain_enum --subdomains reverse_dns_out --scope scopeips --output subdomains", 0, 0, 7),
+            ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 8),
+            ("internal:run_format_ips --input scopeips --output scopeips_80808443", 0, 0, 9),
+            ("httpx -l scopeips_80808443 -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, 0, 10),
+            ("katana -list subdomains -jc -o katana_out_subdomains", 0, 0, 11)
         ]
         cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
         

@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHBoxLayout, QDialogButtonBox, QLineEdit,
     QCheckBox, QSpinBox, QMessageBox, QInputDialog, QLabel,
-    QTextEdit, QFileDialog, QSplitter, QHeaderView, QTabWidget
+    QTextEdit, QFileDialog, QSplitter, QHeaderView, QTabWidget, QComboBox
 )
 from PyQt5.QtCore import Qt
 from utils import db as command_db
@@ -224,15 +224,17 @@ class CommandEditorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Command Sequence Editor")
         self.setGeometry(150, 150, 800, 600)
-        
+
         layout = QVBoxLayout(self)
-        
+
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["ID", "Command", "Use Shell", "Run in BG", "Order"])
         self.table.setColumnHidden(0, True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         layout.addWidget(self.table)
-        
+
         button_layout = QHBoxLayout()
         add_btn = QPushButton("Add")
         edit_btn = QPushButton("Edit")
@@ -243,11 +245,10 @@ class CommandEditorDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.load_commands()
-        
+
         add_btn.clicked.connect(self.add_row)
         edit_btn.clicked.connect(self.edit_row)
         delete_btn.clicked.connect(self.delete_row)
-
     def load_commands(self):
         self.table.setRowCount(0)
         commands = command_db.get_all_commands()
@@ -359,3 +360,104 @@ class SudoCommandEditorDialog(QDialog):
         if reply == QMessageBox.Yes:
             command_db.delete_sudo_command(cmd_id)
             self.load_commands()
+
+class FuzzerDialog(QDialog):
+    """A dialog for building and saving FFUF commands."""
+    def __init__(self, url=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ffuf Command Builder")
+        self.setMinimumWidth(500)
+        main_layout = QVBoxLayout(self)
+
+        # URL
+        url_layout = QHBoxLayout()
+        url_layout.addWidget(QLabel("Target URL:"))
+        self.url_input = QLineEdit()
+        if url:
+            self.url_input.setText(url + "FUZZ")
+        else:
+            self.url_input.setPlaceholderText("https://example.com/FUZZ")
+        url_layout.addWidget(self.url_input)
+        main_layout.addLayout(url_layout)
+
+        # Wordlist
+        wordlist_layout = QHBoxLayout()
+        wordlist_layout.addWidget(QLabel("Wordlist:"))
+        self.wordlist_combo = QComboBox()
+        # Common wordlist paths for Linux
+        common_paths = [
+            "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+            "/usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt",
+            "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                self.wordlist_combo.addItem(path)
+        self.wordlist_combo.addItem("Browse...")
+        
+        self.wordlist_combo.currentIndexChanged.connect(self.on_wordlist_change)
+        wordlist_layout.addWidget(self.wordlist_combo)
+        main_layout.addLayout(wordlist_layout)
+        
+        self.wordlist_path_input = QLineEdit()
+        if self.wordlist_combo.count() > 1:
+            self.wordlist_path_input.setText(self.wordlist_combo.currentText())
+        main_layout.addWidget(self.wordlist_path_input)
+
+        # Options
+        options_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Threads:"))
+        self.threads_spinbox = QSpinBox()
+        self.threads_spinbox.setRange(1, 200)
+        self.threads_spinbox.setValue(40)
+        options_layout.addWidget(self.threads_spinbox)
+
+        options_layout.addWidget(QLabel("Timeout:"))
+        self.timeout_spinbox = QSpinBox()
+        self.timeout_spinbox.setRange(1, 300)
+        self.timeout_spinbox.setValue(10)
+        options_layout.addWidget(self.timeout_spinbox)
+
+        self.redirects_checkbox = QCheckBox("Follow Redirects")
+        options_layout.addWidget(self.redirects_checkbox)
+        options_layout.addStretch()
+        main_layout.addLayout(options_layout)
+
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.on_save)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+        self.command = None
+
+    def on_wordlist_change(self, index):
+        if self.wordlist_combo.itemText(index) == "Browse...":
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select Wordlist", "", "Text Files (*.txt)")
+            if file_path:
+                self.wordlist_path_input.setText(file_path)
+                # Check if this path is already in the combo box
+                if self.wordlist_combo.findText(file_path) == -1:
+                    # Insert new path before "Browse..."
+                    self.wordlist_combo.insertItem(self.wordlist_combo.count() - 1, file_path)
+                self.wordlist_combo.setCurrentText(file_path)
+        else:
+            self.wordlist_path_input.setText(self.wordlist_combo.currentText())
+    
+    def on_save(self):
+        url = self.url_input.text()
+        wordlist = self.wordlist_path_input.text()
+        threads = self.threads_spinbox.value()
+        timeout = self.timeout_spinbox.value()
+        redirects = "-r" if self.redirects_checkbox.isChecked() else ""
+        
+        if not url or not wordlist:
+            QMessageBox.warning(self, "Input Error", "Target URL and Wordlist are required.")
+            return
+            
+        if "FUZZ" not in url:
+            QMessageBox.warning(self, "Input Error", "Target URL must contain the 'FUZZ' keyword.")
+            return
+
+        self.command = f"ffuf -w \"{wordlist}\" -u {url} -t {threads} -timeout {timeout} {redirects}"
+        self.accept()
