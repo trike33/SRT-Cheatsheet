@@ -103,6 +103,29 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   domains discovered on the web side through `scopecheck` against the host
   stage's IP scope; the pipeline's two stages are independent today.
 
+### Active testing & UX (from engagement notes, not started)
+
+Noted for later — none of these are scoped or designed yet, just captured
+so they aren't lost:
+
+- **Parameters → vulnerability-class correlation** — go beyond `params`'
+  current static marker-matching to a richer mapping from a discovered
+  parameter to the vulnerability classes worth testing it for.
+- **A payload library**, sourced from PayloadsAllTheThings, for active
+  testing modules to draw on (ties into auto-detect-and-send below).
+- **Persist scan results to a local SQLite db**, fetchable via native `srt`
+  commands, instead of only flat files/JSON.
+- **Re-run the full methodology without overwriting old scans** — versioned
+  or timestamped runs (likely the same db as above).
+- **Detect error-based and time-based behaviors** — blind SQLi/command
+  injection style signals during active testing.
+- **Screenshot discovered websites** (gowitness/aquatone-style).
+- **Auto-detect and send payloads** — close the loop from recon
+  (parameters, tech-detect) to actually firing payloads at likely-vulnerable
+  targets.
+- **A pseudo-interactive shell** so flags don't have to be remembered every
+  time.
+
 ### Fuzzer / pipeline
 
 - **Recursion content-length auto-filter inheritance** — optionally seed a
