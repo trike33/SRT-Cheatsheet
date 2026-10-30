@@ -4,10 +4,11 @@ import "os"
 
 // ANSI colors used by the robots and burpscope commands.
 const (
-	ansiReset = "\033[0m"
-	ansiRed   = "\033[91m"
-	ansiGreen = "\033[92m"
-	ansiCyan  = "\033[36m"
+	ansiReset  = "\033[0m"
+	ansiRed    = "\033[91m"
+	ansiGreen  = "\033[92m"
+	ansiYellow = "\033[93m"
+	ansiCyan   = "\033[36m"
 )
 
 // colorMode decides whether to emit ANSI escapes.

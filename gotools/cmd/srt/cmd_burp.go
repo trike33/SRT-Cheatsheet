@@ -34,9 +34,10 @@ type burpScope struct {
 }
 
 type burpEntry struct {
-	Enabled bool   `json:"enabled"`
-	Host    string `json:"host"`
-	File    string `json:"file"`
+	Enabled  bool   `json:"enabled"`
+	Protocol string `json:"protocol"` // "any", "http", or "https"
+	Host     string `json:"host"`
+	File     string `json:"file"`
 }
 
 func loadBurpScope(path string) (*burpScope, error) {

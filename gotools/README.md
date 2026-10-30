@@ -31,6 +31,10 @@ GOTOOLCHAIN=local go build -o srt ./cmd/srt
 
 Requires Go 1.24+. Install system-wide with `sudo make install` (-> `/usr/local/bin/srt`).
 
+CI (`.github/workflows/build.yml`) vets, tests, and cross-compiles for
+linux/darwin/windows (amd64 + arm64) on every push; pushing a `vX.Y.Z` tag
+publishes those binaries as a GitHub Release.
+
 ## Commands
 
 Run `srt <command> -h` for flags. Each maps to a script in this repo:
@@ -50,6 +54,7 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `robots` | `robots-checker.py` | Fetch robots.txt and probe each Allow/Disallow path |
 | `snyk` | `synk_parser.py` | Test a version against a Snyk package's advisory ranges |
 | `relpaths` | `relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
+| `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
 
 ## Workflow examples
 
@@ -108,6 +113,58 @@ cat live_hosts.txt | srt robots -color never
 # is Moodle 3.7 affected? (needs outbound internet to security.snyk.io)
 srt snyk -url "https://security.snyk.io/package/composer/moodle%2Fmoodle" -version 3.7
 ```
+
+## `fuzz` — scope-aware bruteforcer
+
+A concurrent directory/file bruteforcer built for **precise control over the
+traffic you send**, with a hard rule: it never requests anything outside your
+Burp scope.
+
+### Precision controls
+
+- **Scope gating** (`-scope scope.json`): the `host` and `file` fields of a Burp
+  scope export are regexes, and the fuzzer compiles and evaluates them exactly as
+  Burp does — a request is sent only if it matches an **include** rule and no
+  **exclude** rule (protocol-aware: an `https`-only exclude won't block `http`).
+  Out-of-scope candidates are counted and dropped *before* a packet goes out.
+- **Rate limiting** (`-rate N`): a global token bucket caps total requests/second
+  across *all* workers, independent of `-c`.
+- **Pacing** (`-delay`, `-jitter`): fixed + random delay before each request.
+- **Concurrency** (`-c`), **timeout**, **retries**.
+- **Exact request shaping**: `-X` method, repeatable `-H "Name: Value"`, `-d`
+  body, `-ua`, and `-proxy http://127.0.0.1:8080` to send everything through
+  Burp. `FUZZ` can appear in the URL, any header, or the body.
+- **Matchers / filters**: `-mc -fc` (status), `-ms -fs` (size), `-mw -fw`
+  (words), `-ml -fl` (lines), `-mr -fr` (body regex). Each accepts lists and
+  ranges, e.g. `-mc 200-299,403`.
+- **Auto-calibration** (`-ac`): probes a few random paths first, fingerprints the
+  soft-404 response, and auto-filters anything that matches — kills false
+  positives on sites that return 200 for everything.
+- **Recursion** (`-recursion`, `-depth N`): descends into discovered directories
+  (detected via redirect-to-slash), still gated by scope.
+
+### Examples
+
+```bash
+# Point it at the scope file and go: it seeds https://<include-host>/FUZZ for
+# every concrete in-scope host, and refuses anything out of scope.
+srt fuzz -scope loandepot.json -w raft-medium-directories.txt -ac -recursion
+
+# Classic single target, with extensions, through Burp, rate-limited:
+srt fuzz -u https://apply.myloandepot.com/FUZZ \
+  -w directory-list-2.3-medium.txt -e .php -e .bak \
+  -scope loandepot.json -proxy http://127.0.0.1:8080 \
+  -rate 20 -c 40 -ac -recursion -depth 2
+
+# Only 200s and 403s, hide the 1337-byte boilerplate page, pipe hits onward:
+srt fuzz -u https://host/FUZZ -w words.txt -mc 200,403 -fs 1337 -silent | httpx -silent
+
+# FUZZ a header value (e.g. subdomain/vhost brute):
+srt fuzz -u https://target/ -H "Host: FUZZ.target" -w subs.txt -mc all -fs 0
+```
+
+`-silent` prints only matched URLs (clean for pipes); `-json` emits JSON lines;
+`-o file` saves hits. Progress and the final summary go to stderr.
 
 ## Notes
 

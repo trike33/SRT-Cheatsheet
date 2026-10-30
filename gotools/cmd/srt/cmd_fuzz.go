@@ -1,0 +1,260 @@
+package main
+
+import (
+	"flag"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+func init() {
+	register(&command{
+		name:    "fuzz",
+		group:   "WEB recon",
+		summary: "Scope-aware concurrent directory/file bruteforcer with precise traffic control",
+		run:     runFuzz,
+	})
+}
+
+// stringSlice collects repeated flags (-H, -w, -e).
+type stringSlice []string
+
+func (s *stringSlice) String() string { return strings.Join(*s, ",") }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+const fuzzKeyword = "FUZZ"
+
+// fuzzJob is one candidate to request. base is the template (still containing
+// FUZZ) so recursion can re-expand it; word is the substituted value.
+type fuzzJob struct {
+	base  string
+	word  string
+	depth int
+}
+
+type fuzzResult struct {
+	URL    string `json:"url"`
+	Status int    `json:"status"`
+	Length int    `json:"length"`
+	Words  int    `json:"words"`
+	Lines  int    `json:"lines"`
+}
+
+func runFuzz(args []string) error {
+	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
+
+	// Targets & wordlists.
+	target := fs.String("u", "", "target URL with FUZZ keyword (e.g. https://h/FUZZ); FUZZ also works in -H/-d")
+	var wordlists stringSlice
+	fs.Var(&wordlists, "w", "wordlist file (repeatable). Omit to read the wordlist from stdin")
+	var exts stringSlice
+	fs.Var(&exts, "e", "extension to also try per word, e.g. -e .php -e .bak (repeatable)")
+	scopeFile := fs.String("scope", "", "Burp scope JSON: only in-scope requests are sent (and seeds targets if -u is omitted)")
+
+	// Precise traffic control.
+	method := fs.String("X", "GET", "HTTP method")
+	var headers stringSlice
+	fs.Var(&headers, "H", `extra header "Name: Value" (repeatable)`)
+	body := fs.String("d", "", "request body")
+	ua := fs.String("ua", defaultUA, "User-Agent")
+	proxy := fs.String("proxy", "", "proxy URL, e.g. http://127.0.0.1:8080 to route through Burp")
+	conc := fs.Int("c", 40, "concurrent workers")
+	rate := fs.Int("rate", 0, "max total requests/second across all workers (0 = unlimited)")
+	delay := fs.Duration("delay", 0, "fixed delay before each request")
+	jitter := fs.Duration("jitter", 0, "random extra delay up to this much, added to -delay")
+	timeout := fs.Duration("timeout", 10*time.Second, "per-request timeout")
+	retries := fs.Int("retries", 1, "retries on transport error/timeout")
+	insecure := fs.Bool("insecure", true, "skip TLS verification")
+
+	// Matchers / filters.
+	mc := fs.String("mc", "200-299,301,302,307,308,401,403,405,500", "match HTTP codes (or 'all')")
+	fc := fs.String("fc", "", "filter (hide) HTTP codes")
+	ms := fs.String("ms", "", "match response sizes (bytes)")
+	fsz := fs.String("fs", "", "filter response sizes (bytes)")
+	mw := fs.String("mw", "", "match word counts")
+	fw := fs.String("fw", "", "filter word counts")
+	ml := fs.String("ml", "", "match line counts")
+	fl := fs.String("fl", "", "filter line counts")
+	mr := fs.String("mr", "", "match body regex")
+	fr := fs.String("fr", "", "filter body regex")
+	ac := fs.Bool("ac", false, "auto-calibrate: fingerprint soft-404s and filter matching responses")
+
+	// Recursion & output.
+	recursion := fs.Bool("recursion", false, "recurse into discovered directories")
+	depth := fs.Int("depth", 0, "max recursion depth (0 = unlimited)")
+	out := fs.String("o", "", "write matched results to this file")
+	jsonOut := fs.Bool("json", false, "emit JSON lines instead of the table")
+	silent := fs.Bool("silent", false, "print only matched URLs (pipe into httpx/nuclei)")
+	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cm := parseColorMode(*colorFlag)
+
+	// Build the matcher.
+	m, err := buildMatcher(*mc, *fc, *ms, *fsz, *mw, *fw, *ml, *fl, *mr, *fr)
+	if err != nil {
+		return err
+	}
+
+	// Load scope if given.
+	var scope *scopeMatcher
+	if *scopeFile != "" {
+		scope, err = loadScopeMatcher(*scopeFile)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Determine base templates.
+	bases, err := fuzzBases(*target, scope)
+	if err != nil {
+		return err
+	}
+	if len(bases) == 0 {
+		return errMissing("no targets: pass -u <url with FUZZ>, or -scope <file> to seed from include hosts")
+	}
+
+	// Load words (from -w files, else stdin).
+	words, err := loadWords(wordlists)
+	if err != nil {
+		return err
+	}
+	if len(words) == 0 {
+		return errMissing("empty wordlist (use -w <file> or pipe words on stdin)")
+	}
+
+	client := newHTTPClientOpts(*timeout, *insecure, *proxy, false)
+
+	// Parse headers once.
+	hdrs, err := parseHeaders(headers)
+	if err != nil {
+		return err
+	}
+
+	limiter := newRateLimiter(*rate)
+	defer limiter.close()
+
+	eng := &fuzzEngine{
+		client:      client,
+		limiter:     limiter,
+		matcher:     m,
+		scope:       scope,
+		method:      *method,
+		headers:     hdrs,
+		body:        *body,
+		ua:          *ua,
+		delay:       *delay,
+		jitter:      *jitter,
+		retries:     *retries,
+		recursion:   *recursion,
+		maxDepth:    *depth,
+		words:       words,
+		exts:        exts,
+		cm:          cm,
+		jsonOut:     *jsonOut,
+		silent:      *silent,
+		visited:     map[string]struct{}{},
+		workerCount: max(1, *conc),
+	}
+
+	if *out != "" {
+		w, err := os.Create(*out)
+		if err != nil {
+			return err
+		}
+		defer w.Close()
+		eng.outFile = w
+	}
+
+	eng.run(bases, *ac)
+	return nil
+}
+
+// fuzzEngine holds shared state for one fuzz run.
+type fuzzEngine struct {
+	client      *http.Client
+	limiter     *rateLimiter
+	matcher     *matcher
+	scope       *scopeMatcher
+	method      string
+	headers     [][2]string
+	body        string
+	ua          string
+	delay       time.Duration
+	jitter      time.Duration
+	retries     int
+	recursion   bool
+	maxDepth    int
+	words       []string
+	exts        []string
+	cm          colorMode
+	jsonOut     bool
+	silent      bool
+	workerCount int
+
+	outFile io.Writer
+	outMu   sync.Mutex
+
+	jobs    chan fuzzJob
+	pending sync.WaitGroup
+
+	visited   map[string]struct{} // recursion bases already queued
+	visitedMu sync.Mutex
+
+	reqCount   atomic.Int64
+	matchCount atomic.Int64
+	skipCount  atomic.Int64 // out of scope
+	errCount   atomic.Int64
+}
+
+func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
+	// Optional calibration per base before the real run.
+	if autocalibrate {
+		for _, b := range bases {
+			e.calibrate(b)
+		}
+	}
+
+	e.jobs = make(chan fuzzJob, 4096)
+
+	var workers sync.WaitGroup
+	for i := 0; i < e.workerCount; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for j := range e.jobs {
+				e.process(j)
+				e.pending.Done()
+			}
+		}()
+	}
+
+	// Progress ticker on stderr.
+	stopProg := make(chan struct{})
+	go e.progress(stopProg)
+
+	// Seed jobs.
+	for _, b := range bases {
+		e.enqueueBase(b, 0)
+	}
+
+	// Close jobs once everything (including recursion) drains.
+	go func() {
+		e.pending.Wait()
+		close(e.jobs)
+	}()
+	workers.Wait()
+	close(stopProg)
+
+	e.summary()
+}
