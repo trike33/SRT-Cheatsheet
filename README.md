@@ -1,8 +1,13 @@
+<img src="srt-animated-glyph.svg" width="72" height="72" align="right" alt="">
+
 # SRT-Cheatsheet
 
 A bug-bounty / pentest recon toolkit built around **`srt`**, a single
-dependency-free Go CLI — that's the whole point of this repo now. See
-[`gotools/`](gotools/) for the tool itself:
+dependency-free Go CLI — that's the whole point of this repo now.
+
+**New here? Start with [QUICKSTART.md](QUICKSTART.md).**
+
+See [`gotools/`](gotools/) for the tool itself:
 
 - [`gotools/docs/methodology.md`](gotools/docs/methodology.md) — the HOST and
   WEB assessment methodology `srt` is built to automate.
