@@ -121,6 +121,12 @@ type manifest struct {
 // and otherwise reports "ok". Steps that need to report "skipped" return that
 // stepResult directly instead of going through runStep.
 func runStep(kind, name, target, output string, fn func() error) stepResult {
+	key := stepKey(kind, name, target, output)
+	if activeCheckpoint != nil && activeCheckpoint.has(key) {
+		if _, statErr := os.Stat(output); output == "" || statErr == nil {
+			return stepResult{Kind: kind, Name: name, Target: target, Output: output, Status: "ok", Detail: "resumed: already completed in a previous run", Duration: "0s"}
+		}
+	}
 	start := time.Now()
 	err := fn()
 	sr := stepResult{
@@ -134,6 +140,8 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	if err != nil {
 		sr.Status = "error"
 		sr.Detail = err.Error()
+	} else if activeCheckpoint != nil {
+		activeCheckpoint.mark(key)
 	}
 	return sr
 }

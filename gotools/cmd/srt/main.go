@@ -101,6 +101,12 @@ func main() {
 	var finishTraffic func()
 	if os.Args[1] != "shell" {
 		finishTraffic = startTrafficMonitor()
+		installHaltHandler(func() string {
+			if t := meter.snapshot(); t.Requests > 0 {
+				return t.String()
+			}
+			return ""
+		})
 	}
 	err := c.run(os.Args[2:])
 	if finishTraffic != nil {

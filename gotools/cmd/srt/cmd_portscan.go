@@ -98,6 +98,13 @@ type scanResult struct {
 	Banner string `json:"banner,omitempty"`
 }
 
+func statePrior(s *scanState) []scanResult {
+	if s == nil {
+		return nil
+	}
+	return s.Prior
+}
+
 func runPortscan(args []string) error {
 	fs := flag.NewFlagSet("portscan", flag.ExitOnError)
 	in := fs.String("l", "", "input IP/host list (default: stdin)")
@@ -107,6 +114,7 @@ func runPortscan(args []string) error {
 	banner := fs.Bool("banner", true, "best-effort read of a service's greeting banner on connect")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of \"host:port [banner]\"")
+	resume := fs.String("resume", "", "state file: persist progress so an interrupted scan (Ctrl+C, crash) continues where it stopped when re-run with the same hosts/ports")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,6 +141,22 @@ func runPortscan(args []string) error {
 	total := int64(len(hosts)) * int64(len(ports))
 	var scanned, open int64
 
+	var state *scanState
+	if *resume != "" {
+		state, err = openScanState(*resume, hosts, ports)
+		if err != nil {
+			return err
+		}
+		stopCP := state.startCheckpointing(500 * time.Millisecond)
+		cancelHook := onHalt(func() { state.Checkpoint(); state.Close() })
+		defer func() { cancelHook(); stopCP(); state.Close() }()
+		if len(state.Prior) > 0 || state.mark > 0 {
+			warn("resuming: %d/%d probes already done, %d open port(s) recovered", state.mark, total, len(state.Prior))
+		}
+		open = int64(len(state.Prior))
+		scanned = state.mark
+	}
+
 	stopProg := make(chan struct{})
 	go func() {
 		t := time.NewTicker(2 * time.Second)
@@ -147,24 +171,42 @@ func runPortscan(args []string) error {
 		}
 	}()
 
-	results := make(chan scanResult, 256)
+	results := make(chan scanResult, 256+len(statePrior(state)))
+	priorOpen := map[string]bool{}
+	for _, r := range statePrior(state) {
+		priorOpen[fmt.Sprintf("%s:%d", r.Host, r.Port)] = true
+		results <- r
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *conc))
 	go func() {
+		var idx int64 = -1
 		for _, host := range hosts {
 			for _, port := range ports {
+				idx++
+				if state != nil && state.Skip(idx) {
+					continue
+				}
 				wg.Add(1)
 				sem <- struct{}{}
-				go func(host string, port int) {
+				go func(host string, port int, idx int64) {
 					defer wg.Done()
 					defer func() { <-sem }()
 					res, ok := probePort(host, port, *timeout, *banner)
 					atomic.AddInt64(&scanned, 1)
-					if ok {
+					// An open port found just past the watermark last run is
+					// re-found now; it's already in the output, so don't repeat it.
+					if ok && !priorOpen[fmt.Sprintf("%s:%d", host, port)] {
 						atomic.AddInt64(&open, 1)
+						if state != nil {
+							state.Open(res)
+						}
 						results <- res
 					}
-				}(host, port)
+					if state != nil {
+						state.Done(idx)
+					}
+				}(host, port, idx)
 			}
 		}
 		wg.Wait()

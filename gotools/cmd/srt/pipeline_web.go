@@ -208,6 +208,7 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 			args = append(args, "-proxy", cfg.Options.Proxy)
 		}
 
+		args = append(args, resumeStateArgs(fuzzFile)...)
 		steps = append(steps, runStep("web", "fuzz", e.Target, fuzzFile, func() error {
 			return runFuzz(args)
 		}))

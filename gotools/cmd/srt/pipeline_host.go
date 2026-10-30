@@ -74,7 +74,7 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepRes
 
 		portscanFile := filepath.Join(outDir, fmt.Sprintf("03_portscan_%d.json", gi))
 		steps = append(steps, runStep("host", "portscan", ports, portscanFile, func() error {
-			return runPortscan([]string{"-l", expandFile, "-p", ports, "-json", "-o", portscanFile})
+			return runPortscan(append([]string{"-l", expandFile, "-p", ports, "-json", "-o", portscanFile}, resumeStateArgs(portscanFile)...))
 		}))
 
 		results, err := readScanResults(portscanFile)

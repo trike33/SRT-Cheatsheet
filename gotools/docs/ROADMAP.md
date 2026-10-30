@@ -92,6 +92,26 @@ Running log of what's shipped and what's queued, newest first.
   a tight cap, high `-c` concurrency queues behind the gate, so waiting time
   counts toward a request's timeout — lower `-c` or raise `-timeout` if you
   see spurious timeouts.
+- **Stop & resume** — an interrupted scan continues instead of restarting.
+  - `portscan -resume <file>`: progress is one watermark over the fixed
+    host-major probe sequence (plus every open port, written the moment it's
+    found), checkpointed every 500ms and flushed on Ctrl+C/limit halts. A
+    re-run with the same hosts/ports skips finished probes and re-emits the
+    recovered results, so the output file always reflects the whole scan; a
+    state file from a different scan is refused. `fuzz -resume` already
+    existed.
+  - `pipeline -resume`: `checkpoint.json` in the output dir records finished
+    steps; a resumed run skips them (if their output file still exists) and
+    continues the interrupted `portscan`/`fuzz` mid-way via per-step state
+    files. Without `-resume` a run starts fresh.
+  - Central halt handling (`halt.go`): SIGINT/SIGTERM and limit breaches run
+    flush hooks before exiting 130/3 — so state on disk is current.
+  - In the `shell`, `portscan`/`fuzz`/`pipeline` are tracked automatically in
+    `<project>/.srt/` (so they survive closing the shell and are per
+    project). Stop one with Ctrl+C or a `limit bytes` halt, then `sessions`
+    lists what's interrupted and `resume [id]` (default: the latest) carries
+    on. A clean finish discards the session. Passing your own `-resume` opts
+    out of tracking.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
@@ -206,7 +226,7 @@ Suggestions welcome — open an issue.
 
 # JOAN Suggestions
 
-- Ability to stop and resume sessions(eg. stop a network scan and resume it later with a command)
+- ~~Stop and resume sessions~~ — done, see Shipped.
 - ~~Project switching in the shell~~ — done, see Shipped.
 - ~~Auto-detect known scope files~~ — done, see Shipped.
 - ~~Live traffic counter and halt in the shell~~ — done, see Shipped.

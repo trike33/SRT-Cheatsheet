@@ -32,6 +32,7 @@ func runPipeline(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the planned steps without sending any traffic")
 	noWebHandoff := fs.Bool("no-web-handoff", false, "don't automatically run the WEB stage against web services the HOST stage discovers")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
+	resume := fs.Bool("resume", false, "continue an interrupted run in -o: skip steps already completed and resume portscan/fuzz mid-way (without it, a fresh run starts over)")
 	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -75,6 +76,11 @@ func runPipeline(args []string) error {
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
+	}
+
+	activeCheckpoint = loadCheckpoint(filepath.Join(outDir, "checkpoint.json"), *resume)
+	if *resume {
+		warn("resuming: completed steps in %s will be skipped", outDir)
 	}
 
 	m := manifest{Name: cfg.Name, StartedAt: time.Now(), Kinds: kinds}

@@ -7,12 +7,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -223,14 +221,7 @@ func startTrafficMonitor() (finish func()) {
 	limits := limitsFromEnv()
 	finish = func() { writeTrafficFile(file, meter.snapshot()) }
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		finish()
-		fmt.Fprintf(os.Stderr, "\nsrt: halted by user — %s\n", meter.snapshot())
-		os.Exit(130)
-	}()
+	onHalt(finish)
 
 	go func() {
 		const tick = 100 * time.Millisecond
@@ -249,7 +240,7 @@ func startTrafficMonitor() (finish func()) {
 			oldest := window[(i-n+len(window))%len(window)]
 			rate := float64(snap.Requests-oldest) / (float64(max(n-1, 1)) * tick.Seconds())
 			if why := limits.breach(snap); why != "" {
-				finish()
+				runHaltHooks()
 				fmt.Fprintf(os.Stderr, "\nsrt: HALTED — %s (%s)\n", why, snap)
 				os.Exit(3)
 			}

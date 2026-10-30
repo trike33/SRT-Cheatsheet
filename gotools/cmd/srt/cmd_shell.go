@@ -76,8 +76,11 @@ type shellModel struct {
 }
 
 type execDoneMsg struct {
-	cmd string
-	err error
+	cmd       string
+	err       error
+	sess      *sessionRec // non-nil for a tracked resumable command
+	stateFile string
+	dir       string // project the command ran in
 }
 
 // execExitCode extracts a child's exit status (-1 if unknown).
@@ -117,6 +120,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case execDoneMsg:
 		m.lastErr = nil
+		recordSession(msg)
 		if t, ok := readTrafficFile(m.trafficFile); ok {
 			m.traffic.add(t)
 			m.notice = fmt.Sprintf("%s: %s", msg.cmd, t)
@@ -126,6 +130,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.trafficFile != "" {
 			os.Remove(m.trafficFile)
+		}
+		if c := execExitCode(msg.err); msg.sess != nil && (c == 130 || c == 3) {
+			m.notice = strings.TrimSpace(m.notice + " — stopped; type `resume` to continue")
 		}
 		if msg.err != nil {
 			var exitErr *exec.ExitError
@@ -355,6 +362,11 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
+	case "sessions":
+		m.listSessions()
+		return m, nil
+	case "resume":
+		return m.resumeSession(cmdArgs)
 	case "traffic":
 		m.notice = "session traffic: " + m.traffic.String()
 		return m, nil
@@ -390,11 +402,15 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	c := exec.Command(m.self, append([]string{cmdName}, cmdArgs...)...)
+	return m.launch(cmdName, cmdArgs, false)
+}
+
+// cmdFor builds the subprocess for one command, with traffic accounting wired
+// into its environment.
+func (m *shellModel) cmdFor(cmdName string, args []string) *exec.Cmd {
+	c := exec.Command(m.self, append([]string{cmdName}, args...)...)
 	c.Env = m.childEnv()
-	return m, tea.ExecProcess(c, func(err error) tea.Msg {
-		return execDoneMsg{cmd: cmdName, err: err}
-	})
+	return c
 }
 
 // applyColorCommand handles the shell-local "color on|off|auto" toggle.
@@ -418,11 +434,11 @@ func (m *shellModel) applyColorCommand(args []string) {
 // shellCommandNames lists every registered command plus the shell's own
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
-	names := make([]string, 0, len(registry)+9)
+	names := make([]string, 0, len(registry)+11)
 	for n := range registry {
 		names = append(names, n)
 	}
-	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume")
 	sort.Strings(names)
 	return names
 }
