@@ -31,9 +31,24 @@ GOTOOLCHAIN=local go build -o srt ./cmd/srt
 
 Requires Go 1.24+. Install system-wide with `sudo make install` (-> `/usr/local/bin/srt`).
 
-CI (`.github/workflows/build.yml`) vets, tests, and cross-compiles for
-linux/darwin/windows (amd64 + arm64) on every push; pushing a `vX.Y.Z` tag
-publishes those binaries as a GitHub Release.
+### CI
+
+The build workflow ships at [`gotools/ci/build.yml`](ci/build.yml). It vets,
+tests, and cross-compiles for linux/darwin/windows (amd64 + arm64) on every
+push; pushing a `vX.Y.Z` tag publishes those binaries as a GitHub Release.
+
+GitHub refuses workflow files pushed by an app without the `workflow` OAuth
+scope, so it lives here rather than under `.github/workflows/`. Activate it from
+a clone whose credentials have that scope:
+
+```bash
+mkdir -p .github/workflows
+git mv gotools/ci/build.yml .github/workflows/build.yml
+git commit -m "Enable build workflow" && git push
+```
+
+(or just upload `gotools/ci/build.yml` to `.github/workflows/build.yml` via the
+GitHub web UI.)
 
 ## Commands
 
