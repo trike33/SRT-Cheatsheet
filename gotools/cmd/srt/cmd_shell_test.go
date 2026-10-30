@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"os/exec"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func newTestModel() shellModel {
 	m := newShellModel("/fake/path/to/srt")
@@ -174,5 +181,135 @@ func TestShellCommandNamesIncludesPseudoCommands(t *testing.T) {
 		if !commandKnown(names, want) {
 			t.Errorf("shellCommandNames() missing %q: %v", want, names)
 		}
+	}
+}
+
+func typeLine(m shellModel, s string) shellModel {
+	m.input = []rune(s)
+	m.cursor = len(m.input)
+	return m
+}
+
+func TestRunLineBlankIsNoop(t *testing.T) {
+	m := typeLine(newTestModel(), "   ")
+	got, cmd := m.runLine()
+	if cmd != nil || len(got.(shellModel).history) != 0 {
+		t.Errorf("blank line should do nothing: cmd=%v history=%v", cmd, got.(shellModel).history)
+	}
+}
+
+func TestRunLineExitQuits(t *testing.T) {
+	for _, w := range []string{"exit", "quit"} {
+		got, cmd := typeLine(newTestModel(), w).runLine()
+		if !got.(shellModel).quitting || cmd == nil {
+			t.Errorf("%q should quit", w)
+		}
+	}
+}
+
+func TestRunLineUnknownCommand(t *testing.T) {
+	got, cmd := typeLine(newTestModel(), "nosuchcmd -x").runLine()
+	gm := got.(shellModel)
+	if cmd != nil || gm.lastErr == nil {
+		t.Errorf("unknown command: cmd=%v lastErr=%v", cmd, gm.lastErr)
+	}
+	if len(gm.history) != 1 || gm.input != nil || gm.cursor != 0 {
+		t.Errorf("line should be recorded and input reset: %+v", gm)
+	}
+}
+
+func TestRunLineUnterminatedQuote(t *testing.T) {
+	got, cmd := typeLine(newTestModel(), `fuzz -H "oops`).runLine()
+	if cmd != nil || got.(shellModel).lastErr == nil {
+		t.Error("unterminated quote should set lastErr and run nothing")
+	}
+}
+
+func TestRunLineKnownCommandSpawnsSubprocess(t *testing.T) {
+	got, cmd := typeLine(newTestModel(), "version").runLine()
+	if cmd == nil || got.(shellModel).lastErr != nil {
+		t.Errorf("known command should return an exec cmd: cmd=%v err=%v", cmd, got.(shellModel).lastErr)
+	}
+	if _, cmd = typeLine(newTestModel(), "help fuzz").runLine(); cmd == nil {
+		t.Error("help <command> should dispatch")
+	}
+}
+
+func TestRunLineClear(t *testing.T) {
+	if _, cmd := typeLine(newTestModel(), "clear").runLine(); cmd == nil {
+		t.Error("clear should return a ClearScreen cmd")
+	}
+}
+
+func TestExecDoneMsg(t *testing.T) {
+	m := newTestModel()
+	got, _ := m.Update(execDoneMsg{cmd: "x", err: errors.New("launch failed")})
+	if got.(shellModel).lastErr == nil {
+		t.Error("launch failure should surface")
+	}
+	got, _ = m.Update(execDoneMsg{cmd: "x", err: &exec.ExitError{}})
+	if got.(shellModel).lastErr != nil {
+		t.Error("clean non-zero exit should not surface")
+	}
+}
+
+func TestHandleKeyEditing(t *testing.T) {
+	m := newTestModel()
+	send := func(k tea.KeyMsg) { got, _ := m.Update(k); m = got.(shellModel) }
+	send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc")})
+	send(tea.KeyMsg{Type: tea.KeySpace})
+	send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if string(m.input) != "abc d" {
+		t.Fatalf("input = %q", string(m.input))
+	}
+	send(tea.KeyMsg{Type: tea.KeyBackspace})
+	send(tea.KeyMsg{Type: tea.KeyHome})
+	send(tea.KeyMsg{Type: tea.KeyDelete})
+	if string(m.input) != "bc " || m.cursor != 0 {
+		t.Errorf("after backspace/home/delete: %q cursor=%d", string(m.input), m.cursor)
+	}
+	send(tea.KeyMsg{Type: tea.KeyEnd})
+	send(tea.KeyMsg{Type: tea.KeyLeft})
+	if m.cursor != 2 {
+		t.Errorf("cursor = %d, want 2", m.cursor)
+	}
+	send(tea.KeyMsg{Type: tea.KeyCtrlU})
+	if len(m.input) != 0 {
+		t.Errorf("ctrl+u should clear: %q", string(m.input))
+	}
+}
+
+func TestHandleKeyQuit(t *testing.T) {
+	got, cmd := newTestModel().Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !got.(shellModel).quitting || cmd == nil {
+		t.Error("ctrl+c should quit")
+	}
+	got, cmd = newTestModel().Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if !got.(shellModel).quitting || cmd == nil {
+		t.Error("ctrl+d on empty line should quit")
+	}
+	got, _ = typeLine(newTestModel(), "ab").Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if got.(shellModel).quitting {
+		t.Error("ctrl+d on a non-empty line must not quit")
+	}
+}
+
+func TestWindowSizeAndView(t *testing.T) {
+	got, _ := newTestModel().Update(tea.WindowSizeMsg{Width: 120})
+	m := got.(shellModel)
+	if m.width != 120 {
+		t.Errorf("width = %d", m.width)
+	}
+	if v := typeLine(m, "version").View(); !strings.Contains(v, "version") {
+		t.Errorf("View() missing input: %q", v)
+	}
+}
+
+func TestRunShellRequiresTTY(t *testing.T) {
+	if stdinIsTerminal() {
+		t.Skip("stdin is a TTY here")
+	}
+	if err := runShell(nil); err == nil {
+		t.Error("runShell without a TTY should error")
 	}
 }

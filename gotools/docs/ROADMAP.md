@@ -54,6 +54,12 @@ Running log of what's shipped and what's queued, newest first.
   shell session instead of just that command. The subprocess design also
   makes `help <command>` free: it's literally `<command> -h`, so there's no
   separate help text to maintain or drift out of sync.
+- **Shell is the default mode** — bare `srt` on an interactive terminal
+  drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
+  stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
+  prints usage and exits 2 rather than hanging. Shell test coverage now
+  includes line dispatch, key handling, exec-result handling and the TTY
+  guard.
 
 ### HOST methodology (see [methodology.md](methodology.md))
 - **`resolve`** — forward (A/AAAA) and reverse (PTR) DNS lookup, concurrent.
@@ -166,6 +172,6 @@ Suggestions welcome — open an issue.
 - Ability to switch between projects and thus CWD. the user specifies the CWD it wants to switch(completition would help greatly here) and the project name is the last CWD name eg "/home/user/project1 - project name is project1"
 - Ability to auto-detect known files like *-in-scope(for hosts scope), target_assets.json(for web scope). account for variants like target_assets(1).json or similar.
 - On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
-- Finish the shell tests and whatever you  need, but make this shell mode the default mode like if user only executes srt it bumps into the shell but if it executes srt pipeline... it stays in CLI.
+- ~~Finish the shell tests and make shell the default mode~~ — done, see Shipped.
 - Obv in case you didnt notice this tool is always meant to be installed as a go binary and be executed from everywhere in the filesystem.
 

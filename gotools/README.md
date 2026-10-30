@@ -98,7 +98,7 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `relpaths` | `legacy/relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
 | `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
 | `pipeline` | **new** | JSON-driven HOST/WEB assessment orchestrator |
-| `shell` | **new** | Interactive REPL: run commands by name, with history and Tab-completion |
+| `shell` | **new** | Interactive REPL (the default when you run bare `srt` in a terminal): run commands by name, with history and Tab-completion |
 | `version` | **new** | Print version + build info |
 
 ## Workflow examples

@@ -21,9 +21,10 @@ func init() {
 	})
 }
 
+func stdinIsTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
 func runShell(args []string) error {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
+	if !stdinIsTerminal() {
 		return errMissing("shell needs an interactive terminal (stdin is not a TTY)")
 	}
 

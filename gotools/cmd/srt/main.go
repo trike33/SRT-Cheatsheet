@@ -35,6 +35,15 @@ func register(c *command) {
 
 func main() {
 	if len(os.Args) < 2 {
+		// Bare `srt` opens the interactive shell; with no TTY (a script,
+		// a pipe) there's nobody to type at it, so fall back to usage.
+		if stdinIsTerminal() {
+			if err := registry["shell"].run(nil); err != nil {
+				fmt.Fprintf(os.Stderr, "srt shell: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		usage()
 		os.Exit(2)
 	}
