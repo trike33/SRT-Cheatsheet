@@ -63,6 +63,9 @@ type shellModel struct {
 	colorOn bool
 	width   int
 
+	prevDir string // previous project, for `cd -`
+	notice  string // transient info line (not an error)
+
 	lastErr  error
 	quitting bool
 }
@@ -110,6 +113,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.lastErr = nil
+	m.notice = ""
 
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -131,6 +135,7 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyTab:
 		m.completeCommandName()
+		m.completeDirArg()
 		return m, nil
 
 	case tea.KeyBackspace:
@@ -317,6 +322,22 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
+	case "cd", "project":
+		if len(cmdArgs) > 1 {
+			m.lastErr = errMissing("usage: " + cmdName + " [<dir>|-]")
+		} else if len(cmdArgs) == 0 && cmdName == "project" {
+			wd, _ := os.Getwd()
+			m.notice = "project: " + projectName(wd) + " (" + wd + ")"
+		} else {
+			arg := ""
+			if len(cmdArgs) == 1 {
+				arg = cmdArgs[0]
+			}
+			if err := m.switchProject(arg); err != nil {
+				m.lastErr = err
+			}
+		}
+		return m, nil
 	case "help":
 		if len(cmdArgs) > 0 {
 			cmdName, cmdArgs = cmdArgs[0], []string{"-h"}
@@ -357,11 +378,11 @@ func (m *shellModel) applyColorCommand(args []string) {
 // shellCommandNames lists every registered command plus the shell's own
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
-	names := make([]string, 0, len(registry)+5)
+	names := make([]string, 0, len(registry)+7)
 	for n := range registry {
 		names = append(names, n)
 	}
-	names = append(names, "help", "exit", "quit", "clear", "color")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project")
 	sort.Strings(names)
 	return names
 }

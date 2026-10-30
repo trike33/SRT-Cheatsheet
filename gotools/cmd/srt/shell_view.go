@@ -275,7 +275,11 @@ func (m shellModel) renderStatus() string {
 	if m.colorOn {
 		colorState = "on"
 	}
-	left := fmt.Sprintf("color: %s · history: %d", colorState, len(m.history))
+	wd, _ := os.Getwd()
+	left := fmt.Sprintf("project: %s · color: %s · history: %d", projectName(wd), colorState, len(m.history))
+	if m.notice != "" {
+		left = m.notice
+	}
 	if m.lastErr != nil {
 		left = classStyle(classUnknown, m.colorOn).Render("! " + m.lastErr.Error())
 	}

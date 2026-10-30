@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -311,5 +313,86 @@ func TestRunShellRequiresTTY(t *testing.T) {
 	}
 	if err := runShell(nil); err == nil {
 		t.Error("runShell without a TTY should error")
+	}
+}
+
+func TestProjectName(t *testing.T) {
+	for in, want := range map[string]string{"/home/user/project1": "project1", "/": "/", "/a/b/": "b"} {
+		if got := projectName(in); got != want {
+			t.Errorf("projectName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCdSwitchesProject(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "alpha"), filepath.Join(root, "beta")
+	os.Mkdir(a, 0o755)
+	os.Mkdir(b, 0o755)
+	os.WriteFile(filepath.Join(b, "target_assets.json"), []byte("{}"), 0o644)
+	t.Chdir(a)
+	ra, _ := os.Getwd()
+
+	got, _ := typeLine(newTestModel(), "cd "+b).runLine()
+	m := got.(shellModel)
+	if m.lastErr != nil {
+		t.Fatal(m.lastErr)
+	}
+	if wd, _ := os.Getwd(); projectName(wd) != "beta" {
+		t.Errorf("cwd = %s", wd)
+	}
+	if !strings.Contains(m.notice, "beta") || !strings.Contains(m.notice, "target_assets.json") {
+		t.Errorf("notice = %q", m.notice)
+	}
+
+	got, _ = typeLine(m, "cd -").runLine()
+	if wd, _ := os.Getwd(); wd != ra {
+		t.Errorf("cd - went to %s, want %s", wd, ra)
+	}
+	_ = got
+}
+
+func TestCdErrors(t *testing.T) {
+	t.Chdir(t.TempDir())
+	got, _ := typeLine(newTestModel(), "cd /no/such/dir-xyz").runLine()
+	if got.(shellModel).lastErr == nil {
+		t.Error("missing dir should error")
+	}
+	got, _ = typeLine(newTestModel(), "cd -").runLine()
+	if got.(shellModel).lastErr == nil {
+		t.Error("cd - with no previous should error")
+	}
+	got, _ = typeLine(newTestModel(), "cd a b").runLine()
+	if got.(shellModel).lastErr == nil {
+		t.Error("too many args should error")
+	}
+}
+
+func TestCompleteDirArg(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"project1", "project2", "other", ".hidden"} {
+		os.Mkdir(filepath.Join(root, d), 0o755)
+	}
+	os.WriteFile(filepath.Join(root, "projfile"), nil, 0o644)
+
+	run := func(line string) string {
+		m := typeLine(newTestModel(), line)
+		m.completeDirArg()
+		return string(m.input)
+	}
+	if got := run("cd " + root + "/oth"); got != "cd "+root+"/other/" {
+		t.Errorf("unique: %q", got)
+	}
+	if got := run("project " + root + "/pro"); got != "project "+root+"/project" {
+		t.Errorf("common prefix: %q", got)
+	}
+	if got := run("cd " + root + "/projf"); got != "cd "+root+"/projf" {
+		t.Errorf("files must not complete: %q", got)
+	}
+	if got := run("cd " + root + "/."); got != "cd "+root+"/.hidden/" {
+		t.Errorf("hidden: %q", got)
+	}
+	if got := run("fuzz " + root + "/oth"); got != "fuzz "+root+"/oth" {
+		t.Errorf("only cd/project complete: %q", got)
 	}
 }

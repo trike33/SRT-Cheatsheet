@@ -59,6 +59,12 @@ Running log of what's shipped and what's queued, newest first.
   `target_assets*.json` (Burp export; tolerates `(1)`-style download
   suffixes), newest match wins, and says what it picked on stderr.
   `-no-detect` opts out.
+- **Project switching in `shell`** — `cd <dir>` / `project <dir>` changes the
+  shell's CWD (every spawned command inherits it); the project name is the
+  directory's base name and sits in the status bar. `cd -` returns to the
+  previous project, bare `cd` goes home, bare `project` shows where you are.
+  Tab completes directories (unique match, or longest common prefix), and a
+  switch reports any scope files auto-detected in the new project.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
@@ -174,7 +180,7 @@ Suggestions welcome — open an issue.
 # JOAN Suggestions
 
 - Ability to stop and resume sessions(eg. stop a network scan and resume it later with a command)
-- Ability to switch between projects and thus CWD. the user specifies the CWD it wants to switch(completition would help greatly here) and the project name is the last CWD name eg "/home/user/project1 - project name is project1"
+- ~~Project switching in the shell~~ — done, see Shipped.
 - ~~Auto-detect known scope files~~ — done, see Shipped.
 - On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
 - ~~Finish the shell tests and make shell the default mode~~ — done, see Shipped.
