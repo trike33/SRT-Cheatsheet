@@ -51,6 +51,16 @@ func (m colorMode) wrap(code, s string) string {
 	return code + s + ansiReset
 }
 
+// spinnerFrames animates a live-progress glyph, the same braille cycle
+// Claude's own CLI spinner uses: a tick every 500ms proves the process is
+// still alive even on a quiet run where the counters next to it don't move.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinner returns the frame for tick n, cycling through spinnerFrames.
+func spinner(n int) string {
+	return spinnerFrames[n%len(spinnerFrames)]
+}
+
 // isTerminal is a dependency-free TTY check: it uses the file mode, which is
 // enough to tell a pipe/file from a character device on Linux.
 func isTerminal(f *os.File) bool {

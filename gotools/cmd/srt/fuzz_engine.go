@@ -383,6 +383,7 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 	defer t.Stop()
 	prev := map[string]int64{}
 	last := time.Now()
+	frame := 0
 	for {
 		select {
 		case <-stop:
@@ -395,8 +396,9 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 			e.flushResume()
 
 			var b strings.Builder
-			fmt.Fprintf(&b, "\r\033[K[*] reqs=%d matches=%d skip=%d err=%d",
-				e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
+			fmt.Fprintf(&b, "\r\033[K%s reqs=%d matches=%d skip=%d err=%d",
+				spinner(frame), e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
+			frame++
 
 			hosts := e.sched.hostsSnapshot()
 			shown := 0
