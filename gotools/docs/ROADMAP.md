@@ -45,6 +45,15 @@ Running log of what's shipped and what's queued, newest first.
 - **`pipeline -host-file`/`-web-scope`** — build a config straight from a
   plain IP/CIDR list and/or a Burp scope export, no hand-written JSON
   required; combines with `-c` when one is also given.
+- **`shell`** — interactive REPL with command history and Tab-completion on
+  command names (`golang.org/x/term`, pinned to v0.40.0 for Go 1.24
+  compatibility — `srt`'s first Go module dependency; everything else stays
+  stdlib-only). Every line dispatches as a real subprocess of `srt` itself
+  rather than in-process, since every command's `flag.FlagSet` uses
+  `flag.ExitOnError` — in-process, a typo'd flag would `os.Exit` the whole
+  shell session instead of just that command. The subprocess design also
+  makes `help <command>` free: it's literally `<command> -h`, so there's no
+  separate help text to maintain or drift out of sync.
 
 ### HOST methodology (see [methodology.md](methodology.md))
 - **`resolve`** — forward (A/AAAA) and reverse (PTR) DNS lookup, concurrent.
@@ -130,8 +139,11 @@ so they aren't lost:
 - **Auto-detect and send payloads** — close the loop from recon
   (parameters, tech-detect) to actually firing payloads at likely-vulnerable
   targets.
-- **A pseudo-interactive shell** so flags don't have to be remembered every
-  time.
+- **A guided flag-builder in `shell`** (the basic REPL itself shipped — see
+  Shipped above) — interactively prompting for each flag instead of still
+  typing them. Needs either a shared declarative flag schema across every
+  command (a real refactor) or per-command duplicate prompt flows that
+  would drift from the real flags over time.
 
 ### Fuzzer / pipeline
 

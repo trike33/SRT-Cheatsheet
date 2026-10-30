@@ -1,7 +1,8 @@
 # Quickstart
 
-`srt` is a single, dependency-free Go binary for recon automation. This gets
-you from clone to a first scan in under a minute.
+`srt` is a single Go binary for recon automation — stdlib-only except for
+one small dependency used just by the interactive `shell`. This gets you
+from clone to a first scan in under a minute.
 
 ## 1. Install
 
@@ -20,8 +21,8 @@ Update later the same way:
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
 ```
 
-Or build from source (no `go.sum`, no `pip install`, nothing to fetch —
-it's stdlib-only):
+Or build from source (`go build` fetches the one dependency automatically
+the first time; no `pip install`, nothing else to set up):
 
 ```bash
 cd gotools
@@ -49,7 +50,15 @@ echo 10.0.0.5 | ./srt portscan -p common,uncommon
 ```
 
 Run `./srt help` for the full command list, or `./srt <command> -h` for a
-command's flags.
+command's flags — or skip retyping `./srt` altogether with the interactive
+shell:
+
+```bash
+./srt shell
+srt> fuzz -u https://target/FUZZ -w wordlist.txt -ac    # Tab-completes command names
+srt> help portscan                                       # that command's real flags
+srt> exit
+```
 
 ## 3. Run a whole assessment
 

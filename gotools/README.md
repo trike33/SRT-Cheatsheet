@@ -1,6 +1,7 @@
 # srt — bug-bounty recon helpers (Go)
 
-A single, dependency-free Go binary that ports the Python glue scripts in
+A single Go binary — stdlib-only except for one small dependency used just
+by the interactive `shell` — that ports the Python glue scripts in
 [`legacy/`](../legacy/) into fast, pipe-friendly subcommands, and is growing
 into a full HOST/WEB assessment automation — see
 [`docs/methodology.md`](docs/methodology.md) for the target design and
@@ -19,8 +20,9 @@ is the one sanctioned exception (CVE lookups), already wired into `pipeline`.
 The originals hardcoded filenames, mixed status output into stdout, and were slow
 on big lists. `srt` fixes that:
 
-- **One static binary.** `go build` with the standard library only — scp it to a
-  VPS and run it. No `pip install`, no venv, no runtime deps.
+- **One static binary.** `go build` and scp it to a VPS and run it. No
+  `pip install`, no venv, no runtime deps — and only one build-time
+  dependency (`golang.org/x/term`, for `shell`'s line editor).
 - **Pipe-first.** Every command reads from `-l <file>` **or stdin**, and writes to
   stdout **or `-o <file>`**. Status/progress goes to **stderr**, so stdout stays
   clean for the next tool in the pipe.
@@ -95,6 +97,8 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `snyk` | `legacy/synk_parser.py` | Test a version against a Snyk package's advisory ranges |
 | `relpaths` | `legacy/relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
 | `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
+| `pipeline` | **new** | JSON-driven HOST/WEB assessment orchestrator |
+| `shell` | **new** | Interactive REPL: run commands by name, with history and Tab-completion |
 | `version` | **new** | Print version + build info |
 
 ## Workflow examples

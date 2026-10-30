@@ -15,7 +15,7 @@ Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
 [params](#params) · [dirlist](#dirlist) · [robots](#robots) · [snyk](#snyk) ·
 [relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
-[version](#version)
+[shell](#shell) · [version](#version)
 
 ---
 
@@ -491,6 +491,26 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 # no JSON config needed at all -- straight from a plain IP file and a Burp scope export
 srt pipeline -host-file scope-ips.txt -web-scope target_scope.json -o ./out
 ```
+
+---
+
+## shell
+
+Interactive REPL: run commands by name with history and Tab-completion,
+without retyping `srt` each time. Each line dispatches as a real subprocess
+of `srt` itself (never in-process), so a bad flag just prints its own error
+and returns you to the prompt — it never kills the shell session. `help
+<command>` shows that command's real flags (literally runs `<command> -h`),
+and `help` alone lists every command.
+
+```bash
+srt shell
+srt> fuzz -u https://target/FUZZ -w words.txt -ac
+srt> help portscan
+srt> exit
+```
+
+Needs an interactive terminal (stdin must be a TTY).
 
 ---
 

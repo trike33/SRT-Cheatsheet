@@ -15,9 +15,13 @@ the tracked list.
 subfinder, katana, nuclei, dalfox, ...). Where the methodology below needs
 what one of those would normally provide, the plan is to implement it
 natively in Go — porting the useful logic from existing open-source
-discovery projects where that saves work, but not invoking their binaries —
-so `srt` stays the single dependency-free binary it already is for every
-other command.
+discovery projects where that saves work, but not invoking their binaries
+or calling out to their APIs at runtime — so `srt` stays a single static
+binary for every other command. (Separately, `srt` itself picked up its
+first Go module dependency, `golang.org/x/term`, for the interactive
+`shell`'s line editor — unrelated to this policy, which is about not
+shelling out to *other recon tools*, not about the build staying
+stdlib-only forever.)
 
 **vulnx is the one exception.** CVE lookups from a grabbed service/software
 version are kept as an external call, via the `runExternal` hook already

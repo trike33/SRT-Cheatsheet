@@ -2,8 +2,9 @@
 
 # SRT-Cheatsheet
 
-A bug-bounty / pentest recon toolkit built around **`srt`**, a single
-dependency-free Go CLI — that's the whole point of this repo now.
+A bug-bounty / pentest recon toolkit built around **`srt`**, a single Go CLI
+(stdlib-only except for one small dependency, used just by the interactive
+`shell`) — that's the whole point of this repo now.
 
 **New here? Start with [QUICKSTART.md](QUICKSTART.md).**
 
