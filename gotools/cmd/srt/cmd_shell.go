@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,7 +66,8 @@ type shellModel struct {
 
 	traffic     trafficTotals // session total across every command run
 	trafficFile string        // per-command handoff file the child writes to
-	limits      trafficLimits // applied to each command via env
+	limits      trafficLimits // halt ceilings applied to each command via env
+	rate        float64       // req/s throttle applied to each command (0 = unlimited)
 	prevDir     string        // previous project, for `cd -`
 	notice      string        // transient info line (not an error)
 
@@ -88,8 +89,17 @@ func execExitCode(err error) int {
 	return -1
 }
 
+// defaultShellRate is the request-rate throttle a fresh shell applies to
+// every command; `limit rate off` lifts it, `limit rate N` changes it.
+const defaultShellRate = 50
+
 func newShellModel(self string) shellModel {
+	rate := float64(defaultShellRate)
+	if v, err := parseRate(os.Getenv(envRate)); err == nil {
+		rate = v // `srt -rate N` / $SRT_RATE picked the shell's cap
+	}
 	return shellModel{
+		rate:    rate,
 		self:    self,
 		names:   shellCommandNames(),
 		colorOn: term.IsTerminal(int(os.Stdout.Fd())),
@@ -470,8 +480,10 @@ func (m *shellModel) childEnv() []string {
 		m.trafficFile = f.Name()
 		env = append(env, envTrafficFile+"="+m.trafficFile)
 	}
-	if m.limits.maxRate > 0 {
-		env = append(env, fmt.Sprintf("%s=%g", envMaxRate, m.limits.maxRate))
+	// Drop any inherited SRT_RATE so `limit rate off` really lifts the cap.
+	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, envRate+"=") })
+	if m.rate > 0 {
+		env = append(env, fmt.Sprintf("%s=%g", envRate, m.rate))
 	}
 	if m.limits.maxBytes > 0 {
 		env = append(env, fmt.Sprintf("%s=%d", envMaxBytes, m.limits.maxBytes))
@@ -484,28 +496,32 @@ func (m *shellModel) childEnv() []string {
 func (m *shellModel) applyLimitCommand(args []string) {
 	describe := func() string {
 		rate, bytes := "off", "off"
-		if m.limits.maxRate > 0 {
-			rate = fmt.Sprintf("%g req/s", m.limits.maxRate)
+		if m.rate > 0 {
+			rate = fmt.Sprintf("%g req/s", m.rate)
 		}
 		if m.limits.maxBytes > 0 {
 			bytes = humanBytes(m.limits.maxBytes)
 		}
-		return fmt.Sprintf("limits: rate %s · bytes %s per command", rate, bytes)
+		return fmt.Sprintf("limits: rate %s (throttle) · bytes %s (halt) per command", rate, bytes)
 	}
-	usage := errMissing("usage: limit [rate <req/s> | bytes <size, e.g. 50MB> | off]")
+	usage := errMissing("usage: limit [rate <req/s>|off | bytes <size, e.g. 50MB> | off]")
 	switch {
 	case len(args) == 0:
 		m.notice = describe()
 	case args[0] == "off" && len(args) == 1:
 		m.limits = trafficLimits{}
+		m.rate = 0
+		m.notice = describe()
+	case len(args) == 2 && args[0] == "rate" && args[1] == "off":
+		m.rate = 0
 		m.notice = describe()
 	case len(args) == 2 && args[0] == "rate":
-		v, err := strconv.ParseFloat(args[1], 64)
-		if err != nil || v <= 0 {
-			m.lastErr = fmt.Errorf("limit rate: %q is not a positive number", args[1])
+		v, err := parseRate(args[1])
+		if err != nil {
+			m.lastErr = fmt.Errorf("limit rate: %w", err)
 			return
 		}
-		m.limits.maxRate = v
+		m.rate = v
 		m.notice = describe()
 	case len(args) == 2 && args[0] == "bytes":
 		v, err := parseSize(args[1])

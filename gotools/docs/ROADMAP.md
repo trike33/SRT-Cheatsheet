@@ -77,11 +77,21 @@ Running log of what's shipped and what's queued, newest first.
   chokepoints (`http.go`, `probePort`, the resolvers). Commands run from the
   `shell` log a `[traffic] ...` line every 2s, the status bar keeps a session
   total (`traffic` prints it), and Ctrl+C halts a command instantly with its
-  totals. `limit rate <req/s>` / `limit bytes <size>` / `limit off` set
-  per-command ceilings enforced every 100ms — a breach kills the command
-  immediately (exit 3, "HALTED"). Plain CLI runs are untouched. Counts are
-  per process, so a `pipeline` run is metered as a whole; external tools it
-  shells out to (`vulnx`) aren't counted.
+  totals. `limit bytes <size>` sets a per-command byte ceiling; a breach kills
+  the command immediately (exit 3, "HALTED"). Plain CLI runs aren't metered.
+  Counts are per process, so a `pipeline` run is metered as a whole; external
+  tools it shells out to (`vulnx`) aren't counted.
+- **Global request-rate cap** — `srt -rate 50 <command>` (or `$SRT_RATE`)
+  throttles the whole process to N requests/second, whatever the command or
+  its concurrency: every HTTP request, TCP connect and DNS lookup takes a
+  strictly spaced slot (no bursts), and cancelled/timed-out requests leave
+  the queue. Works on every subcommand; `fuzz`'s own `-rate`/`-rate-global`
+  still apply on top (the lower wins). The shell applies **50 req/s by
+  default** to every command; `limit rate <n>` changes it, `limit rate off`
+  lifts it, and `srt -rate N` starts a shell with a different default. Under
+  a tight cap, high `-c` concurrency queues behind the gate, so waiting time
+  counts toward a request's timeout — lower `-c` or raise `-timeout` if you
+  see spurious timeouts.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still

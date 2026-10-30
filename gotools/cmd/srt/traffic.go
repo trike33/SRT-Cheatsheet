@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -25,12 +26,15 @@ import (
 // The shell talks to its command subprocesses through three env vars:
 //
 //	SRT_TRAFFIC_FILE  child writes its running totals here (JSON)
-//	SRT_MAX_RATE      halt the command if requests/second exceeds this
 //	SRT_MAX_BYTES     halt the command once total bytes exceed this
+//
+// SRT_RATE (also the leading global flag `srt -rate N <command>`) throttles
+// instead of halting: every request waits for its slot so the process never
+// sends more than N requests/second, whatever the command's concurrency.
 
 const (
 	envTrafficFile = "SRT_TRAFFIC_FILE"
-	envMaxRate     = "SRT_MAX_RATE"
+	envRate        = "SRT_RATE"
 	envMaxBytes    = "SRT_MAX_BYTES"
 )
 
@@ -61,7 +65,73 @@ func (m *trafficMeter) snapshot() trafficTotals {
 	return trafficTotals{m.reqs.Load(), m.out.Load(), m.in.Load()}
 }
 
-func (m *trafficMeter) request() { m.reqs.Add(1) }
+// request counts one request after waiting for its slot under the global
+// rate cap (a no-op wait when no cap is set).
+func (m *trafficMeter) request() {
+	gate.wait(nil)
+	m.reqs.Add(1)
+}
+
+// rateGate spaces requests evenly: each caller reserves the next free slot
+// 1/rate seconds after the previous one and sleeps until it. Strict spacing
+// (no burst) means no one-second window can ever exceed the cap.
+type rateGate struct {
+	mu       sync.Mutex
+	interval time.Duration // 0 = unlimited
+	next     time.Time
+}
+
+var gate rateGate
+
+func (g *rateGate) set(perSecond float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if perSecond <= 0 {
+		g.interval = 0
+		return
+	}
+	g.interval = time.Duration(float64(time.Second) / perSecond)
+}
+
+// wait blocks for the caller's slot; with a non-nil done channel it gives up
+// early (returning false) when done closes, so cancelled requests don't sit
+// in the queue.
+func (g *rateGate) wait(done <-chan struct{}) bool {
+	g.mu.Lock()
+	if g.interval == 0 {
+		g.mu.Unlock()
+		return true
+	}
+	now := time.Now()
+	slot := g.next
+	if slot.Before(now) {
+		slot = now
+	}
+	g.next = slot.Add(g.interval)
+	g.mu.Unlock()
+
+	d := time.Until(slot)
+	if d <= 0 {
+		return true
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-done:
+		return false
+	}
+}
+
+// parseRate validates a requests/second value from a flag or env var.
+func parseRate(s string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || v <= 0 {
+		return 0, fmt.Errorf("invalid rate %q (want a positive requests/second number)", s)
+	}
+	return v, nil
+}
 
 // countingConn counts bytes on a net.Conn into meter.
 type countingConn struct{ net.Conn }
@@ -93,34 +163,29 @@ func countingDialContext(ctx context.Context, network, addr string) (net.Conn, e
 type countingTransport struct{ next http.RoundTripper }
 
 func (t countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	meter.request()
+	if !gate.wait(r.Context().Done()) {
+		return nil, r.Context().Err()
+	}
+	meter.reqs.Add(1)
 	return t.next.RoundTrip(r)
 }
 
 // --- guard + live line + totals file, active only under the shell ---
 
 type trafficLimits struct {
-	maxRate  float64 // requests/second; 0 = unlimited
-	maxBytes int64   // total bytes; 0 = unlimited
+	maxBytes int64 // total bytes; 0 = unlimited
 }
 
 func limitsFromEnv() trafficLimits {
 	var l trafficLimits
-	if v, err := strconv.ParseFloat(os.Getenv(envMaxRate), 64); err == nil && v > 0 {
-		l.maxRate = v
-	}
 	if v, err := parseSize(os.Getenv(envMaxBytes)); err == nil && v > 0 {
 		l.maxBytes = v
 	}
 	return l
 }
 
-// breach reports why the limits are exceeded, or "" if they aren't. rate is
-// the request rate over the most recent window.
-func (l trafficLimits) breach(t trafficTotals, rate float64) string {
-	if l.maxRate > 0 && rate > l.maxRate {
-		return fmt.Sprintf("request rate %.0f/s exceeds limit %.0f/s", rate, l.maxRate)
-	}
+// breach reports why the limits are exceeded, or "" if they aren't.
+func (l trafficLimits) breach(t trafficTotals) string {
 	if l.maxBytes > 0 && t.Bytes() > l.maxBytes {
 		return fmt.Sprintf("traffic %s exceeds limit %s", humanBytes(t.Bytes()), humanBytes(l.maxBytes))
 	}
@@ -182,8 +247,8 @@ func startTrafficMonitor() (finish func()) {
 				n++
 			}
 			oldest := window[(i-n+len(window))%len(window)]
-			rate := float64(snap.Requests-oldest) / (float64(n-1)*tick.Seconds() + tick.Seconds())
-			if why := limits.breach(snap, rate); why != "" {
+			rate := float64(snap.Requests-oldest) / (float64(max(n-1, 1)) * tick.Seconds())
+			if why := limits.breach(snap); why != "" {
 				finish()
 				fmt.Fprintf(os.Stderr, "\nsrt: HALTED — %s (%s)\n", why, snap)
 				os.Exit(3)

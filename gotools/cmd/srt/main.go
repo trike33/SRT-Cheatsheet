@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 )
 
@@ -33,7 +34,42 @@ func register(c *command) {
 	registry[c.name] = c
 }
 
+// applyGlobalRate handles the global request-rate cap: a leading
+// `-rate N` / `--rate N` / `-rate=N` before the command, else $SRT_RATE.
+// It strips the flag from os.Args and arms the process-wide gate. Setting
+// the env var too lets the shell (and anything it spawns) inherit the cap.
+func applyGlobalRate() {
+	raw := os.Getenv(envRate)
+	if len(os.Args) > 1 {
+		a := os.Args[1]
+		for _, p := range []string{"-rate", "--rate"} {
+			switch {
+			case a == p && len(os.Args) > 2:
+				raw = os.Args[2]
+				os.Args = append(os.Args[:1], os.Args[3:]...)
+			case strings.HasPrefix(a, p+"="):
+				raw = strings.TrimPrefix(a, p+"=")
+				os.Args = append(os.Args[:1], os.Args[2:]...)
+			default:
+				continue
+			}
+			break
+		}
+	}
+	if raw == "" {
+		return
+	}
+	v, err := parseRate(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "srt: %v\n", err)
+		os.Exit(2)
+	}
+	gate.set(v)
+	os.Setenv(envRate, raw)
+}
+
 func main() {
+	applyGlobalRate()
 	if len(os.Args) < 2 {
 		// Bare `srt` opens the interactive shell; with no TTY (a script,
 		// a pipe) there's nobody to type at it, so fall back to usage.
@@ -79,7 +115,8 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "srt - bug-bounty recon helpers (SRT-Cheatsheet)")
 	fmt.Fprintln(os.Stderr, "\nUsage:")
-	fmt.Fprintln(os.Stderr, "  srt <command> [flags]")
+	fmt.Fprintln(os.Stderr, "  srt [-rate <req/s>] <command> [flags]")
+	fmt.Fprintln(os.Stderr, "\n  -rate (or $SRT_RATE) caps the whole process's request rate, whatever the command or concurrency.")
 	fmt.Fprintln(os.Stderr, "\nMost commands read a list from -l <file> or stdin and write to stdout or -o <file>.")
 	fmt.Fprintln(os.Stderr, "\nCommands:")
 
