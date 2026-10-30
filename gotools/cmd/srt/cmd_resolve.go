@@ -65,6 +65,7 @@ func runResolve(args []string) error {
 
 			r := resolveResult{Query: q}
 			if *reverse {
+				meter.request()
 				names, lookupErr := resolver.LookupAddr(ctx, q)
 				if lookupErr != nil {
 					r.Err = lookupErr.Error()
@@ -72,6 +73,7 @@ func runResolve(args []string) error {
 					r.Results = trimTrailingDots(names)
 				}
 			} else {
+				meter.request()
 				addrs, lookupErr := resolver.LookupHost(ctx, q)
 				if lookupErr != nil {
 					r.Err = lookupErr.Error()

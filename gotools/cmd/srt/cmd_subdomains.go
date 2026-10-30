@@ -191,6 +191,7 @@ func activeBruteForce(candidates []string, timeout time.Duration, conc int) []st
 			defer func() { <-sem }()
 			ctx, cancel := contextTimeout(timeout)
 			defer cancel()
+			meter.request()
 			if _, err := resolver.LookupHost(ctx, host); err == nil {
 				live[i] = true
 			}

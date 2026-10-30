@@ -31,6 +31,7 @@ func newHTTPClientOpts(timeout time.Duration, insecure bool, proxyURL string, fo
 	}
 	tr := &http.Transport{
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: insecure},
+		DialContext:         countingDialContext,
 		ForceAttemptHTTP2:   true,
 		Proxy:               proxy,
 		MaxIdleConns:        512,
@@ -39,7 +40,7 @@ func newHTTPClientOpts(timeout time.Duration, insecure bool, proxyURL string, fo
 	}
 	c := &http.Client{
 		Timeout:   timeout,
-		Transport: tr,
+		Transport: countingTransport{next: tr},
 	}
 	if !followRedirects {
 		c.CheckRedirect = func(*http.Request, []*http.Request) error {

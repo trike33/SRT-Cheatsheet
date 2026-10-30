@@ -72,6 +72,16 @@ Running log of what's shipped and what's queued, newest first.
   reports the module version for `go install` builds (ldflags still win),
   and the shell re-execs itself via `os.Executable`, so it works from any
   directory.
+- **Live traffic counter + halt** — every network touch (HTTP requests and
+  wire bytes, TCP connect attempts, DNS lookups) is metered at three
+  chokepoints (`http.go`, `probePort`, the resolvers). Commands run from the
+  `shell` log a `[traffic] ...` line every 2s, the status bar keeps a session
+  total (`traffic` prints it), and Ctrl+C halts a command instantly with its
+  totals. `limit rate <req/s>` / `limit bytes <size>` / `limit off` set
+  per-command ceilings enforced every 100ms — a breach kills the command
+  immediately (exit 3, "HALTED"). Plain CLI runs are untouched. Counts are
+  per process, so a `pipeline` run is metered as a whole; external tools it
+  shells out to (`vulnx`) aren't counted.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
@@ -189,7 +199,7 @@ Suggestions welcome — open an issue.
 - Ability to stop and resume sessions(eg. stop a network scan and resume it later with a command)
 - ~~Project switching in the shell~~ — done, see Shipped.
 - ~~Auto-detect known scope files~~ — done, see Shipped.
-- On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
+- ~~Live traffic counter and halt in the shell~~ — done, see Shipped.
 - ~~Finish the shell tests and make shell the default mode~~ — done, see Shipped.
 - ~~Install as a Go binary, run from anywhere~~ — done, see Shipped.
 

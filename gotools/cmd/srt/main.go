@@ -61,7 +61,16 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := c.run(os.Args[2:]); err != nil {
+	// Under the shell, meter traffic and enforce its limits (no-op otherwise).
+	var finishTraffic func()
+	if os.Args[1] != "shell" {
+		finishTraffic = startTrafficMonitor()
+	}
+	err := c.run(os.Args[2:])
+	if finishTraffic != nil {
+		finishTraffic()
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "srt %s: %v\n", c.name, err)
 		os.Exit(1)
 	}

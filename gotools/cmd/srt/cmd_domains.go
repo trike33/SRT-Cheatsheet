@@ -103,6 +103,7 @@ func runScopeCheck(args []string) error {
 
 			ctx, cancel := contextTimeout(*timeout)
 			defer cancel()
+			meter.request()
 			addrs, err := resolver.LookupHost(ctx, host)
 			if err != nil {
 				return

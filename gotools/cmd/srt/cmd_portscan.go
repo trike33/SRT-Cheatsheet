@@ -196,11 +196,13 @@ func runPortscan(args []string) error {
 // plain HTTP, will just time out with no banner, which is fine).
 func probePort(host string, port int, timeout time.Duration, grabBanner bool) (scanResult, bool) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	meter.request()
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return scanResult{}, false
 	}
 	defer conn.Close()
+	conn = countingConn{conn}
 
 	res := scanResult{Host: host, Port: port}
 	if grabBanner {

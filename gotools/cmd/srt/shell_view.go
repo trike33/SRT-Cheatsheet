@@ -277,6 +277,9 @@ func (m shellModel) renderStatus() string {
 	}
 	wd, _ := os.Getwd()
 	left := fmt.Sprintf("project: %s · color: %s · history: %d", projectName(wd), colorState, len(m.history))
+	if m.traffic.Requests > 0 {
+		left += " · traffic: " + m.traffic.String()
+	}
 	if m.notice != "" {
 		left = m.notice
 	}

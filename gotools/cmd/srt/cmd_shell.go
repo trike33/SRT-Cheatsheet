@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -63,8 +64,11 @@ type shellModel struct {
 	colorOn bool
 	width   int
 
-	prevDir string // previous project, for `cd -`
-	notice  string // transient info line (not an error)
+	traffic     trafficTotals // session total across every command run
+	trafficFile string        // per-command handoff file the child writes to
+	limits      trafficLimits // applied to each command via env
+	prevDir     string        // previous project, for `cd -`
+	notice      string        // transient info line (not an error)
 
 	lastErr  error
 	quitting bool
@@ -73,6 +77,15 @@ type shellModel struct {
 type execDoneMsg struct {
 	cmd string
 	err error
+}
+
+// execExitCode extracts a child's exit status (-1 if unknown).
+func execExitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 func newShellModel(self string) shellModel {
@@ -94,6 +107,16 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case execDoneMsg:
 		m.lastErr = nil
+		if t, ok := readTrafficFile(m.trafficFile); ok {
+			m.traffic.add(t)
+			m.notice = fmt.Sprintf("%s: %s", msg.cmd, t)
+			if execExitCode(msg.err) == 3 {
+				m.notice = fmt.Sprintf("%s HALTED by limit: %s", msg.cmd, t)
+			}
+		}
+		if m.trafficFile != "" {
+			os.Remove(m.trafficFile)
+		}
 		if msg.err != nil {
 			var exitErr *exec.ExitError
 			if !errors.As(msg.err, &exitErr) {
@@ -322,6 +345,12 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
+	case "traffic":
+		m.notice = "session traffic: " + m.traffic.String()
+		return m, nil
+	case "limit":
+		m.applyLimitCommand(cmdArgs)
+		return m, nil
 	case "cd", "project":
 		if len(cmdArgs) > 1 {
 			m.lastErr = errMissing("usage: " + cmdName + " [<dir>|-]")
@@ -352,6 +381,7 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	}
 
 	c := exec.Command(m.self, append([]string{cmdName}, cmdArgs...)...)
+	c.Env = m.childEnv()
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return execDoneMsg{cmd: cmdName, err: err}
 	})
@@ -378,11 +408,11 @@ func (m *shellModel) applyColorCommand(args []string) {
 // shellCommandNames lists every registered command plus the shell's own
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
-	names := make([]string, 0, len(registry)+7)
+	names := make([]string, 0, len(registry)+9)
 	for n := range registry {
 		names = append(names, n)
 	}
-	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit")
 	sort.Strings(names)
 	return names
 }
@@ -428,4 +458,64 @@ func shellSplitArgs(line string) ([]string, error) {
 	}
 	flush()
 	return args, nil
+}
+
+// childEnv wires a command subprocess into the shell's traffic accounting:
+// where to write its totals and which limits to enforce. The handoff file is
+// per-command so a stale one can never be misattributed.
+func (m *shellModel) childEnv() []string {
+	env := os.Environ()
+	if f, err := os.CreateTemp("", "srt-traffic-*.json"); err == nil {
+		f.Close()
+		m.trafficFile = f.Name()
+		env = append(env, envTrafficFile+"="+m.trafficFile)
+	}
+	if m.limits.maxRate > 0 {
+		env = append(env, fmt.Sprintf("%s=%g", envMaxRate, m.limits.maxRate))
+	}
+	if m.limits.maxBytes > 0 {
+		env = append(env, fmt.Sprintf("%s=%d", envMaxBytes, m.limits.maxBytes))
+	}
+	return env
+}
+
+// applyLimitCommand handles `limit`, `limit rate <req/s>`,
+// `limit bytes <size>` and `limit off`.
+func (m *shellModel) applyLimitCommand(args []string) {
+	describe := func() string {
+		rate, bytes := "off", "off"
+		if m.limits.maxRate > 0 {
+			rate = fmt.Sprintf("%g req/s", m.limits.maxRate)
+		}
+		if m.limits.maxBytes > 0 {
+			bytes = humanBytes(m.limits.maxBytes)
+		}
+		return fmt.Sprintf("limits: rate %s · bytes %s per command", rate, bytes)
+	}
+	usage := errMissing("usage: limit [rate <req/s> | bytes <size, e.g. 50MB> | off]")
+	switch {
+	case len(args) == 0:
+		m.notice = describe()
+	case args[0] == "off" && len(args) == 1:
+		m.limits = trafficLimits{}
+		m.notice = describe()
+	case len(args) == 2 && args[0] == "rate":
+		v, err := strconv.ParseFloat(args[1], 64)
+		if err != nil || v <= 0 {
+			m.lastErr = fmt.Errorf("limit rate: %q is not a positive number", args[1])
+			return
+		}
+		m.limits.maxRate = v
+		m.notice = describe()
+	case len(args) == 2 && args[0] == "bytes":
+		v, err := parseSize(args[1])
+		if err != nil || v <= 0 {
+			m.lastErr = fmt.Errorf("limit bytes: %q is not a positive size", args[1])
+			return
+		}
+		m.limits.maxBytes = v
+		m.notice = describe()
+	default:
+		m.lastErr = usage
+	}
 }
