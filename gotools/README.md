@@ -149,10 +149,15 @@ Burp scope.
   Burp does — a request is sent only if it matches an **include** rule and no
   **exclude** rule (protocol-aware: an `https`-only exclude won't block `http`).
   Out-of-scope candidates are counted and dropped *before* a packet goes out.
-- **Rate limiting** (`-rate N`): a global token bucket caps total requests/second
-  across *all* workers, independent of `-c`.
+- **Multi-host fair scheduling**: give several targets (repeat `-u`, use `-tl`,
+  or let `-scope` seed them) and srt bruteforces them **interleaved** — all hosts
+  progress at once, not one drained first — with **per-host** rate (`-rate`) and
+  concurrency (`-hc`) caps so no single target is flooded, plus a `-rate-global`
+  ceiling for your own uplink.
+- **Rate limiting** (`-rate N`): per-host requests/second; `-rate-global` caps the
+  combined rate across all hosts.
 - **Pacing** (`-delay`, `-jitter`): fixed + random delay before each request.
-- **Concurrency** (`-c`), **timeout**, **retries**.
+- **Concurrency** (`-c` total, `-hc` per host), **timeout**, **retries**.
 - **Safety/evasion**: `-random-agent` rotates browser UAs, `-maxtime` hard-stops
   the whole run, `-maxerrors` abandons a dead/unreachable target.
 - **Exact request shaping**: `-X` method, repeatable `-H "Name: Value"`, `-d`
@@ -185,6 +190,10 @@ srt fuzz -u https://host/FUZZ -w words.txt -mc 200,403 -fs 1337 -silent | httpx 
 
 # FUZZ a header value (e.g. subdomain/vhost brute):
 srt fuzz -u https://target/ -H "Host: FUZZ.target" -w subs.txt -mc all -fs 0
+
+# Many hosts at once, interleaved, each capped at 10 req/s (never floods one):
+srt fuzz -u https://web1.com/FUZZ -u https://web2.com/FUZZ -u https://web3.com/FUZZ \
+  -w big.txt -rate 10 -rate-global 200 -ac
 ```
 
 `-silent` prints only matched URLs (clean for pipes); `-json` emits JSON lines;

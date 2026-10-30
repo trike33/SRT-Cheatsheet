@@ -70,6 +70,12 @@ srt fuzz -scope target_scope.json \
 
 # feed discoveries onward
 cat discovered.txt | httpx -silent -sc -cl | nuclei -silent
+
+# many in-scope hosts at once, interleaved and capped so none is flooded
+srt burphosts -l target_scope.json | sed 's#^#https://#; s#$#/FUZZ#' > targets.txt
+srt fuzz -tl targets.txt -scope target_scope.json \
+  -w /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt \
+  -rate 10 -rate-global 150 -hc 15 -c 60 -ac -silent -o discovered.txt
 ```
 
 See [fuzz.md](fuzz.md) for the full fuzzer guide, and [commands.md](commands.md)

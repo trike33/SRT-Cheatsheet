@@ -63,24 +63,36 @@ func buildMatcher(mc, fc, ms, fsz, mw, fw, ml, fl, mr, fr string) (*matcher, err
 	return m, nil
 }
 
-// fuzzBases returns the list of base templates (each containing FUZZ). It takes
-// an explicit -u, or seeds https://host/FUZZ from a scope file's include hosts.
-func fuzzBases(target string, scope *scopeMatcher) ([]string, error) {
-	if target != "" {
-		if !strings.Contains(target, fuzzKeyword) {
-			// Dir-mode convenience: append FUZZ to the path.
-			target = strings.TrimRight(target, "/") + "/" + fuzzKeyword
+// fuzzBases returns the base templates (each containing FUZZ) across all
+// targets: explicit -u values (repeatable), a -tl target-list file, and/or the
+// include hosts of a Burp scope file. Duplicates are collapsed.
+func fuzzBases(targets stringSlice, tlFile string, scope *scopeMatcher) ([]string, error) {
+	var raw []string
+	raw = append(raw, targets...)
+	if tlFile != "" {
+		lines, err := inputLines(tlFile)
+		if err != nil {
+			return nil, err
 		}
-		return []string{target}, nil
+		raw = append(raw, lines...)
 	}
-	if scope != nil {
-		var bases []string
+
+	var bases []string
+	for _, t := range raw {
+		if !strings.Contains(t, fuzzKeyword) {
+			// Dir-mode convenience: append FUZZ to the path.
+			t = strings.TrimRight(t, "/") + "/" + fuzzKeyword
+		}
+		bases = append(bases, t)
+	}
+
+	// Seed from scope only when no explicit targets were given.
+	if len(bases) == 0 && scope != nil {
 		for _, h := range scope.includeHosts() {
 			bases = append(bases, "https://"+h+"/"+fuzzKeyword)
 		}
-		return bases, nil
 	}
-	return nil, nil
+	return dedupStrings(bases), nil
 }
 
 // loadWords reads every wordlist file (or stdin when none are given).
@@ -128,7 +140,8 @@ func expandWord(word string, exts []string) []string {
 }
 
 // process issues one request and handles matching, output, and recursion.
-func (e *fuzzEngine) process(j fuzzJob) {
+func (e *fuzzEngine) process(hj hostJob) {
+	j := hj.job
 	// Fast no-op once the deadline fired or the target was abandoned.
 	if e.stopped() || e.baseDead(j.base) {
 		return
@@ -158,19 +171,21 @@ func (e *fuzzEngine) process(j fuzzJob) {
 		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && dirRedirect(target, loc) {
 			newBase := strings.TrimRight(target, "/") + "/" + fuzzKeyword
 			if e.scope == nil || e.scope.inScope(strings.ReplaceAll(newBase, fuzzKeyword, "")) {
-				e.startFeeder(newBase, j.depth+1)
+				// Recursion stays on the SAME host bucket, so it inherits that
+				// host's rate/concurrency limits.
+				e.startFeeder(hj.hb, newBase, j.depth+1)
 			}
 		}
 	}
 }
 
-// doRequest performs the HTTP request with delay/jitter, rate limiting, and
-// retries, and returns the response metadata plus any Location header.
+// doRequest performs the HTTP request with delay/jitter and retries, and
+// returns the response metadata plus any Location header. Per-host and global
+// rate limiting are enforced by the scheduler before the job reaches here.
 func (e *fuzzEngine) doRequest(target, word string) (respMeta, string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= e.retries; attempt++ {
-		// Precise pacing: fixed delay + optional random jitter, then a global
-		// rate-limit token.
+		// Per-request pacing: fixed delay + optional random jitter.
 		if e.delay > 0 || e.jitter > 0 {
 			d := e.delay
 			if e.jitter > 0 {
@@ -178,7 +193,6 @@ func (e *fuzzEngine) doRequest(target, word string) (respMeta, string, error) {
 			}
 			time.Sleep(d)
 		}
-		e.limiter.wait()
 
 		var bodyReader io.Reader
 		reqBody := strings.ReplaceAll(e.body, fuzzKeyword, word)

@@ -39,6 +39,33 @@ Wildcard include hosts (`*.example.com`) can't be resolved, so they aren't
 seeded automatically — feed those through `subfinder` → `scopecheck` first and
 pass concrete hosts with `-u`, still gated by `-scope`.
 
+## Multiple hosts, one wordlist, no flooding
+
+Give more than one target — repeat `-u`, pass a `-tl` file, or let `-scope`
+seed them — and srt fuzzes them all at once. A fair round-robin scheduler
+interleaves the hosts so `web1`/`web2`/`web3` progress together instead of
+`web1` being hammered to completion first, and enforces independent limits:
+
+| Flag | Scope | Keeps gentle |
+|---|---|---|
+| `-rate N` | **per host** | no single target exceeds N req/s |
+| `-hc N` | **per host** | at most N concurrent requests per target |
+| `-rate-global N` | all hosts | your uplink / shared network |
+| `-c N` | global | total worker pool across every host |
+
+```bash
+# 3 hosts, each capped at 10 req/s, 200 req/s combined, 20 conns/host
+srt fuzz -u https://web1.com/FUZZ -u https://web2.com/FUZZ -u https://web3.com/FUZZ \
+  -w big.txt -rate 10 -hc 20 -rate-global 200 -c 60 -ac
+
+# from a list of hosts, scope-gated
+srt fuzz -tl hosts.txt -w big.txt -scope scope.json -rate 10 -rate-global 150 -ac
+```
+
+Recursion stays on the host where a directory was found, so it inherits that
+host's `-rate`/`-hc`. A host abandoned via `-maxerrors` stops without affecting
+the others.
+
 ## Killing false positives: `-ac`
 
 Many sites return `200` for everything (soft-404s). `-ac` probes a few random

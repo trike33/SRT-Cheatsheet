@@ -265,12 +265,13 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-u` | — | target URL with `FUZZ` (also honored in `-H`/`-d`) |
+| `-u` | — | target URL with `FUZZ` — **repeatable for multi-host** (also honored in `-H`/`-d`) |
+| `-tl` | — | file of target URLs, one per line (each may contain `FUZZ`) |
 | `-w` | stdin | wordlist file (repeatable) |
 | `-e` | — | extra extension per word, e.g. `-e .php` (repeatable) |
-| `-scope` | — | Burp scope JSON: gate requests + seed targets |
+| `-scope` | — | Burp scope JSON: gate requests + seed targets when no `-u`/`-tl` |
 
-**Traffic control**
+**Traffic control** (see [multi-host](#multi-host-sharing-one-wordlist-across-hosts))
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -280,8 +281,10 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-ua` | srt UA | User-Agent |
 | `-random-agent` | off | rotate a random browser UA per request |
 | `-proxy` | — | proxy URL, e.g. `http://127.0.0.1:8080` (Burp) |
-| `-c` | `40` | concurrent workers |
-| `-rate` | `0` | max total requests/sec (0 = unlimited) |
+| `-c` | `40` | total concurrent workers (global) |
+| `-rate` | `0` | max requests/sec **per host** (0 = unlimited) |
+| `-rate-global` | `0` | max requests/sec across **all** hosts (0 = unlimited) |
+| `-hc` | `0` | max concurrent requests **per host** (0 = unlimited) |
 | `-delay` | `0` | fixed delay before each request |
 | `-jitter` | `0` | random extra delay up to this |
 | `-timeout` | `10s` | per-request timeout |
@@ -289,6 +292,29 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-maxtime` | `0` | overall deadline (0 = none) |
 | `-maxerrors` | `0` | abandon a target after N consecutive errors |
 | `-insecure` | `true` | skip TLS verification |
+
+### Multi-host: sharing one wordlist across hosts
+
+Give several targets (repeat `-u`, use `-tl`, or let `-scope` seed them) and
+srt bruteforces them **concurrently and interleaved** — web1/web2/web3 all make
+progress at once instead of web1 being drained first. A fair round-robin
+scheduler enforces the limits so nothing gets flooded:
+
+- `-rate` caps requests/sec **per host** — the knob that keeps any single target gentle;
+- `-hc` caps concurrent requests **per host**;
+- `-rate-global` caps the combined rate — protects your own uplink/network;
+- `-c` is the total worker pool shared across all hosts.
+
+Recursion stays on the host it was discovered on, inheriting that host's limits.
+
+```bash
+# three hosts, each limited to 10 req/s, 200 req/s total ceiling
+srt fuzz -u https://web1.com/FUZZ -u https://web2.com/FUZZ -u https://web3.com/FUZZ \
+  -w big.txt -rate 10 -rate-global 200 -hc 20 -c 60 -ac
+
+# same, from a file of hosts
+srt fuzz -tl hosts.txt -w big.txt -rate 10 -rate-global 200 -ac
+```
 
 **Matchers / filters** (lists + ranges, e.g. `200-299,403`)
 

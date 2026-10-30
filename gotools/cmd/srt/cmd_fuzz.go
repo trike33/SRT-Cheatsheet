@@ -51,12 +51,14 @@ func runFuzz(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
 
 	// Targets & wordlists.
-	target := fs.String("u", "", "target URL with FUZZ keyword (e.g. https://h/FUZZ); FUZZ also works in -H/-d")
+	var targets stringSlice
+	fs.Var(&targets, "u", "target URL with FUZZ (repeatable for multi-host); FUZZ also works in -H/-d")
+	tl := fs.String("tl", "", "file of target URLs, one per line (each may contain FUZZ)")
 	var wordlists stringSlice
 	fs.Var(&wordlists, "w", "wordlist file (repeatable). Omit to read the wordlist from stdin")
 	var exts stringSlice
 	fs.Var(&exts, "e", "extension to also try per word, e.g. -e .php -e .bak (repeatable)")
-	scopeFile := fs.String("scope", "", "Burp scope JSON: only in-scope requests are sent (and seeds targets if -u is omitted)")
+	scopeFile := fs.String("scope", "", "Burp scope JSON: only in-scope requests are sent (and seeds targets if no -u/-tl)")
 
 	// Precise traffic control.
 	method := fs.String("X", "GET", "HTTP method")
@@ -65,8 +67,10 @@ func runFuzz(args []string) error {
 	body := fs.String("d", "", "request body")
 	ua := fs.String("ua", defaultUA, "User-Agent")
 	proxy := fs.String("proxy", "", "proxy URL, e.g. http://127.0.0.1:8080 to route through Burp")
-	conc := fs.Int("c", 40, "concurrent workers")
-	rate := fs.Int("rate", 0, "max total requests/second across all workers (0 = unlimited)")
+	conc := fs.Int("c", 40, "total concurrent workers (global concurrency across all hosts)")
+	rate := fs.Int("rate", 0, "max requests/second PER HOST (0 = unlimited) — keeps any single target from being flooded")
+	rateGlobal := fs.Int("rate-global", 0, "max requests/second across ALL hosts combined (0 = unlimited) — protects your uplink")
+	hostConc := fs.Int("hc", 0, "max concurrent requests PER HOST (0 = unlimited)")
 	delay := fs.Duration("delay", 0, "fixed delay before each request")
 	jitter := fs.Duration("jitter", 0, "random extra delay up to this much, added to -delay")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-request timeout")
@@ -118,13 +122,13 @@ func runFuzz(args []string) error {
 		}
 	}
 
-	// Determine base templates.
-	bases, err := fuzzBases(*target, scope)
+	// Determine base templates (possibly across many hosts).
+	bases, err := fuzzBases(targets, *tl, scope)
 	if err != nil {
 		return err
 	}
 	if len(bases) == 0 {
-		return errMissing("no targets: pass -u <url with FUZZ>, or -scope <file> to seed from include hosts")
+		return errMissing("no targets: pass -u <url with FUZZ> (repeatable), -tl <file>, or -scope <file>")
 	}
 
 	// Load words (from -w files, else stdin).
@@ -144,12 +148,15 @@ func runFuzz(args []string) error {
 		return err
 	}
 
-	limiter := newRateLimiter(*rate)
-	defer limiter.close()
+	perHostIval := time.Duration(0)
+	if *rate > 0 {
+		perHostIval = time.Second / time.Duration(*rate)
+	}
+	globalLimiter := newRateLimiter(*rateGlobal)
+	defer globalLimiter.close()
 
 	eng := &fuzzEngine{
 		client:      client,
-		limiter:     limiter,
 		matcher:     m,
 		scope:       scope,
 		method:      *method,
@@ -173,6 +180,9 @@ func runFuzz(args []string) error {
 		maxErrors:   *maxErrors,
 		baseErrors:  map[string]int{},
 		deadBases:   map[string]struct{}{},
+		perHostIval: perHostIval,
+		perHostConc: *hostConc,
+		gLimiter:    globalLimiter,
 	}
 
 	if *out != "" {
@@ -191,7 +201,6 @@ func runFuzz(args []string) error {
 // fuzzEngine holds shared state for one fuzz run.
 type fuzzEngine struct {
 	client      *http.Client
-	limiter     *rateLimiter
 	matcher     *matcher
 	scope       *scopeMatcher
 	method      string
@@ -213,12 +222,16 @@ type fuzzEngine struct {
 	maxTime     time.Duration
 	maxErrors   int
 
+	// multi-host scheduling.
+	perHostIval time.Duration // 0 = unlimited
+	perHostConc int           // 0 = unlimited
+	gLimiter    *rateLimiter  // global rate cap across all hosts
+	sched       *scheduler
+
 	outFile io.Writer
 	outMu   sync.Mutex
 
-	jobs    chan fuzzJob
-	pending sync.WaitGroup
-	stopF   atomic.Bool // set when the global deadline fires
+	stopF atomic.Bool // set when the global deadline fires
 
 	visited   map[string]struct{} // recursion bases already queued
 	visitedMu sync.Mutex
@@ -277,16 +290,29 @@ func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
 		}
 	}
 
-	e.jobs = make(chan fuzzJob, 4096)
+	e.sched = newScheduler(e.workerCount, e.perHostIval, e.perHostConc, e.gLimiter, &e.stopF)
 
+	// Seed a feeder per base, grouped by host so the scheduler can interleave
+	// them. This happens before dispatch starts, so feeders>0 keeps it alive.
+	hosts := map[string]struct{}{}
+	for _, b := range bases {
+		hb := e.sched.hostBucket(hostOf(b))
+		hosts[hb.name] = struct{}{}
+		e.startFeeder(hb, b, 0)
+	}
+	if len(hosts) > 1 {
+		warn("fuzzing %d hosts, work interleaved fairly across them", len(hosts))
+	}
+
+	// Workers drain ready jobs from the scheduler.
 	var workers sync.WaitGroup
 	for i := 0; i < e.workerCount; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			for j := range e.jobs {
-				e.process(j)
-				e.pending.Done()
+			for hj := range e.sched.ready {
+				e.process(hj)
+				e.sched.finish(hj.hb)
 			}
 		}()
 	}
@@ -295,8 +321,8 @@ func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
 	stopProg := make(chan struct{})
 	go e.progress(stopProg)
 
-	// Global deadline: flip the stop flag so feeders stop queuing and workers
-	// fast-drain the remainder.
+	// Global deadline: flip the stop flag so feeders stop queuing and the run
+	// winds down.
 	if e.maxTime > 0 {
 		timer := time.AfterFunc(e.maxTime, func() {
 			if !e.stopF.Swap(true) {
@@ -306,26 +332,17 @@ func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
 		defer timer.Stop()
 	}
 
-	// Seed one feeder per base.
-	for _, b := range bases {
-		e.startFeeder(b, 0)
-	}
-
-	// Close jobs once every feeder and job (including recursion) has drained.
-	go func() {
-		e.pending.Wait()
-		close(e.jobs)
-	}()
+	go e.sched.dispatch()
 	workers.Wait()
 	close(stopProg)
 
 	e.summary()
 }
 
-// startFeeder registers a feeder as a pending unit and launches it. It must be
-// called BEFORE pending.Done() of any job that triggers recursion, so the
-// pending count never hits zero while new work is still being scheduled.
-func (e *fuzzEngine) startFeeder(base string, depth int) {
+// startFeeder dedupes a base, registers a feeder with the scheduler, and
+// launches it. Call it BEFORE finishing the request that triggers recursion so
+// the scheduler never sees zero outstanding work mid-flight.
+func (e *fuzzEngine) startFeeder(hb *hostBucket, base string, depth int) {
 	e.visitedMu.Lock()
 	if _, done := e.visited[base]; done {
 		e.visitedMu.Unlock()
@@ -334,21 +351,20 @@ func (e *fuzzEngine) startFeeder(base string, depth int) {
 	e.visited[base] = struct{}{}
 	e.visitedMu.Unlock()
 
-	e.pending.Add(1)
-	go e.feed(base, depth)
+	e.sched.addFeeder()
+	go e.feed(hb, base, depth)
 }
 
-// feed streams one job per word (and extension) into the channel with blocking
-// sends — one goroutine per base, not per candidate — then releases its unit.
-func (e *fuzzEngine) feed(base string, depth int) {
-	defer e.pending.Done()
+// feed streams one job per word (and extension) into the host's queue, applying
+// backpressure, then releases its feeder registration.
+func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int) {
+	defer e.sched.feederDone()
 	for _, w := range e.words {
 		if e.stopped() || e.baseDead(base) {
 			return
 		}
 		for _, cand := range expandWord(w, e.exts) {
-			e.pending.Add(1)
-			e.jobs <- fuzzJob{base: base, word: cand, depth: depth}
+			e.sched.pushJob(hb, fuzzJob{base: base, word: cand, depth: depth})
 		}
 	}
 }
