@@ -40,16 +40,17 @@ func (t *targetEntry) UnmarshalJSON(b []byte) error {
 // pipelineOptions carries pipeline-wide defaults. Any target entry field
 // with the same name overrides these for that one target.
 type pipelineOptions struct {
-	OutputDir   string `json:"outputDir,omitempty"`
-	Concurrency int    `json:"concurrency,omitempty"`
-	Rate        int    `json:"rate,omitempty"`
-	RateGlobal  int    `json:"rateGlobal,omitempty"`
-	Timeout     string `json:"timeout,omitempty"`
-	Insecure    *bool  `json:"insecure,omitempty"`
-	Wordlist    string `json:"wordlist,omitempty"`
-	Scope       string `json:"scope,omitempty"`
-	Ports       string `json:"ports,omitempty"`
-	Proxy       string `json:"proxy,omitempty"`
+	OutputDir          string `json:"outputDir,omitempty"`
+	Concurrency        int    `json:"concurrency,omitempty"`
+	Rate               int    `json:"rate,omitempty"`
+	RateGlobal         int    `json:"rateGlobal,omitempty"`
+	Timeout            string `json:"timeout,omitempty"`
+	Insecure           *bool  `json:"insecure,omitempty"`
+	Wordlist           string `json:"wordlist,omitempty"`
+	Scope              string `json:"scope,omitempty"`
+	Ports              string `json:"ports,omitempty"`
+	Proxy              string `json:"proxy,omitempty"`
+	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.

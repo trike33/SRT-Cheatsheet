@@ -66,11 +66,10 @@ scope (IPs, or a pipeline JSON config's "host" list)
      that are web services; `-no-web-handoff` opts out.)*
    - Everything else goes through **"scan"**:
      1. Grab the service's version, then check it against CVE databases —
-        this is where **vulnx** gets called. *(Partially implemented: the
-        banner grab happens as part of `portscan`; the vulnx call itself
-        isn't wired up — its CLI interface needs confirming first — so
-        `pipeline` currently records this as a skipped step with the
-        grabbed banner attached, for manual follow-up.)*
+        this is where **vulnx** gets called. *(Implemented: `portscan`'s
+        banner grab feeds a `vulnx search` call — `pipeline`'s HOST stage
+        runs it for every non-web port with a banner, skipped cleanly if
+        `vulnx` isn't installed.)*
      2. Run a native "easy wins" pass: default credentials, common
         misconfigurations — the useful subset of what a nuclei run would
         catch, reimplemented rather than shelling out to nuclei.
@@ -108,10 +107,12 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
 2. **Included** → find subdomains, if the scope allows it, using both
    active and passive techniques → recon the root domain and every
    subdomain found: tech-detect, title, status code, content-length, follow
-   redirects (a native httpx-lite). *(Not implemented — no subdomain
-   enumerator or "recon on root" prober exists yet. `srt domains` only
-   extracts hostnames already present in text someone else produced; it
-   doesn't discover new ones.)*
+   redirects (a native httpx-lite). *(Implemented: `srt subdomains` —
+   passive via crt.sh certificate transparency logs, active DNS brute force
+   when a label wordlist is given — and `srt probe` for recon-on-root
+   (title/status/content-length/`Server`/a small tech-detect signature set).
+   `pipeline`'s WEB stage runs both automatically ahead of endpoint
+   gathering.)*
 3. **Gather endpoints/files**, both:
    - **Active**: crawl, robots.txt/sitemap-aware *(implemented: `srt
      robots`, `srt dirlist`)*; brute force using random/generic wordlists

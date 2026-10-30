@@ -51,6 +51,26 @@ Running log of what's shipped and what's queued, newest first.
   opts out). Non-web uncommon/specialty ports (rsync, Java RMI, and the rest
   of `portscan`'s `uncommon` list) get flagged in the manifest for manual
   follow-up.
+- **vulnx integration** — `pipeline`'s HOST stage runs `vulnx search
+  "<banner>"` (github.com/projectdiscovery/vulnx) for every non-web open
+  port with a grabbed banner, via the `runExternal` helper in
+  `pipeline_external.go` (skips cleanly if `vulnx` isn't installed). Works
+  unauthenticated, just rate-limited without `vulnx auth` configured.
+
+### WEB methodology (see [methodology.md](methodology.md))
+- **`subdomains`** — passive enumeration via crt.sh certificate transparency
+  logs (always runs) plus optional active DNS brute force with a label
+  wordlist. `srt`'s replacement for subfinder.
+- **`probe`** — native httpx-lite: title/status/content-length/`Server` +
+  a best-effort tech-detect (WordPress, Drupal, Joomla, Laravel, Django,
+  Express, PHP, ASP.NET, nginx, Apache, IIS, Cloudflare — a small,
+  conservative signature set, not a wappalyzer-equivalent). Covers
+  "recon on root."
+- **Wired into `pipeline`'s WEB stage** — `subdomains` (passive always,
+  active if `options.subdomainsWordlist` is set) and `probe` run right
+  after `domains`, widening the domain list `gau` also runs against.
+  `robots`/`fuzz` stay scoped to the explicit `web` targets, so discovering
+  N subdomains doesn't silently multiply active traffic — that stays opt-in.
 
 ## Ideas / backlog
 
@@ -58,32 +78,24 @@ Running log of what's shipped and what's queued, newest first.
 
 Native implementations, not external-tool integrations — `srt`'s policy is
 to reimplement what naabu/httpx/subfinder/katana/nuclei/dalfox would give
-us rather than shell out to them. The one exception is **vulnx**, via the
-`runExternal` helper already in `pipeline_external.go` (looks the binary up
-on `PATH`, skips cleanly if it's missing) — **not wired up yet: its exact
-CLI interface needs confirming first** (a web search during development
-didn't turn up a tool by that name with a CVE-lookup CLI — the closest
-public match, `anouarbensaad/vulnx`, is a CMS auto-exploitation tool, which
-doesn't sound like what "check CVEs with vulnx" meant; this needs a
-straight answer before wiring anything in, since the wrong assumption here
-means either a broken integration or — worse — something that auto-exploits
-instead of just checking a version against known CVEs).
+us rather than shell out to them (vulnx is the one exception, now wired up
+— see Shipped above).
 
 - **HOST**: excluded-but-tracked hosts (reverse DNS + route trace, never
   actively probed) — the `pipeline` schema has no way to mark a `host` entry
-  excluded today, and there's no traceroute helper yet either; vulnx
-  integration for version→CVE lookups (blocked on the question above); a
-  native "easy wins" pass (default creds/common misconfigs); BeanShell
-  detection (no fixed port to match on, needs banner-based detection).
-- **WEB**: a native subdomain enumerator (active + passive); a local
-  "recon on root" prober — tech-detect/title/status/content-length/
-  follow-redirects, an httpx-lite; Google dorking; context-aware wordlist
-  generation for `fuzz` (candidates derived from the detected tech
-  stack/app context, not just static wordlists); a re-validation step for
-  URLs pulled from `gau`/dorking; parameter fuzzing/guessing beyond
-  `params`' URL-based classification, plus reading parameters from a
-  webset/API spec when one exists; content-based sensitive-info
-  classification (creds/keys found inside a file, not just by extension).
+  excluded today, and there's no traceroute helper yet either; a native
+  "easy wins" pass (default creds/common misconfigs); BeanShell detection
+  (no fixed port to match on, needs banner-based detection).
+- **WEB**: Google dorking; context-aware wordlist generation for `fuzz`
+  (candidates derived from the detected tech stack/app context — `probe`'s
+  tech-detect output is the natural input for this now, not just static
+  wordlists); a re-validation step for URLs pulled from `gau`/dorking;
+  parameter fuzzing/guessing beyond `params`' URL-based classification,
+  plus reading parameters from a webset/API spec when one exists;
+  content-based sensitive-info classification (creds/keys found inside a
+  file, not just by extension); optionally also running `robots`/`fuzz`
+  against `pipeline`-discovered subdomains, opt-in given the traffic-volume
+  implications (today only `gau`/`probe` auto-widen to them).
 - **`pipeline` integration** — as each of the above lands, extend
   `pipeline_host.go`/`pipeline_web.go` to call it in the order
   `methodology.md` lays out.

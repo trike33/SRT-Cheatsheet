@@ -6,13 +6,13 @@ into a full HOST/WEB assessment automation — see
 [`docs/methodology.md`](docs/methodology.md) for the target design and
 [`docs/pipeline.md`](docs/pipeline.md) for the orchestrator driving it.
 
-The commands below predate that: they're glue — they *prepare input for* and
-*post-process output from* `httpx`/`katana`/`nuclei`/`naabu`/`subfinder`/
-`ffuf`, not reimplementations of them, for chaining by hand per
-[`docs/playbook.md`](docs/playbook.md). `methodology.md`'s policy going
-forward is the opposite: implement those gaps natively rather than add more
-external-tool chaining (vulnx is the one exception) — so expect this to read
-less "glue around other tools" and more "the tool" over time.
+Some of the commands below predate that and are still glue — they *prepare
+input for* and *post-process output from* `katana`/`nuclei`/`dalfox`/`ffuf`,
+for chaining by hand per [`docs/playbook.md`](docs/playbook.md). But
+`naabu`, `subfinder`, and `httpx` are no longer part of that list: `portscan`,
+`subdomains`, and `probe` replace them natively. `methodology.md`'s policy is
+to keep closing that gap rather than add more external-tool chaining — vulnx
+is the one sanctioned exception (CVE lookups), already wired into `pipeline`.
 
 ## Why
 
@@ -82,6 +82,8 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `portscan` | **new** | Native concurrent TCP connect port scanner (replaces naabu) |
 | `domains` | `legacy/HOST/domain-extracter.py` | Pull unique domains out of httpx output / any text |
 | `scopecheck` | `legacy/HOST/domain_enum.py` | Keep hosts whose resolved IP is in a scope file (concurrent DNS) |
+| `subdomains` | **new** | Find subdomains: passive (crt.sh) + optional active DNS brute force (replaces subfinder) |
+| `probe` | **new** | Native httpx-lite: title/status/length/server + basic tech-detect |
 | `burphosts` | `legacy/WEB/domains-to-httpx.py` | Burp scope JSON -> `host/dir` list for httpx/katana |
 | `burpscope` | `legacy/WEB/domains-parser.py` | Burp scope JSON -> colored include/exclude paths |
 | `gau` | `legacy/WEB/gau_recon.py` | Collect archived URLs from the Wayback CDX API |
@@ -101,18 +103,18 @@ These mirror `legacy/HOST/AUTOMATED.md` and `legacy/WEB/README.md`, but with pip
 ### HOST recon
 
 ```bash
-# scope -> unique IPs -> httpx on 80/443
-srt ipexpand -l scope | tee scopeips | httpx -title -tech-detect -sc -cl -fr -o httpx_out
+# scope -> unique IPs -> recon-on-root (title/tech-detect/status/length)
+srt ipexpand -l scope | tee scopeips | srt probe -o probe_out
 
-# extract main domains from httpx output, keep only in-scope ones, resolve concurrently
-srt domains -l httpx_out | srt scopecheck -scope scopeips -c 60 > domains
+# extract main domains from that, keep only in-scope ones, resolve concurrently
+srt domains -l probe_out | srt scopecheck -scope scopeips -c 60 > domains
 
-# subfinder, then keep in-scope subs, then httpx
-subfinder -dL domains -silent | srt scopecheck -scope scopeips > subdomains
-httpx -l subdomains -title -tech-detect -sc -cl -fr -o httpx_out_subdomains
+# subdomains (passive + active), then keep in-scope ones, then probe
+srt subdomains -l domains -w subdomain-wordlist.txt | srt scopecheck -scope scopeips > subdomains
+srt probe -l subdomains -o probe_out_subdomains
 
-# probe 8080/8443 everywhere
-srt ipports -l scopeips | httpx -title -sc -cl -fr -o httpx_out_80808443
+# discover open ports everywhere (replaces a blind httpx probe of 8080/8443)
+srt ipexpand -l scope | srt portscan -p common,uncommon -o scan_out
 ```
 
 ### WEB recon (Burp scope export)

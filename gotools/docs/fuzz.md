@@ -36,8 +36,8 @@ srt fuzz -scope target_scope.json -w raft-medium-directories.txt -ac -recursion
 ```
 
 Wildcard include hosts (`*.example.com`) can't be resolved, so they aren't
-seeded automatically — feed those through `subfinder` → `scopecheck` first and
-pass concrete hosts with `-u`, still gated by `-scope`.
+seeded automatically — feed those through `srt subdomains` → `scopecheck`
+first and pass concrete hosts with `-u`, still gated by `-scope`.
 
 ## Multiple hosts, one wordlist, no flooding
 

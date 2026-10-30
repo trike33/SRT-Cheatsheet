@@ -3,26 +3,17 @@ package main
 import (
 	"os"
 	"os/exec"
+	"strings"
 )
 
-// externalStep is the extension point for driving a third-party tool from
-// the pipeline. srt's policy (see docs/methodology.md) is to implement
-// recon steps natively rather than shell out to tools like naabu, httpx,
+// This is the extension point for driving a third-party tool from the
+// pipeline. srt's policy (see docs/methodology.md) is to implement recon
+// steps natively rather than shell out to tools like naabu, httpx,
 // subfinder, katana, nuclei, or dalfox — the one sanctioned exception is
-// vulnx, for CVE lookups from a grabbed service/software version (HOST
-// stage, docs/methodology.md's "scan" step). No stage wires it up yet, but
-// runExternal is ready to use once that step is built: it just needs a
-// binary name and an argv builder.
-//
-// Example of how that step would plug in (not wired into any stage yet):
-//
-//	sr := runExternal("host", "vulnx", target,
-//		"vulnx", []string{"-o", target, "-v", version},
-//		filepath.Join(outDir, "vulnx_"+safeName(target)+".txt"))
-type externalStep struct {
-	bin       string
-	buildArgs func() []string
-}
+// vulnx (github.com/projectdiscovery/vulnx), used below for CVE lookups
+// from a grabbed service banner (pipeline_host.go's "scan" step). A future
+// external-tool step follows the same shape: runExternal with a binary name
+// and an argv.
 
 // runExternal looks up bin on PATH and, if found, runs it with args, writing
 // its stdout to outFile and logging its stderr via warn(). If bin isn't
@@ -44,4 +35,18 @@ func runExternal(kind, name, target, bin string, args []string, outFile string) 
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
 	})
+}
+
+// vulnxQuery turns a grabbed service banner into a vulnx search query.
+// vulnx's search is a free-text + structured query engine; plain text
+// (verified against the real tool, not just its docs) works fine as a
+// query without needing product/version parsing — this just trims it to a
+// sane length so a pathological banner can't produce an absurd query.
+func vulnxQuery(banner string) string {
+	q := strings.TrimSpace(banner)
+	const maxLen = 150
+	if len(q) > maxLen {
+		q = q[:maxLen]
+	}
+	return q
 }

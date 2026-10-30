@@ -40,14 +40,65 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 	}))
 	domains, _ := inputLines(domainsFile)
 
-	// --- 02: gau, per discovered domain, merged into one file ---
+	// --- 01b: subdomains (passive always; active too if options.subdomainsWordlist
+	// is set), per domain, merged. Widens the domain list gau (below) and probe
+	// (next) operate on; robots/fuzz stay scoped to the explicit web targets, so
+	// discovering 50 subdomains doesn't silently blow up active traffic.
+	allDomains := append([]string(nil), domains...)
+	if len(domains) == 0 {
+		steps = append(steps, skipStep("web", "subdomains", "", "no domains extracted from targets"))
+	} else {
+		discovered := map[string]struct{}{}
+		for _, d := range domains {
+			d := d
+			subFile := filepath.Join(outDir, "01b_subdomains_"+safeName(d)+".txt")
+			subArgs := []string{"-d", d, "-o", subFile}
+			if cfg.Options.SubdomainsWordlist != "" {
+				subArgs = append(subArgs, "-w", cfg.Options.SubdomainsWordlist)
+			} else {
+				subArgs = append(subArgs, "-active=false")
+			}
+			steps = append(steps, runStep("web", "subdomains", d, subFile, func() error {
+				return runSubdomains(subArgs)
+			}))
+			for _, s := range mustLines(subFile) {
+				if _, dup := discovered[s]; dup {
+					continue
+				}
+				discovered[s] = struct{}{}
+				allDomains = append(allDomains, s)
+			}
+		}
+	}
+	allDomains = dedupStrings(allDomains)
+
+	// --- 01c: probe (recon on root) for every domain + discovered subdomain ---
+	if len(allDomains) == 0 {
+		steps = append(steps, skipStep("web", "probe", "", "no domains to probe"))
+	} else {
+		probeTargetsFile := filepath.Join(outDir, "01c_probe_targets.txt")
+		probeFile := filepath.Join(outDir, "01c_probe.json")
+		if err := writeLinesFile(probeTargetsFile, allDomains); err != nil {
+			steps = append(steps, stepResult{Kind: "web", Name: "probe", Status: "error", Detail: err.Error()})
+		} else {
+			probeArgs := []string{"-l", probeTargetsFile, "-json", "-o", probeFile,
+				"-timeout", cfg.Options.timeoutDuration(10 * time.Second).String(),
+				"-insecure=" + strconv.FormatBool(cfg.Options.insecureOrDefault(true)),
+			}
+			steps = append(steps, runStep("web", "probe", "", probeFile, func() error {
+				return runProbe(probeArgs)
+			}))
+		}
+	}
+
+	// --- 02: gau, per domain AND discovered subdomain, merged into one file ---
 	allURLsFile := filepath.Join(outDir, "02_all_urls.txt")
 	var allURLs []string
-	if len(domains) == 0 {
+	if len(allDomains) == 0 {
 		steps = append(steps, skipStep("web", "gau", "", "no domains extracted from targets (bare-IP targets skip gau/sensitive/params, which key off a resolvable domain)"))
 	} else {
 		seen := map[string]struct{}{}
-		for _, d := range domains {
+		for _, d := range allDomains {
 			d := d
 			gauFile := filepath.Join(outDir, "02_gau_"+safeName(d)+".txt")
 			gauTimeout := cfg.Options.timeoutDuration(90 * time.Second).String()

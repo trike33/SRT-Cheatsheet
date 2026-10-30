@@ -11,10 +11,11 @@ show their own richer live counters instead of this generic line.
 
 Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [portscan](#portscan) · [domains](#domains) · [scopecheck](#scopecheck) ·
-[burphosts](#burphosts) · [burpscope](#burpscope) · [gau](#gau) ·
-[sensitive](#sensitive) · [params](#params) · [dirlist](#dirlist) ·
-[robots](#robots) · [snyk](#snyk) · [relpaths](#relpaths) · [fuzz](#fuzz) ·
-[pipeline](#pipeline) · [version](#version)
+[subdomains](#subdomains) · [probe](#probe) · [burphosts](#burphosts) ·
+[burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
+[params](#params) · [dirlist](#dirlist) · [robots](#robots) · [snyk](#snyk) ·
+[relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
+[version](#version)
 
 ---
 
@@ -140,7 +141,58 @@ Concurrent DNS. (Port of `legacy/HOST/domain_enum.py`.)
 | `-timeout` | `5s` | per-host DNS timeout |
 
 ```bash
-subfinder -dL domains -silent | srt scopecheck -scope scopeips -c 80 > subs
+srt subdomains -d example.com | srt scopecheck -scope scopeips -c 80 > subs
+```
+
+---
+
+## subdomains
+
+Find subdomains for a domain: passive, via crt.sh certificate transparency
+logs (always runs), plus optional active DNS brute force when a wordlist of
+labels (`www`, `api`, `dev`, ...) is given. `srt`'s replacement for
+subfinder.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-d` | — | single target domain |
+| `-l` | stdin | file of target domains |
+| `-w` | — | wordlist of labels for active DNS brute force; omit to skip active enum |
+| `-passive` | `true` | passive enumeration via crt.sh |
+| `-active` | `true` | active DNS brute force (needs `-w`) |
+| `-c` | `100` | concurrent DNS resolutions (active) |
+| `-timeout` | `30s` | HTTP timeout for crt.sh |
+| `-resolve-timeout` | `5s` | per-lookup DNS timeout (active) |
+| `-o` | stdout | output file |
+
+```bash
+srt subdomains -d example.com -w subdomain-wordlist.txt -o subs.txt
+srt subdomains -d example.com | srt probe   # passive only, then recon each
+```
+
+---
+
+## probe
+
+Native httpx-lite: for each target, fetch the root page and report status,
+content-length, title, `Server` header, and a best-effort tech-detect
+(WordPress/Drupal/Joomla/Laravel/Django/Express/PHP/ASP.NET/nginx/Apache/
+IIS/Cloudflare — a small, conservative signature set, not a
+wappalyzer-equivalent). Covers the methodology's "recon on root" step.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin | target list: URLs or bare hosts |
+| `-timeout` | `10s` | per-request timeout |
+| `-insecure` | `true` | skip TLS verification |
+| `-c` | `40` | concurrent probes |
+| `-o` | stdout | output file |
+| `-json` | off | JSON lines instead of a table |
+
+A bare host (no scheme) tries `https://` then falls back to `http://`.
+
+```bash
+srt subdomains -d example.com | srt probe -json -o probe.json
 ```
 
 ---

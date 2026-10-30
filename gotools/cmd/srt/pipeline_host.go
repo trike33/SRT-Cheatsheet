@@ -15,8 +15,9 @@ import (
 //	  -> classify each open port:
 //	       web service  -> handed off to the WEB stage (webHandoff)
 //	       other service -> flagged if it's an uncommon/specialty port;
-//	                        a grabbed banner gets a "vulnx" placeholder step
-//	                        (not wired up yet, see ROADMAP.md)
+//	                        a grabbed banner gets looked up via vulnx
+//	                        (github.com/projectdiscovery/vulnx), skipped
+//	                        cleanly if it isn't installed
 //
 // Entries are grouped by their effective "ports" value (entry.Ports ->
 // options.Ports -> "common,uncommon") so each distinct port spec only scans
@@ -96,8 +97,11 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepRes
 				})
 			}
 			if r.Banner != "" && !isWebPort(r.Port) {
-				steps = append(steps, skipStep("host", "vulnx", fmt.Sprintf("%s:%d", r.Host, r.Port),
-					"version/CVE lookup not wired up yet (vulnx's CLI interface needs confirming, see ROADMAP.md); banner: "+r.Banner))
+				target := fmt.Sprintf("%s:%d", r.Host, r.Port)
+				vulnxFile := filepath.Join(outDir, "vulnx_"+safeName(target)+".json")
+				steps = append(steps, runExternal("host", "vulnx", target, "vulnx",
+					[]string{"search", vulnxQuery(r.Banner), "--json", "--silent", "--limit", "5"},
+					vulnxFile))
 			}
 		}
 	}

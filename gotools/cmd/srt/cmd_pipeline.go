@@ -162,8 +162,8 @@ func captureStdout(fn func() error) (string, error) {
 }
 
 var pipelineStageOrder = map[string][]string{
-	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged)"},
-	"web":  {"domains", "gau", "sensitive", "params", "robots", "fuzz", "snyk (only targets with snykUrl/snykVersion)"},
+	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged, bannered -> vulnx)"},
+	"web":  {"domains", "subdomains", "probe", "gau", "sensitive", "params", "robots", "fuzz", "snyk (only targets with snykUrl/snykVersion)"},
 }
 
 func printDryRun(cfg *pipelineConfig, kinds []string, outDir string) {
