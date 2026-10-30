@@ -1,0 +1,29 @@
+{
+  "name": "example-engagement",
+  "host": [
+    "10.0.0.0/24",
+    "192.168.1.5",
+    { "target": "192.168.1.10", "ports": "22,80,443,8000-8100" }
+  ],
+  "web": [
+    "example.com",
+    "https://app.example.com/",
+    "1.2.3.4",
+    {
+      "target": "https://admin.example.com",
+      "wordlist": "custom.txt",
+      "scope": "burp-scope.json",
+      "extensions": [".php", ".bak"]
+    }
+  ],
+  "options": {
+    "outputDir": "./srt-pipeline-out",
+    "concurrency": 40,
+    "rateGlobal": 0,
+    "timeout": "10s",
+    "insecure": true,
+    "wordlist": "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt",
+    "scope": "burp-scope.json",
+    "ports": "common,uncommon"
+  }
+}

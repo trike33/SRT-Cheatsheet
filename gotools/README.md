@@ -1,10 +1,18 @@
 # srt — bug-bounty recon helpers (Go)
 
-A single, dependency-free Go binary that ports the Python glue scripts in this
-repo into fast, pipe-friendly subcommands. It does **not** reimplement `httpx`,
-`katana`, `nuclei`, `naabu`, `subfinder` or `ffuf` — it replaces the hand-rolled
-Python that *prepares input for* and *post-processes output from* those tools, so
-everything chains together cleanly on an engagement.
+A single, dependency-free Go binary that ports the Python glue scripts in
+[`legacy/`](../legacy/) into fast, pipe-friendly subcommands, and is growing
+into a full HOST/WEB assessment automation — see
+[`docs/methodology.md`](docs/methodology.md) for the target design and
+[`docs/pipeline.md`](docs/pipeline.md) for the orchestrator driving it.
+
+The commands below predate that: they're glue — they *prepare input for* and
+*post-process output from* `httpx`/`katana`/`nuclei`/`naabu`/`subfinder`/
+`ffuf`, not reimplementations of them, for chaining by hand per
+[`docs/playbook.md`](docs/playbook.md). `methodology.md`'s policy going
+forward is the opposite: implement those gaps natively rather than add more
+external-tool chaining (vulnx is the one exception) — so expect this to read
+less "glue around other tools" and more "the tool" over time.
 
 ## Why
 
@@ -52,9 +60,14 @@ GitHub web UI.)
 
 ## Docs
 
+- [`docs/methodology.md`](docs/methodology.md) — the HOST/WEB assessment
+  methodology this tool is built to automate, and what's still backlog
+- [`docs/pipeline.md`](docs/pipeline.md) — `srt pipeline`, the JSON-driven
+  orchestrator that runs an assessment end to end
 - [`docs/commands.md`](docs/commands.md) — every command, every flag, with examples
 - [`docs/fuzz.md`](docs/fuzz.md) — the scope-aware fuzzer, in depth
-- [`docs/playbook.md`](docs/playbook.md) — end-to-end engagement workflow (how the tools chain)
+- [`docs/playbook.md`](docs/playbook.md) — manual engagement workflow chained
+  with external tools, for the methodology gaps `pipeline` doesn't cover yet
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — changelog + backlog
 
 ## Commands
@@ -63,25 +76,27 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 
 | Command | Replaces | Does |
 |---|---|---|
-| `ipexpand` | `HOST/ipparser.py` | Expand CIDRs/IPs -> unique sorted IP list |
-| `ipports` | `HOST/format-ips.py` | Append ports (default 8080,8443) as `host:port` |
-| `domains` | `HOST/domain-extracter.py` | Pull unique domains out of httpx output / any text |
-| `scopecheck` | `HOST/domain_enum.py` | Keep hosts whose resolved IP is in a scope file (concurrent DNS) |
-| `burphosts` | `WEB/domains-to-httpx.py` | Burp scope JSON -> `host/dir` list for httpx/katana |
-| `burpscope` | `WEB/domains-parser.py` | Burp scope JSON -> colored include/exclude paths |
-| `gau` | `WEB/gau_recon.py` | Collect archived URLs from the Wayback CDX API |
-| `sensitive` | `WEB/gau_recon.py` | Filter a URL list to sensitive file extensions |
-| `params` | `WEB/gau_recon.py` | Group URLs by likely vuln class (sqli/xss/ssrf/…) |
-| `dirlist` | `dir_listing.py` | Recursively harvest files from open directory listings |
-| `robots` | `robots-checker.py` | Fetch robots.txt and probe each Allow/Disallow path |
-| `snyk` | `synk_parser.py` | Test a version against a Snyk package's advisory ranges |
-| `relpaths` | `relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
+| `ipexpand` | `legacy/HOST/ipparser.py` | Expand CIDRs/IPs -> unique sorted IP list |
+| `ipports` | `legacy/HOST/format-ips.py` | Append ports (default 8080,8443) as `host:port` |
+| `resolve` | **new** | Forward (A/AAAA) or reverse (PTR) DNS lookup, concurrent |
+| `portscan` | **new** | Native concurrent TCP connect port scanner (replaces naabu) |
+| `domains` | `legacy/HOST/domain-extracter.py` | Pull unique domains out of httpx output / any text |
+| `scopecheck` | `legacy/HOST/domain_enum.py` | Keep hosts whose resolved IP is in a scope file (concurrent DNS) |
+| `burphosts` | `legacy/WEB/domains-to-httpx.py` | Burp scope JSON -> `host/dir` list for httpx/katana |
+| `burpscope` | `legacy/WEB/domains-parser.py` | Burp scope JSON -> colored include/exclude paths |
+| `gau` | `legacy/WEB/gau_recon.py` | Collect archived URLs from the Wayback CDX API |
+| `sensitive` | `legacy/WEB/gau_recon.py` | Filter a URL list to sensitive file extensions |
+| `params` | `legacy/WEB/gau_recon.py` | Group URLs by likely vuln class (sqli/xss/ssrf/…) |
+| `dirlist` | `legacy/dir_listing.py` | Recursively harvest files from open directory listings |
+| `robots` | `legacy/robots-checker.py` | Fetch robots.txt and probe each Allow/Disallow path |
+| `snyk` | `legacy/synk_parser.py` | Test a version against a Snyk package's advisory ranges |
+| `relpaths` | `legacy/relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
 | `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
 | `version` | **new** | Print version + build info |
 
 ## Workflow examples
 
-These mirror `HOST/AUTOMATED.md` and `WEB/README.md`, but with pipes.
+These mirror `legacy/HOST/AUTOMATED.md` and `legacy/WEB/README.md`, but with pipes.
 
 ### HOST recon
 

@@ -4,18 +4,19 @@ Every command reads a list from `-l <file>` **or stdin**, and writes to stdout
 **or `-o <file>`**. Status/progress goes to **stderr**, so stdout stays clean to
 pipe into the next tool. Run `srt <command> -h` for the live flag list.
 
-Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [domains](#domains) ·
-[scopecheck](#scopecheck) · [burphosts](#burphosts) · [burpscope](#burpscope) ·
-[gau](#gau) · [sensitive](#sensitive) · [params](#params) · [dirlist](#dirlist) ·
+Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
+[portscan](#portscan) · [domains](#domains) · [scopecheck](#scopecheck) ·
+[burphosts](#burphosts) · [burpscope](#burpscope) · [gau](#gau) ·
+[sensitive](#sensitive) · [params](#params) · [dirlist](#dirlist) ·
 [robots](#robots) · [snyk](#snyk) · [relpaths](#relpaths) · [fuzz](#fuzz) ·
-[version](#version)
+[pipeline](#pipeline) · [version](#version)
 
 ---
 
 ## ipexpand
 
 Expand a scope file of IPs and CIDRs into a unique, numerically sorted list of
-individual IPs. (Port of `HOST/ipparser.py`.)
+individual IPs. (Port of `legacy/HOST/ipparser.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -36,7 +37,7 @@ don't feed it enormous ranges unless you want every address.
 ## ipports
 
 Append ports to each IP, one `host:port` per line, ready for `httpx`.
-(Port of `HOST/format-ips.py`.)
+(Port of `legacy/HOST/format-ips.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -50,10 +51,64 @@ srt ipexpand -l scope.txt | srt ipports -ports 8080,8443,9090 | httpx -silent
 
 ---
 
+## resolve
+
+Forward (A/AAAA) or reverse (PTR) DNS lookup, concurrent. Covers the HOST
+methodology's "DNS check" (forward) and the reverse-lookup half of its
+excluded-host handling (see [methodology.md](methodology.md)).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin | hostnames, or IPs with `-reverse` |
+| `-reverse` | off | treat input as IPs and do a PTR lookup instead |
+| `-c` | `40` | concurrent lookups |
+| `-timeout` | `5s` | per-lookup timeout |
+| `-o` | stdout | output file |
+| `-json` | off | JSON lines (one per query, including failures) |
+
+```bash
+srt resolve -l hosts.txt                    # host -> ip1,ip2
+srt ipexpand -l scope.txt | srt resolve -reverse   # ip -> ptr-name
+```
+
+Failed lookups are reported to stderr and left out of plain-text output; with
+`-json`, every query gets a line, successes and failures alike.
+
+---
+
+## portscan
+
+Native concurrent TCP connect port scanner — common ports, uncommon/specialty
+ports worth flagging, a full 1-65535 sweep, or an explicit list/range, plus a
+best-effort banner grab. This is `srt`'s replacement for shelling out to
+naabu; see [methodology.md](methodology.md)'s external-tool policy.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin | input IP/host list |
+| `-p` | `common` | `common`, `uncommon`, `all`, or explicit e.g. `80,443,8000-9000` — comma-combinable, e.g. `common,uncommon` |
+| `-c` | `200` | concurrent connection attempts |
+| `-timeout` | `1s` | per-port connect timeout |
+| `-banner` | `true` | best-effort read of a service's greeting banner |
+| `-o` | stdout | output file |
+| `-json` | off | JSON lines instead of `host:port [banner]` |
+
+```bash
+srt ipexpand -l scope.txt | srt portscan -p common,uncommon -json -o scan.json
+echo 10.0.0.5 | srt portscan -p 1-65535 -c 500   # full sweep, higher concurrency
+```
+
+`uncommon` is the specialty/legacy-service list worth a manual look — rsync
+(873) and Java RMI (1098/1099) are the two examples called out in
+[methodology.md](methodology.md); `srt pipeline`'s HOST stage flags any open
+port from this list automatically.
+
+---
+
 ## domains
 
 Extract unique hostnames from `httpx` output (or any text). IPs are ignored —
-a trailing alphabetic TLD is required. (Port of `HOST/domain-extracter.py`.)
+a trailing alphabetic TLD is required. (Port of `legacy/HOST/domain-extracter.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -69,7 +124,7 @@ srt domains -l httpx_out | srt scopecheck -scope scopeips > domains
 ## scopecheck
 
 Resolve each host and keep only those whose IP falls inside a scope file.
-Concurrent DNS. (Port of `HOST/domain_enum.py`.)
+Concurrent DNS. (Port of `legacy/HOST/domain_enum.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -89,7 +144,7 @@ subfinder -dL domains -silent | srt scopecheck -scope scopeips -c 80 > subs
 
 Parse a Burp Suite scope JSON export and emit `host[/dir]` entries (no scheme)
 for `httpx`/`katana`. Wildcard hosts (`*.example.com`) are collapsed to the apex
-so they resolve. (Port of `WEB/domains-to-httpx.py`.)
+so they resolve. (Port of `legacy/WEB/domains-to-httpx.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -107,7 +162,7 @@ srt burphosts -l target_scope.json | katana -jc -o katana_out
 
 Parse a Burp scope JSON and print a readable, colored path list: **green** =
 include, **red** = exclude. Wildcard/apex duplicates are collapsed.
-(Port of `WEB/domains-parser.py`.)
+(Port of `legacy/WEB/domains-parser.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -124,7 +179,7 @@ srt burpscope -l target_scope.json
 ## gau
 
 Collect archived URLs for a domain from the Wayback Machine CDX API. Needs
-outbound internet to `web.archive.org`. (Port of `WEB/gau_recon.py`.)
+outbound internet to `web.archive.org`. (Port of `legacy/WEB/gau_recon.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -181,7 +236,7 @@ srt params -l all_urls.txt -class sqli | nuclei  # one class, piped
 
 Recursively harvest file URLs from open directory listings (Apache/nginx
 autoindex). Stays on the same scheme+host, skips image/css noise.
-(Port of `dir_listing.py`.)
+(Port of `legacy/dir_listing.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -201,7 +256,7 @@ echo "https://target/uploads/" | srt dirlist -o loot.txt
 
 Fetch `robots.txt` and probe every `Allow`/`Disallow` path, printing
 `url [status] [length]` (green for 200). Wildcard (`*`) entries are skipped.
-Accepts many base URLs via args, `-l`, or stdin. (Port of `robots-checker.py`.)
+Accepts many base URLs via args, `-l`, or stdin. (Port of `legacy/robots-checker.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -222,7 +277,7 @@ cat live_hosts.txt | srt robots -color never
 
 Test a version against a Snyk package advisory page's affected ranges. Needs
 outbound internet to `security.snyk.io`. Comparison is numeric (`2.10 > 2.9`).
-(Port of `synk_parser.py`.)
+(Port of `legacy/synk_parser.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -244,7 +299,7 @@ range. If the page layout changes and no table is found, it errors clearly.
 
 Walk a directory and print every file as a path relative to the root — turn an
 unpacked CMS/plugin source tree into a target-specific ffuf wordlist.
-(Port of `relative_paths.py`.)
+(Port of `legacy/relative_paths.py`.)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -350,6 +405,26 @@ text in context (handy for spotting API keys, secrets, version strings, stack
 traces in discovered files). `-resume <file>` records every completed request
 and discovered directory, so re-running the same command continues where it
 left off instead of repeating work.
+
+---
+
+## pipeline
+
+Runs the HOST and/or WEB methodology ([methodology.md](methodology.md)) from
+one JSON target file. Full guide in [pipeline.md](pipeline.md).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-c` | — (required) | pipeline JSON config file |
+| `-kind` | auto | `host`, `web`, or `host,web` |
+| `-o` | `options.outputDir` | output directory |
+| `-dry-run` | off | print planned steps, send no traffic |
+| `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
+| `-color` | `auto` | `auto` \| `always` \| `never` |
+
+```bash
+srt pipeline -c engagement.json -kind host,web -o ./out
+```
 
 ---
 

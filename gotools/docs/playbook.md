@@ -1,9 +1,15 @@
-# Engagement playbook
+# Engagement playbook (manual, external-tool-assisted)
 
-How the `srt` commands chain together on a real bug-bounty engagement, following
-the methodology in the repo root (`Automated methodology.md`, `HOST/`, `WEB/`).
-`srt` does the glue; `httpx`/`naabu`/`subfinder`/`katana`/`nuclei`/`ffuf` do the
-heavy network work.
+How the `srt` commands chain together on a real bug-bounty engagement when
+you're also driving `httpx`/`naabu`/`subfinder`/`katana`/`nuclei`/`ffuf` by
+hand. This is still the recon pattern that predates `srt pipeline` —
+[methodology.md](methodology.md) is the current target design, which plans
+to cover these same gaps **natively** instead (see its "External-tool
+policy"), tracked in [ROADMAP.md](ROADMAP.md). Until those land, this is how
+to fill the gap with the external tools directly.
+
+(`Automated methodology.md`, `HOST/`, `WEB/` — the original Python-era notes
+this was based on — now live in [`legacy/`](../../legacy/) at the repo root.)
 
 ## 1. HOST recon (you have an IP/CIDR scope)
 
