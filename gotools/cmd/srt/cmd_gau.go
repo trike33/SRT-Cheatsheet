@@ -85,6 +85,7 @@ func runGau(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("gau")()
 
 	// Gather target hosts from -d, -l, positional, or stdin.
 	var hosts []string
@@ -161,6 +162,7 @@ func runSensitive(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("sensitive")()
 	urls, err := inputLines(resolveInput(*in, fs.Args()))
 	if err != nil {
 		return err
@@ -180,6 +182,7 @@ func runParams(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("params")()
 	urls, err := inputLines(resolveInput(*in, fs.Args()))
 	if err != nil {
 		return err

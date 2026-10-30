@@ -4,6 +4,11 @@ Every command reads a list from `-l <file>` **or stdin**, and writes to stdout
 **or `-o <file>`**. Status/progress goes to **stderr**, so stdout stays clean to
 pipe into the next tool. Run `srt <command> -h` for the live flag list.
 
+If a command is still working 5 seconds after it starts, it logs a
+`still running (Ns elapsed)...` line to stderr every 5 seconds until it's
+done — so a long run on a big input never looks hung. `fuzz` and `portscan`
+show their own richer live counters instead of this generic line.
+
 Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [portscan](#portscan) · [domains](#domains) · [scopecheck](#scopecheck) ·
 [burphosts](#burphosts) · [burpscope](#burpscope) · [gau](#gau) ·

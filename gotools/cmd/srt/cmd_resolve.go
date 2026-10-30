@@ -38,6 +38,7 @@ func runResolve(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("resolve")()
 
 	queries, err := inputLines(resolveInput(*in, fs.Args()))
 	if err != nil {

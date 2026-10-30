@@ -38,6 +38,7 @@ func runDirList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("dirlist")()
 
 	seeds, err := inputLines(resolveInput(*in, fs.Args()))
 	if err != nil {

@@ -34,6 +34,10 @@ Running log of what's shipped and what's queued, newest first.
 - **`pipeline` command** — JSON-driven orchestrator that runs the right
   subcommands against `host`/`web` targets automatically. See
   [pipeline.md](pipeline.md).
+- **"Still running" heartbeat** — any command still working 5 seconds in
+  logs `<command>: still running (Ns elapsed)...` to stderr every 5 seconds
+  until it finishes, so a long run on a big input never looks hung. `fuzz`
+  and `portscan` keep their own richer live counters instead.
 
 ### HOST methodology (see [methodology.md](methodology.md))
 - **`resolve`** — forward (A/AAAA) and reverse (PTR) DNS lookup, concurrent.

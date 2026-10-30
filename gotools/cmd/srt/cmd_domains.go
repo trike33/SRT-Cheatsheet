@@ -35,6 +35,7 @@ func runDomains(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("domains")()
 
 	content, err := readAll(resolveInput(*in, fs.Args()))
 	if err != nil {
@@ -76,6 +77,7 @@ func runScopeCheck(args []string) error {
 	if *scopeFile == "" {
 		return errMissing("-scope is required (the scope file of IPs/CIDRs)")
 	}
+	defer startHeartbeat("scopecheck")()
 
 	scope, err := loadScope(*scopeFile)
 	if err != nil {

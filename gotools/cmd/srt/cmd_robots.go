@@ -31,6 +31,7 @@ func runRobots(args []string) error {
 		return err
 	}
 	cm := parseColorMode(*colorFlag)
+	defer startHeartbeat("robots")()
 
 	// Base URLs may come from args, -l, and/or stdin.
 	var bases []string

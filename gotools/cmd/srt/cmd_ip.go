@@ -33,6 +33,7 @@ func runIPExpand(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("ipexpand")()
 
 	lines, err := inputLines(resolveInput(*in, fs.Args()))
 	if err != nil {
@@ -93,6 +94,7 @@ func runIPPorts(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("ipports")()
 
 	var ports []string
 	for _, p := range strings.Split(*portsFlag, ",") {

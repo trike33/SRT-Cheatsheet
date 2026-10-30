@@ -28,6 +28,7 @@ func runRelPaths(args []string) error {
 		return errMissing("usage: srt relpaths <directory>")
 	}
 	root := fsFlags.Arg(0)
+	defer startHeartbeat("relpaths")()
 
 	var paths []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

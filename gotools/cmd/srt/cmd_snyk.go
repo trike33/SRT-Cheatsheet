@@ -45,6 +45,7 @@ func runSnyk(args []string) error {
 	if *snykURL == "" || *version == "" {
 		return errMissing("both -url and -version are required")
 	}
+	defer startHeartbeat("snyk")()
 
 	client := newHTTPClient(*timeout, *insecure)
 	resp, err := httpGet(client, *snykURL)

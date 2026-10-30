@@ -71,6 +71,7 @@ func runBurpHosts(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	defer startHeartbeat("burphosts")()
 
 	scope, err := loadBurpScope(resolveInput(*in, fs.Args()))
 	if err != nil {
@@ -120,6 +121,7 @@ func runBurpScope(args []string) error {
 		return err
 	}
 	cm := parseColorMode(*colorFlag)
+	defer startHeartbeat("burpscope")()
 
 	scope, err := loadBurpScope(resolveInput(*in, fs.Args()))
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // inputLines reads non-empty, whitespace-trimmed lines from path. If path is
@@ -82,6 +83,44 @@ func stdout() io.Writer { return os.Stdout }
 // warn prints a formatted message to stderr so stdout stays clean for piping.
 func warn(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "[!] "+format+"\n", a...)
+}
+
+// heartbeatInterval is how often startHeartbeat reassures the user a command
+// is still working. Chosen so a fast command (the overwhelming majority of
+// runs) never prints one at all.
+const heartbeatInterval = 5 * time.Second
+
+// startHeartbeat starts logging a "still running" line to stderr every
+// heartbeatInterval. This is the generic "didn't hang" signal for commands
+// without their own richer progress output; call the returned stop function
+// (defer it right after calling this) once the work finishes. Commands with
+// their own live progress ticker (fuzz, portscan) don't need this — they
+// already report liveness in more detail.
+func startHeartbeat(label string) (stop func()) {
+	return startHeartbeatEvery(label, heartbeatInterval)
+}
+
+// startHeartbeatEvery is startHeartbeat with an explicit interval, split out
+// so tests don't have to wait out the real heartbeatInterval. It logs via
+// warn() (a plain, newline-terminated log line, never an overwritten
+// spinner) specifically so it can't garble mid-write with a warn() call from
+// the work it's watching over.
+func startHeartbeatEvery(label string, interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		start := time.Now()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				warn("%s: still running (%s elapsed)...", label, time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // resolveInput returns the input path, preferring an explicit -l flag, then a
