@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,7 +94,10 @@ func runFuzz(args []string) error {
 	fl := fs.String("fl", "", "filter line counts")
 	mr := fs.String("mr", "", "match body regex")
 	fr := fs.String("fr", "", "filter body regex")
-	ac := fs.Bool("ac", false, "auto-calibrate: fingerprint soft-404s and filter matching responses")
+	ac := fs.Bool("ac", false, "auto-calibrate: fingerprint soft-404s per directory and filter matching responses")
+	hl := fs.String("hl", "", "highlight response bodies matching this regex (prints snippets under the hit)")
+	autoThrottle := fs.Bool("auto-throttle", false, "automatically back off a host's rate when it returns 429/503")
+	resume := fs.String("resume", "", "state file: skip already-done work and persist progress so a re-run continues")
 
 	// Recursion & output.
 	recursion := fs.Bool("recursion", false, "recurse into discovered directories")
@@ -111,6 +117,14 @@ func runFuzz(args []string) error {
 	m, err := buildMatcher(*mc, *fc, *ms, *fsz, *mw, *fw, *ml, *fl, *mr, *fr)
 	if err != nil {
 		return err
+	}
+
+	var hlRe *regexp.Regexp
+	if *hl != "" {
+		hlRe, err = regexp.Compile(*hl)
+		if err != nil {
+			return fmt.Errorf("-hl: %w", err)
+		}
 	}
 
 	// Load scope if given.
@@ -156,33 +170,45 @@ func runFuzz(args []string) error {
 	defer globalLimiter.close()
 
 	eng := &fuzzEngine{
-		client:      client,
-		matcher:     m,
-		scope:       scope,
-		method:      *method,
-		headers:     hdrs,
-		body:        *body,
-		ua:          *ua,
-		delay:       *delay,
-		jitter:      *jitter,
-		retries:     *retries,
-		recursion:   *recursion,
-		maxDepth:    *depth,
-		words:       words,
-		exts:        exts,
-		cm:          cm,
-		jsonOut:     *jsonOut,
-		silent:      *silent,
-		visited:     map[string]struct{}{},
-		workerCount: max(1, *conc),
-		randomAgent: *randomAgent,
-		maxTime:     *maxTime,
-		maxErrors:   *maxErrors,
-		baseErrors:  map[string]int{},
-		deadBases:   map[string]struct{}{},
-		perHostIval: perHostIval,
-		perHostConc: *hostConc,
-		gLimiter:    globalLimiter,
+		client:       client,
+		matcher:      m,
+		scope:        scope,
+		method:       *method,
+		headers:      hdrs,
+		body:         *body,
+		ua:           *ua,
+		delay:        *delay,
+		jitter:       *jitter,
+		retries:      *retries,
+		recursion:    *recursion,
+		maxDepth:     *depth,
+		words:        words,
+		exts:         exts,
+		cm:           cm,
+		jsonOut:      *jsonOut,
+		silent:       *silent,
+		visited:      map[string]struct{}{},
+		workerCount:  max(1, *conc),
+		randomAgent:  *randomAgent,
+		maxTime:      *maxTime,
+		maxErrors:    *maxErrors,
+		baseErrors:   map[string]int{},
+		deadBases:    map[string]struct{}{},
+		perHostIval:  perHostIval,
+		perHostConc:  *hostConc,
+		gLimiter:     globalLimiter,
+		autocal:      *ac,
+		cal:          map[string]*calibData{},
+		hlRe:         hlRe,
+		autoThrottle: *autoThrottle,
+	}
+
+	// Resume state: load prior progress and open the file for appends.
+	if *resume != "" {
+		if err := eng.initResume(*resume); err != nil {
+			return err
+		}
+		defer eng.closeResume()
 	}
 
 	if *out != "" {
@@ -194,7 +220,7 @@ func runFuzz(args []string) error {
 		eng.outFile = w
 	}
 
-	eng.run(bases, *ac)
+	eng.run(bases)
 	return nil
 }
 
@@ -223,10 +249,28 @@ type fuzzEngine struct {
 	maxErrors   int
 
 	// multi-host scheduling.
-	perHostIval time.Duration // 0 = unlimited
-	perHostConc int           // 0 = unlimited
-	gLimiter    *rateLimiter  // global rate cap across all hosts
-	sched       *scheduler
+	perHostIval  time.Duration // 0 = unlimited
+	perHostConc  int           // 0 = unlimited
+	gLimiter     *rateLimiter  // global rate cap across all hosts
+	sched        *scheduler
+	autoThrottle bool // adaptive per-host backoff on 429/503
+
+	// per-directory soft-404 calibration (-ac).
+	autocal bool
+	calMu   sync.RWMutex
+	cal     map[string]*calibData // keyed by base template
+
+	// response-body highlighting (-hl).
+	hlRe *regexp.Regexp
+
+	// resumable runs (-resume).
+	resumePath       string
+	resumeW          *bufio.Writer
+	resumeCloser     io.Closer
+	resumeMu         sync.Mutex
+	resumeDone       map[string]struct{} // targets completed in a prior run
+	resumeDiscovered []string            // dirs discovered in a prior run, re-seeded
+	resumeSkip       atomic.Int64
 
 	outFile io.Writer
 	outMu   sync.Mutex
@@ -245,6 +289,12 @@ type fuzzEngine struct {
 	matchCount atomic.Int64
 	skipCount  atomic.Int64 // out of scope
 	errCount   atomic.Int64
+}
+
+// calibData holds a directory's soft-404 fingerprint (response sizes seen for
+// random, non-existent paths under that directory).
+type calibData struct {
+	sizes map[int]struct{}
 }
 
 func (e *fuzzEngine) stopped() bool { return e.stopF.Load() }
@@ -282,18 +332,17 @@ func (e *fuzzEngine) recordResult(base string, ok bool) {
 	}
 }
 
-func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
-	// Optional calibration per base before the real run.
-	if autocalibrate {
-		for _, b := range bases {
-			e.calibrate(b)
-		}
+func (e *fuzzEngine) run(bases []string) {
+	// Re-seed directories discovered in a prior run (resume).
+	if len(e.resumeDiscovered) > 0 {
+		bases = dedupStrings(append(append([]string{}, bases...), e.resumeDiscovered...))
 	}
 
 	e.sched = newScheduler(e.workerCount, e.perHostIval, e.perHostConc, e.gLimiter, &e.stopF)
 
 	// Seed a feeder per base, grouped by host so the scheduler can interleave
 	// them. This happens before dispatch starts, so feeders>0 keeps it alive.
+	// Calibration now happens per-directory inside feed().
 	hosts := map[string]struct{}{}
 	for _, b := range bases {
 		hb := e.sched.hostBucket(hostOf(b))
@@ -355,10 +404,14 @@ func (e *fuzzEngine) startFeeder(hb *hostBucket, base string, depth int) {
 	go e.feed(hb, base, depth)
 }
 
-// feed streams one job per word (and extension) into the host's queue, applying
-// backpressure, then releases its feeder registration.
+// feed calibrates this directory (if -ac) and then streams one job per word
+// (and extension) into the host's queue, applying backpressure, before
+// releasing its feeder registration.
 func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int) {
 	defer e.sched.feederDone()
+	if e.autocal {
+		e.calibrate(base) // per-directory soft-404 fingerprint
+	}
 	for _, w := range e.words {
 		if e.stopped() || e.baseDead(base) {
 			return

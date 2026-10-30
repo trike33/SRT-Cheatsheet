@@ -55,6 +55,7 @@ GitHub web UI.)
 - [`docs/commands.md`](docs/commands.md) — every command, every flag, with examples
 - [`docs/fuzz.md`](docs/fuzz.md) — the scope-aware fuzzer, in depth
 - [`docs/playbook.md`](docs/playbook.md) — end-to-end engagement workflow (how the tools chain)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — changelog + backlog
 
 ## Commands
 
@@ -167,8 +168,14 @@ Burp scope.
   (words), `-ml -fl` (lines), `-mr -fr` (body regex). Each accepts lists and
   ranges, e.g. `-mc 200-299,403`.
 - **Auto-calibration** (`-ac`): probes a few random paths first, fingerprints the
-  soft-404 response, and auto-filters anything that matches — kills false
-  positives on sites that return 200 for everything.
+  soft-404 response, and auto-filters anything that matches — **per directory**,
+  so recursion recalibrates and a soft-404 in `/admin` can't hide a finding in `/api`.
+- **Body highlighting** (`-hl <regex>`): prints context snippets of matching
+  response bodies (keys, secrets, versions); also added to `-json`.
+- **Auto-throttle** (`-auto-throttle`): per-host backoff on 429/503, so a slow
+  target throttles itself and the others keep going.
+- **Resume** (`-resume <file>`): skip completed work and re-seed discovered
+  directories after an interruption.
 - **Recursion** (`-recursion`, `-depth N`): descends into discovered directories
   (detected via redirect-to-slash), still gated by scope.
 

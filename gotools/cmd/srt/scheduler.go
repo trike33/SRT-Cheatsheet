@@ -38,10 +38,15 @@ type scheduler struct {
 }
 
 type hostBucket struct {
-	name        string
-	jobs        []fuzzJob
-	inflight    int
-	nextAllowed time.Time // earliest time this host may be hit again
+	name         string
+	jobs         []fuzzJob
+	inflight     int
+	nextAllowed  time.Time     // earliest time this host may be hit again
+	throttleIval time.Duration // adaptive backoff added on 429/503 (auto-throttle)
+
+	// live stats for the per-host progress line.
+	reqs    atomic.Int64
+	matches atomic.Int64
 }
 
 type hostJob struct {
@@ -103,6 +108,43 @@ func (s *scheduler) finish(hb *hostBucket) {
 	s.mu.Unlock()
 }
 
+// throttle widens a host's rate after a 429/503 (exponential backoff, capped).
+func (s *scheduler) throttle(hb *hostBucket) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hb.throttleIval == 0 {
+		hb.throttleIval = 100 * time.Millisecond
+		warn("auto-throttle: %s returned 429/503, backing off", hb.name)
+	} else {
+		hb.throttleIval *= 2
+	}
+	if hb.throttleIval > 5*time.Second {
+		hb.throttleIval = 5 * time.Second
+	}
+}
+
+// relax decays a host's throttle back toward its base rate on a good response.
+func (s *scheduler) relax(hb *hostBucket) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hb.throttleIval == 0 {
+		return
+	}
+	hb.throttleIval = hb.throttleIval * 9 / 10
+	if hb.throttleIval < 20*time.Millisecond {
+		hb.throttleIval = 0
+	}
+}
+
+// hostsSnapshot returns the current host buckets, for the progress line.
+func (s *scheduler) hostsSnapshot() []*hostBucket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*hostBucket, len(s.order))
+	copy(out, s.order)
+	return out
+}
+
 // dispatch is the scheduling loop; it closes `ready` when all work is done.
 func (s *scheduler) dispatch() {
 	for {
@@ -161,7 +203,13 @@ func (s *scheduler) pickLocked() (hostJob, bool, time.Duration) {
 		if s.perHostConc > 0 && hb.inflight >= s.perHostConc {
 			continue
 		}
-		if s.perHostIval > 0 && now.Before(hb.nextAllowed) {
+		// Effective interval = configured per-host rate, widened by any adaptive
+		// throttle currently applied to this host.
+		effIval := s.perHostIval
+		if hb.throttleIval > effIval {
+			effIval = hb.throttleIval
+		}
+		if effIval > 0 && now.Before(hb.nextAllowed) {
 			w := hb.nextAllowed.Sub(now)
 			if minWait == 0 || w < minWait {
 				minWait = w
@@ -172,12 +220,12 @@ func (s *scheduler) pickLocked() (hostJob, bool, time.Duration) {
 		hb.jobs = hb.jobs[1:]
 		hb.inflight++
 		s.inflightTot++
-		if s.perHostIval > 0 {
+		if effIval > 0 {
 			base := hb.nextAllowed
 			if base.Before(now) {
 				base = now
 			}
-			hb.nextAllowed = base.Add(s.perHostIval)
+			hb.nextAllowed = base.Add(effIval)
 		}
 		s.rr = (s.rr + k + 1) % n
 		return hostJob{job: job, hb: hb}, true, 0

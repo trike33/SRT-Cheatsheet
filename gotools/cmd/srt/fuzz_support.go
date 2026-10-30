@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -129,40 +128,14 @@ type respMeta struct {
 
 // matcher holds the compiled match/filter rules. A response is SHOWN when it
 // passes every configured matcher AND trips no configured filter. Filters win.
+// Auto-calibration (soft-404 filtering) is handled per-directory by the engine,
+// not here, so it can differ from one directory to the next.
 type matcher struct {
 	mc, fc rangeSet
 	ms, fs rangeSet
 	mw, fw rangeSet
 	ml, fl rangeSet
 	mr, fr *regexp.Regexp
-
-	// auto-calibration adds soft-404 fingerprints discovered at runtime.
-	mu        sync.RWMutex
-	autoSize  map[int]struct{}
-	autoWords map[int]struct{}
-}
-
-func (m *matcher) addAuto(size, words int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.autoSize == nil {
-		m.autoSize = map[int]struct{}{}
-		m.autoWords = map[int]struct{}{}
-	}
-	m.autoSize[size] = struct{}{}
-	m.autoWords[words] = struct{}{}
-}
-
-func (m *matcher) autoFiltered(r respMeta) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.autoSize == nil {
-		return false
-	}
-	if _, ok := m.autoSize[r.size]; ok {
-		return true
-	}
-	return false
 }
 
 // show decides whether a response should be reported.
@@ -197,9 +170,6 @@ func (m *matcher) show(r respMeta) bool {
 		return false
 	}
 	if m.fr != nil && m.fr.Match(r.body) {
-		return false
-	}
-	if m.autoFiltered(r) {
 		return false
 	}
 	return true

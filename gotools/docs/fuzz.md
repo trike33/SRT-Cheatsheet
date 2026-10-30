@@ -100,6 +100,38 @@ srt fuzz -scope scope.json -w big.txt \
   -proxy http://127.0.0.1:8080 -maxtime 1h -maxerrors 20 -ac
 ```
 
+## Highlighting response bodies (`-hl`)
+
+Pass a regex and every matched hit prints indented `↳` snippets showing the
+match in context — great for catching secrets, keys, versions or stack traces
+in discovered files. With `-json`, matches are added as a `highlights` array.
+
+```bash
+srt fuzz -u https://host/FUZZ -w files.txt -e .txt -e .json \
+  -hl '(?i)(api[_-]?key|secret|BEGIN [A-Z ]*PRIVATE KEY)\S*' -ac
+# 200    412b  ...  https://host/backup.json
+#         ↳ "api_key": "sk-live-abc123…", "region": "us-east-1"
+```
+
+## Auto-throttle (`-auto-throttle`)
+
+When a host starts returning `429` or `503`, srt automatically widens that
+host's per-request interval (exponential backoff, capped at 5s) and decays it
+back toward normal as good responses return. One slow host backs off on its own
+without you babysitting `-rate`, and the other hosts are unaffected.
+
+## Resumable runs (`-resume`)
+
+```bash
+srt fuzz -scope scope.json -w big.txt -recursion -ac -resume run.state
+# ...interrupted (Ctrl-C, -maxtime, crash)... just run the same command again:
+srt fuzz -scope scope.json -w big.txt -recursion -ac -resume run.state
+```
+
+The state file logs every completed request and every directory discovered by
+recursion. On restart srt skips the completed targets and re-seeds the
+discovered directories, so a big multi-host run survives interruptions.
+
 ## Recursion
 
 `-recursion` descends into discovered directories (detected via a redirect to

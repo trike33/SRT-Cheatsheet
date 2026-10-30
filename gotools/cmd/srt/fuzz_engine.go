@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -149,6 +150,12 @@ func (e *fuzzEngine) process(hj hostJob) {
 
 	target := strings.ReplaceAll(j.base, fuzzKeyword, j.word)
 
+	// Resume: skip targets already completed in a prior run.
+	if e.resumeSkipTarget(target) {
+		e.resumeSkip.Add(1)
+		return
+	}
+
 	// Scope gate: never send a request outside the configured scope.
 	if e.scope != nil && !e.scope.inScope(target) {
 		e.skipCount.Add(1)
@@ -162,10 +169,24 @@ func (e *fuzzEngine) process(hj hostJob) {
 		return
 	}
 	e.reqCount.Add(1)
+	hj.hb.reqs.Add(1)
 	e.recordResult(j.base, true)
 
-	if e.matcher.show(meta) {
+	// Adaptive per-host throttle on rate-limit / overload responses.
+	if e.autoThrottle {
+		if meta.status == 429 || meta.status == 503 {
+			e.sched.throttle(hj.hb)
+		} else {
+			e.sched.relax(hj.hb)
+		}
+	}
+
+	// Mark this target done for resume (regardless of match).
+	e.resumeRecord('R', target)
+
+	if e.matcher.show(meta) && !e.softFiltered(j.base, meta) {
 		e.matchCount.Add(1)
+		hj.hb.matches.Add(1)
 		e.emit(target, meta)
 
 		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && dirRedirect(target, loc) {
@@ -173,6 +194,7 @@ func (e *fuzzEngine) process(hj hostJob) {
 			if e.scope == nil || e.scope.inScope(strings.ReplaceAll(newBase, fuzzKeyword, "")) {
 				// Recursion stays on the SAME host bucket, so it inherits that
 				// host's rate/concurrency limits.
+				e.resumeRecord('D', newBase)
 				e.startFeeder(hj.hb, newBase, j.depth+1)
 			}
 		}
@@ -231,10 +253,13 @@ func (e *fuzzEngine) doRequest(target, word string) (respMeta, string, error) {
 	return respMeta{}, "", lastErr
 }
 
-// calibrate sends a few random paths under base and records the fingerprints of
-// responses that would otherwise be reported, so soft-404s get auto-filtered.
+// calibrate probes a few random paths under a directory and records the sizes
+// of responses that would otherwise be reported, so this directory's soft-404s
+// get filtered. Calibration is per-directory: a size that is a soft-404 under
+// /admin won't hide a real finding elsewhere.
 func (e *fuzzEngine) calibrate(base string) {
 	const probes = 4
+	cd := &calibData{sizes: map[int]struct{}{}}
 	for i := 0; i < probes; i++ {
 		rnd := randToken(16)
 		target := strings.ReplaceAll(base, fuzzKeyword, rnd)
@@ -246,20 +271,56 @@ func (e *fuzzEngine) calibrate(base string) {
 			continue
 		}
 		if e.matcher.show(meta) {
-			e.matcher.addAuto(meta.size, meta.words)
-			warn("calibrate: filtering size=%d words=%d (soft-404 on %s)", meta.size, meta.words, hostOf(base))
+			cd.sizes[meta.size] = struct{}{}
 		}
 	}
+	if len(cd.sizes) == 0 {
+		return
+	}
+	e.calMu.Lock()
+	e.cal[base] = cd
+	e.calMu.Unlock()
+
+	sizes := make([]int, 0, len(cd.sizes))
+	for s := range cd.sizes {
+		sizes = append(sizes, s)
+	}
+	sort.Ints(sizes)
+	warn("calibrate %s: filtering soft-404 sizes=%v", strings.TrimSuffix(base, fuzzKeyword), sizes)
+}
+
+// softFiltered reports whether a response matches this directory's calibrated
+// soft-404 fingerprint.
+func (e *fuzzEngine) softFiltered(base string, meta respMeta) bool {
+	if !e.autocal {
+		return false
+	}
+	e.calMu.RLock()
+	cd := e.cal[base]
+	e.calMu.RUnlock()
+	if cd == nil {
+		return false
+	}
+	_, ok := cd.sizes[meta.size]
+	return ok
 }
 
 // emit writes a matched result to stdout (and the output file if configured).
 func (e *fuzzEngine) emit(target string, meta respMeta) {
+	var snippets, plain []string
+	if e.hlRe != nil {
+		snippets, plain = e.buildHighlights(meta.body)
+	}
+
 	e.outMu.Lock()
 	defer e.outMu.Unlock()
 
 	switch {
 	case e.jsonOut:
-		b, _ := json.Marshal(fuzzResult{target, meta.status, meta.size, meta.words, meta.lines})
+		b, _ := json.Marshal(struct {
+			fuzzResult
+			Highlights []string `json:"highlights,omitempty"`
+		}{fuzzResult{target, meta.status, meta.size, meta.words, meta.lines}, plain})
 		fmt.Println(string(b))
 		e.writeFile(string(b))
 	case e.silent:
@@ -268,8 +329,42 @@ func (e *fuzzEngine) emit(target string, meta respMeta) {
 	default:
 		line := fmt.Sprintf("%-3d  %7db  %5dw  %4dl  %s", meta.status, meta.size, meta.words, meta.lines, target)
 		fmt.Println(e.cm.wrap(statusColor(meta.status), line))
+		for _, s := range snippets {
+			fmt.Println("        " + s)
+		}
 		e.writeFile(fmt.Sprintf("%d %s", meta.status, target))
 	}
+}
+
+// buildHighlights returns colored context snippets (for the table) and the
+// plain matched substrings (for JSON) for the -hl regex, capped to a few hits.
+func (e *fuzzEngine) buildHighlights(body []byte) (snippets, plain []string) {
+	locs := e.hlRe.FindAllIndex(body, 8)
+	seen := map[string]struct{}{}
+	for _, loc := range locs {
+		match := string(body[loc[0]:loc[1]])
+		if _, dup := seen[match]; dup {
+			continue
+		}
+		seen[match] = struct{}{}
+		plain = append(plain, match)
+
+		start := loc[0] - 30
+		if start < 0 {
+			start = 0
+		}
+		end := loc[1] + 30
+		if end > len(body) {
+			end = len(body)
+		}
+		ctx := string(body[start:loc[0]]) + e.cm.wrap(ansiYellow, match) + string(body[loc[1]:end])
+		ctx = strings.TrimSpace(strings.ReplaceAll(ctx, "\n", " "))
+		snippets = append(snippets, "↳ "+ctx)
+		if len(plain) >= 3 {
+			break
+		}
+	}
+	return snippets, plain
 }
 
 func (e *fuzzEngine) writeFile(line string) {
@@ -279,28 +374,69 @@ func (e *fuzzEngine) writeFile(line string) {
 }
 
 // progress prints a compact live counter to stderr (only on a TTY, so pipes
-// and files stay clean).
+// and files stay clean), broken out per host with each host's req/s.
 func (e *fuzzEngine) progress(stop <-chan struct{}) {
 	if e.silent || !isTerminal(os.Stderr) {
 		return
 	}
-	t := time.NewTicker(300 * time.Millisecond)
+	t := time.NewTicker(500 * time.Millisecond)
 	defer t.Stop()
+	prev := map[string]int64{}
+	last := time.Now()
 	for {
 		select {
 		case <-stop:
+			e.flushResume()
 			fmt.Fprint(os.Stderr, "\r\033[K")
 			return
-		case <-t.C:
-			fmt.Fprintf(os.Stderr, "\r\033[K[*] reqs=%d matches=%d skipped=%d errors=%d",
+		case now := <-t.C:
+			dt := now.Sub(last).Seconds()
+			last = now
+			e.flushResume()
+
+			var b strings.Builder
+			fmt.Fprintf(&b, "\r\033[K[*] reqs=%d matches=%d skip=%d err=%d",
 				e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
+
+			hosts := e.sched.hostsSnapshot()
+			shown := 0
+			for _, hb := range hosts {
+				reqs := hb.reqs.Load()
+				if reqs == 0 && hb.matches.Load() == 0 {
+					continue
+				}
+				if shown >= 6 {
+					fmt.Fprintf(&b, " +%d more", len(hosts)-shown)
+					break
+				}
+				rate := 0.0
+				if dt > 0 {
+					rate = float64(reqs-prev[hb.name]) / dt
+				}
+				prev[hb.name] = reqs
+				fmt.Fprintf(&b, "  %s=%d/%d(%.0f/s)", shortHost(hb.name), hb.matches.Load(), reqs, rate)
+				shown++
+			}
+			fmt.Fprint(os.Stderr, b.String())
 		}
 	}
 }
 
+// shortHost trims a host:port to something compact for the progress line.
+func shortHost(h string) string {
+	if i := strings.IndexByte(h, ':'); i > 0 {
+		return h[:i]
+	}
+	return h
+}
+
 func (e *fuzzEngine) summary() {
-	warn("done: %d requests, %d matches, %d out-of-scope skipped, %d errors",
-		e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
+	extra := ""
+	if e.resumeSkip.Load() > 0 {
+		extra = fmt.Sprintf(", %d resumed-skipped", e.resumeSkip.Load())
+	}
+	warn("done: %d requests, %d matches, %d out-of-scope skipped, %d errors%s",
+		e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load(), extra)
 }
 
 // ---- small helpers -------------------------------------------------------

@@ -291,6 +291,7 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-retries` | `1` | retries on transport error |
 | `-maxtime` | `0` | overall deadline (0 = none) |
 | `-maxerrors` | `0` | abandon a target after N consecutive errors |
+| `-auto-throttle` | off | back off a host's rate automatically on 429/503 |
 | `-insecure` | `true` | skip TLS verification |
 
 ### Multi-host: sharing one wordlist across hosts
@@ -325,21 +326,30 @@ srt fuzz -tl hosts.txt -w big.txt -rate 10 -rate-global 200 -ac
 | `-mw` | `-fw` | word count |
 | `-ml` | `-fl` | line count |
 | `-mr` | `-fr` | body regex |
-| `-ac` | | auto-calibrate: fingerprint and filter soft-404s |
+| `-ac` | | auto-calibrate: fingerprint and filter soft-404s **per directory** |
 
 Default `-mc`: `200-299,301,302,307,308,401,403,405,500`. Use `-mc all` to match
-everything.
+everything. `-ac` recalibrates for each directory it recurses into, so a
+soft-404 size under `/admin` never hides a real finding under `/api`.
 
-**Recursion / output**
+**Highlighting / recursion / output**
 
 | Flag | Default | Meaning |
 |---|---|---|
+| `-hl` | — | highlight response bodies matching this regex (prints snippets) |
 | `-recursion` | off | recurse into discovered directories |
 | `-depth` | `0` | max recursion depth (0 = unlimited) |
+| `-resume` | — | state file: skip done work and persist progress for restart |
 | `-o` | — | write matched results to a file |
-| `-json` | off | emit JSON lines |
+| `-json` | off | emit JSON lines (adds `highlights` when `-hl` is set) |
 | `-silent` | off | print only matched URLs |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
+
+With `-hl`, each hit is followed by indented `↳` snippets showing the matched
+text in context (handy for spotting API keys, secrets, version strings, stack
+traces in discovered files). `-resume <file>` records every completed request
+and discovered directory, so re-running the same command continues where it
+left off instead of repeating work.
 
 ---
 
