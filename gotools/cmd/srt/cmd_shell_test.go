@@ -2,6 +2,12 @@ package main
 
 import "testing"
 
+func newTestModel() shellModel {
+	m := newShellModel("/fake/path/to/srt")
+	m.colorOn = false // deterministic: no ANSI codes to strip in assertions
+	return m
+}
+
 func TestShellSplitArgs(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -32,56 +38,140 @@ func TestShellSplitArgsUnterminatedQuote(t *testing.T) {
 	}
 }
 
-func TestShellAutoCompleteUnambiguous(t *testing.T) {
-	newLine, newPos, ok := shellAutoComplete([]string{"fuzz", "resolve"}, "res", 3, '\t')
-	if !ok || newLine != "resolve " || newPos != len("resolve ") {
-		t.Errorf("unambiguous completion: newLine=%q newPos=%d ok=%v", newLine, newPos, ok)
+func TestInsertRuneAndCursor(t *testing.T) {
+	m := newTestModel()
+	m, _ = m.insertRune('f')
+	m, _ = m.insertRune('u')
+	m, _ = m.insertRune('z')
+	if string(m.input) != "fuz" || m.cursor != 3 {
+		t.Fatalf("after inserts: input=%q cursor=%d", string(m.input), m.cursor)
+	}
+
+	m.cursor = 1 // move cursor between 'f' and 'u'
+	m, _ = m.insertRune('X')
+	if string(m.input) != "fXuz" || m.cursor != 2 {
+		t.Errorf("mid-line insert: input=%q cursor=%d, want \"fXuz\" cursor=2", string(m.input), m.cursor)
 	}
 }
 
-func TestShellAutoCompleteAmbiguousIsNoop(t *testing.T) {
-	names := []string{"snyk", "subdomains", "sensitive"}
-	newLine, _, ok := shellAutoComplete(names, "s", 1, '\t')
-	if ok {
-		t.Errorf("expected an ambiguous prefix to be a no-op, got newLine=%q ok=%v", newLine, ok)
+func TestCompleteCommandNameUnambiguous(t *testing.T) {
+	m := newTestModel()
+	m.input = []rune("vers")
+	m.cursor = len(m.input)
+	m.completeCommandName()
+	if string(m.input) != "version " || m.cursor != len("version ") {
+		t.Errorf("completion = %q (cursor %d), want \"version \" (cursor %d)", string(m.input), m.cursor, len("version "))
 	}
 }
 
-func TestShellAutoCompleteNoMatchIsNoop(t *testing.T) {
-	names := []string{"fuzz", "resolve"}
-	_, _, ok := shellAutoComplete(names, "zzz", 3, '\t')
-	if ok {
-		t.Error("expected no match to be a no-op")
+func TestCompleteCommandNameAmbiguousIsNoop(t *testing.T) {
+	m := newTestModel()
+	m.input = []rune("s") // several commands start with "s"
+	m.cursor = 1
+	m.completeCommandName()
+	if string(m.input) != "s" {
+		t.Errorf("ambiguous completion changed the line: %q", string(m.input))
 	}
 }
 
-func TestShellAutoCompleteIgnoresNonTabKeys(t *testing.T) {
-	names := []string{"fuzz"}
-	_, _, ok := shellAutoComplete(names, "fuz", 3, 'x')
-	if ok {
-		t.Error("expected a non-Tab key to be a no-op")
+func TestCompleteCommandNameOnlyCompletesFirstWord(t *testing.T) {
+	m := newTestModel()
+	m.input = []rune("fuzz -u fu")
+	m.cursor = len(m.input)
+	m.completeCommandName()
+	if string(m.input) != "fuzz -u fu" {
+		t.Errorf("completion fired past the first word: %q", string(m.input))
 	}
 }
 
-func TestShellAutoCompleteOnlyCompletesFirstWord(t *testing.T) {
-	names := []string{"fuzz"}
-	_, _, ok := shellAutoComplete(names, "fuzz -u fu", 10, '\t')
-	if ok {
-		t.Error("expected completion to be a no-op once a space has been typed (only the command name completes)")
+func TestHistoryNavigation(t *testing.T) {
+	m := newTestModel()
+	m.history = []string{"version", "fuzz -h"}
+	m.histPos = len(m.history)
+	m.input = []rune("unsent draft")
+	m.cursor = len(m.input)
+
+	m.historyBack()
+	if string(m.input) != "fuzz -h" {
+		t.Fatalf("historyBack 1: input=%q", string(m.input))
+	}
+	m.historyBack()
+	if string(m.input) != "version" {
+		t.Fatalf("historyBack 2: input=%q", string(m.input))
+	}
+	m.historyBack() // at the oldest entry; should stay put
+	if string(m.input) != "version" {
+		t.Fatalf("historyBack past oldest: input=%q", string(m.input))
+	}
+
+	m.historyForward()
+	if string(m.input) != "fuzz -h" {
+		t.Fatalf("historyForward 1: input=%q", string(m.input))
+	}
+	m.historyForward() // back to the unsent draft
+	if string(m.input) != "unsent draft" {
+		t.Fatalf("historyForward to draft: input=%q", string(m.input))
+	}
+}
+
+func TestDeleteWordBefore(t *testing.T) {
+	m := newTestModel()
+	m.input = []rune("fuzz -u target")
+	m.cursor = len(m.input)
+	m.deleteWordBefore()
+	if string(m.input) != "fuzz -u " {
+		t.Errorf("deleteWordBefore = %q, want \"fuzz -u \"", string(m.input))
+	}
+}
+
+func TestApplyColorCommand(t *testing.T) {
+	m := newTestModel()
+	m.colorOn = false
+
+	m.applyColorCommand([]string{"on"})
+	if !m.colorOn || m.lastErr != nil {
+		t.Errorf("color on: colorOn=%v lastErr=%v", m.colorOn, m.lastErr)
+	}
+	m.applyColorCommand([]string{"off"})
+	if m.colorOn || m.lastErr != nil {
+		t.Errorf("color off: colorOn=%v lastErr=%v", m.colorOn, m.lastErr)
+	}
+	m.applyColorCommand([]string{"bogus"})
+	if m.lastErr == nil {
+		t.Error("color bogus: expected lastErr to be set")
+	}
+	m.lastErr = nil
+	m.applyColorCommand(nil)
+	if m.lastErr == nil {
+		t.Error("color with no args: expected a usage error")
+	}
+}
+
+func TestTokenizeLineWithSpans(t *testing.T) {
+	toks := tokenizeLineWithSpans([]rune(`fuzz -H "Name: Value" plain`))
+	want := []string{"fuzz", "-H", `"Name: Value"`, "plain"}
+	if len(toks) != len(want) {
+		t.Fatalf("tokens = %+v, want %d entries", toks, len(want))
+	}
+	for i, w := range want {
+		if toks[i].text != w {
+			t.Errorf("token[%d] = %q, want %q", i, toks[i].text, w)
+		}
+	}
+}
+
+func TestTokenizeLineWithSpansUnterminatedQuoteDoesNotPanic(t *testing.T) {
+	// Mid-typing an unterminated quote must not crash the live highlighter.
+	toks := tokenizeLineWithSpans([]rune(`fuzz -H "still typing`))
+	if len(toks) != 3 {
+		t.Errorf("tokens = %+v, want 3 (fuzz, -H, the open-quoted rest)", toks)
 	}
 }
 
 func TestShellCommandNamesIncludesPseudoCommands(t *testing.T) {
 	names := shellCommandNames()
-	for _, want := range []string{"help", "exit", "version", "fuzz"} {
-		found := false
-		for _, n := range names {
-			if n == want {
-				found = true
-				break
-			}
-		}
-		if !found {
+	for _, want := range []string{"help", "exit", "quit", "clear", "color", "fuzz", "version"} {
+		if !commandKnown(names, want) {
 			t.Errorf("shellCommandNames() missing %q: %v", want, names)
 		}
 	}

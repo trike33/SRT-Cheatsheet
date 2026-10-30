@@ -159,3 +159,13 @@ so they aren't lost:
 - **Release automation** once workflow scope is available (tag → binaries).
 
 Suggestions welcome — open an issue.
+
+# JOAN Suggestions
+
+- Ability to stop and resume sessions(eg. stop a network scan and resume it later with a command)
+- Ability to switch between projects and thus CWD. the user specifies the CWD it wants to switch(completition would help greatly here) and the project name is the last CWD name eg "/home/user/project1 - project name is project1"
+- Ability to auto-detect known files like *-in-scope(for hosts scope), target_assets.json(for web scope). account for variants like target_assets(1).json or similar.
+- On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
+- Finish the shell tests and whatever you  need, but make this shell mode the default mode like if user only executes srt it bumps into the shell but if it executes srt pipeline... it stays in CLI.
+- Obv in case you didnt notice this tool is always meant to be installed as a go binary and be executed from everywhere in the filesystem.
+
