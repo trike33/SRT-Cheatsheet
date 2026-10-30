@@ -50,6 +50,12 @@ git commit -m "Enable build workflow" && git push
 (or just upload `gotools/ci/build.yml` to `.github/workflows/build.yml` via the
 GitHub web UI.)
 
+## Docs
+
+- [`docs/commands.md`](docs/commands.md) — every command, every flag, with examples
+- [`docs/fuzz.md`](docs/fuzz.md) — the scope-aware fuzzer, in depth
+- [`docs/playbook.md`](docs/playbook.md) — end-to-end engagement workflow (how the tools chain)
+
 ## Commands
 
 Run `srt <command> -h` for flags. Each maps to a script in this repo:
@@ -70,6 +76,7 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `snyk` | `synk_parser.py` | Test a version against a Snyk package's advisory ranges |
 | `relpaths` | `relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
 | `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
+| `version` | **new** | Print version + build info |
 
 ## Workflow examples
 
@@ -146,6 +153,8 @@ Burp scope.
   across *all* workers, independent of `-c`.
 - **Pacing** (`-delay`, `-jitter`): fixed + random delay before each request.
 - **Concurrency** (`-c`), **timeout**, **retries**.
+- **Safety/evasion**: `-random-agent` rotates browser UAs, `-maxtime` hard-stops
+  the whole run, `-maxerrors` abandons a dead/unreachable target.
 - **Exact request shaping**: `-X` method, repeatable `-H "Name: Value"`, `-d`
   body, `-ua`, and `-proxy http://127.0.0.1:8080` to send everything through
   Burp. `FUZZ` can appear in the URL, any header, or the body.

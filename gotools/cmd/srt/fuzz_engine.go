@@ -127,29 +127,13 @@ func expandWord(word string, exts []string) []string {
 	return out
 }
 
-// enqueueBase expands every word (and extension) against a base template and
-// pushes the jobs. Jobs are sent from a goroutine so recursion never deadlocks
-// a worker that is trying to enqueue while the channel is full.
-func (e *fuzzEngine) enqueueBase(base string, depth int) {
-	e.visitedMu.Lock()
-	if _, done := e.visited[base]; done {
-		e.visitedMu.Unlock()
-		return
-	}
-	e.visited[base] = struct{}{}
-	e.visitedMu.Unlock()
-
-	for _, w := range e.words {
-		for _, cand := range expandWord(w, e.exts) {
-			e.pending.Add(1)
-			job := fuzzJob{base: base, word: cand, depth: depth}
-			go func(j fuzzJob) { e.jobs <- j }(job)
-		}
-	}
-}
-
 // process issues one request and handles matching, output, and recursion.
 func (e *fuzzEngine) process(j fuzzJob) {
+	// Fast no-op once the deadline fired or the target was abandoned.
+	if e.stopped() || e.baseDead(j.base) {
+		return
+	}
+
 	target := strings.ReplaceAll(j.base, fuzzKeyword, j.word)
 
 	// Scope gate: never send a request outside the configured scope.
@@ -161,9 +145,11 @@ func (e *fuzzEngine) process(j fuzzJob) {
 	meta, loc, err := e.doRequest(target, j.word)
 	if err != nil {
 		e.errCount.Add(1)
+		e.recordResult(j.base, false)
 		return
 	}
 	e.reqCount.Add(1)
+	e.recordResult(j.base, true)
 
 	if e.matcher.show(meta) {
 		e.matchCount.Add(1)
@@ -172,7 +158,7 @@ func (e *fuzzEngine) process(j fuzzJob) {
 		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && dirRedirect(target, loc) {
 			newBase := strings.TrimRight(target, "/") + "/" + fuzzKeyword
 			if e.scope == nil || e.scope.inScope(strings.ReplaceAll(newBase, fuzzKeyword, "")) {
-				e.enqueueBase(newBase, j.depth+1)
+				e.startFeeder(newBase, j.depth+1)
 			}
 		}
 	}
@@ -203,7 +189,11 @@ func (e *fuzzEngine) doRequest(target, word string) (respMeta, string, error) {
 		if err != nil {
 			return respMeta{}, "", err // malformed URL won't improve on retry
 		}
-		req.Header.Set("User-Agent", e.ua)
+		ua := e.ua
+		if e.randomAgent {
+			ua = randomUA()
+		}
+		req.Header.Set("User-Agent", ua)
 		for _, h := range e.headers {
 			req.Header.Set(h[0], strings.ReplaceAll(h[1], fuzzKeyword, word))
 		}
@@ -342,6 +332,18 @@ func hostOf(rawurl string) string {
 	}
 	return rawurl
 }
+
+// randomAgents is a small pool of realistic browser User-Agents for -random-agent.
+var randomAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+}
+
+func randomUA() string { return randomAgents[rand.Intn(len(randomAgents))] }
 
 const tokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 

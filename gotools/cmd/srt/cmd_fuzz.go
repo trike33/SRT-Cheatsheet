@@ -72,6 +72,9 @@ func runFuzz(args []string) error {
 	timeout := fs.Duration("timeout", 10*time.Second, "per-request timeout")
 	retries := fs.Int("retries", 1, "retries on transport error/timeout")
 	insecure := fs.Bool("insecure", true, "skip TLS verification")
+	randomAgent := fs.Bool("random-agent", false, "rotate a random browser User-Agent per request")
+	maxTime := fs.Duration("maxtime", 0, "overall deadline; stop the whole run after this long (0 = none)")
+	maxErrors := fs.Int("maxerrors", 0, "abort a target after this many consecutive request errors (0 = never; good for dead hosts)")
 
 	// Matchers / filters.
 	mc := fs.String("mc", "200-299,301,302,307,308,401,403,405,500", "match HTTP codes (or 'all')")
@@ -165,6 +168,11 @@ func runFuzz(args []string) error {
 		silent:      *silent,
 		visited:     map[string]struct{}{},
 		workerCount: max(1, *conc),
+		randomAgent: *randomAgent,
+		maxTime:     *maxTime,
+		maxErrors:   *maxErrors,
+		baseErrors:  map[string]int{},
+		deadBases:   map[string]struct{}{},
 	}
 
 	if *out != "" {
@@ -201,20 +209,64 @@ type fuzzEngine struct {
 	jsonOut     bool
 	silent      bool
 	workerCount int
+	randomAgent bool
+	maxTime     time.Duration
+	maxErrors   int
 
 	outFile io.Writer
 	outMu   sync.Mutex
 
 	jobs    chan fuzzJob
 	pending sync.WaitGroup
+	stopF   atomic.Bool // set when the global deadline fires
 
 	visited   map[string]struct{} // recursion bases already queued
 	visitedMu sync.Mutex
+
+	// per-target consecutive-error tracking, for -maxerrors.
+	errMu      sync.Mutex
+	baseErrors map[string]int
+	deadBases  map[string]struct{}
 
 	reqCount   atomic.Int64
 	matchCount atomic.Int64
 	skipCount  atomic.Int64 // out of scope
 	errCount   atomic.Int64
+}
+
+func (e *fuzzEngine) stopped() bool { return e.stopF.Load() }
+
+// baseDead reports whether a target has been abandoned after too many
+// consecutive errors (a dead/unreachable host).
+func (e *fuzzEngine) baseDead(base string) bool {
+	if e.maxErrors <= 0 {
+		return false
+	}
+	e.errMu.Lock()
+	defer e.errMu.Unlock()
+	_, dead := e.deadBases[base]
+	return dead
+}
+
+// recordResult updates the consecutive-error counter for a base; ok resets it,
+// an error increments it and may mark the base dead.
+func (e *fuzzEngine) recordResult(base string, ok bool) {
+	if e.maxErrors <= 0 {
+		return
+	}
+	e.errMu.Lock()
+	defer e.errMu.Unlock()
+	if ok {
+		e.baseErrors[base] = 0
+		return
+	}
+	e.baseErrors[base]++
+	if e.baseErrors[base] >= e.maxErrors {
+		if _, already := e.deadBases[base]; !already {
+			e.deadBases[base] = struct{}{}
+			warn("abandoning %s after %d consecutive errors", hostOf(base), e.maxErrors)
+		}
+	}
 }
 
 func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
@@ -243,12 +295,23 @@ func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
 	stopProg := make(chan struct{})
 	go e.progress(stopProg)
 
-	// Seed jobs.
-	for _, b := range bases {
-		e.enqueueBase(b, 0)
+	// Global deadline: flip the stop flag so feeders stop queuing and workers
+	// fast-drain the remainder.
+	if e.maxTime > 0 {
+		timer := time.AfterFunc(e.maxTime, func() {
+			if !e.stopF.Swap(true) {
+				warn("reached -maxtime %s, stopping", e.maxTime)
+			}
+		})
+		defer timer.Stop()
 	}
 
-	// Close jobs once everything (including recursion) drains.
+	// Seed one feeder per base.
+	for _, b := range bases {
+		e.startFeeder(b, 0)
+	}
+
+	// Close jobs once every feeder and job (including recursion) has drained.
 	go func() {
 		e.pending.Wait()
 		close(e.jobs)
@@ -257,4 +320,35 @@ func (e *fuzzEngine) run(bases []string, autocalibrate bool) {
 	close(stopProg)
 
 	e.summary()
+}
+
+// startFeeder registers a feeder as a pending unit and launches it. It must be
+// called BEFORE pending.Done() of any job that triggers recursion, so the
+// pending count never hits zero while new work is still being scheduled.
+func (e *fuzzEngine) startFeeder(base string, depth int) {
+	e.visitedMu.Lock()
+	if _, done := e.visited[base]; done {
+		e.visitedMu.Unlock()
+		return
+	}
+	e.visited[base] = struct{}{}
+	e.visitedMu.Unlock()
+
+	e.pending.Add(1)
+	go e.feed(base, depth)
+}
+
+// feed streams one job per word (and extension) into the channel with blocking
+// sends — one goroutine per base, not per candidate — then releases its unit.
+func (e *fuzzEngine) feed(base string, depth int) {
+	defer e.pending.Done()
+	for _, w := range e.words {
+		if e.stopped() || e.baseDead(base) {
+			return
+		}
+		for _, cand := range expandWord(w, e.exts) {
+			e.pending.Add(1)
+			e.jobs <- fuzzJob{base: base, word: cand, depth: depth}
+		}
+	}
 }
