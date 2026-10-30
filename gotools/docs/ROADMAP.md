@@ -54,6 +54,11 @@ Running log of what's shipped and what's queued, newest first.
   shell session instead of just that command. The subprocess design also
   makes `help <command>` free: it's literally `<command> -h`, so there's no
   separate help text to maintain or drift out of sync.
+- **Scope-file auto-detection** — `pipeline` with no `-c`/`-host-file`/
+  `-web-scope` scans the current directory for `*-in-scope*` (host list) and
+  `target_assets*.json` (Burp export; tolerates `(1)`-style download
+  suffixes), newest match wins, and says what it picked on stderr.
+  `-no-detect` opts out.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
@@ -170,7 +175,7 @@ Suggestions welcome — open an issue.
 
 - Ability to stop and resume sessions(eg. stop a network scan and resume it later with a command)
 - Ability to switch between projects and thus CWD. the user specifies the CWD it wants to switch(completition would help greatly here) and the project name is the last CWD name eg "/home/user/project1 - project name is project1"
-- Ability to auto-detect known files like *-in-scope(for hosts scope), target_assets.json(for web scope). account for variants like target_assets(1).json or similar.
+- ~~Auto-detect known scope files~~ — done, see Shipped.
 - On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
 - ~~Finish the shell tests and make shell the default mode~~ — done, see Shipped.
 - Obv in case you didnt notice this tool is always meant to be installed as a go binary and be executed from everywhere in the filesystem.

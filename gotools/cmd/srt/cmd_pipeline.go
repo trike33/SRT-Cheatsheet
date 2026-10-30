@@ -32,10 +32,23 @@ func runPipeline(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the planned steps without sending any traffic")
 	noWebHandoff := fs.Bool("no-web-handoff", false, "don't automatically run the WEB stage against web services the HOST stage discovers")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
+	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	cm := parseColorMode(*colorFlag)
+
+	if *cfgPath == "" && *hostFile == "" && *webScope == "" && !*noDetect {
+		if cwd, err := os.Getwd(); err == nil {
+			*hostFile, *webScope = detectScopeFiles(cwd)
+			if *hostFile != "" {
+				fmt.Fprintf(os.Stderr, "pipeline: auto-detected host scope %s\n", *hostFile)
+			}
+			if *webScope != "" {
+				fmt.Fprintf(os.Stderr, "pipeline: auto-detected web scope %s\n", *webScope)
+			}
+		}
+	}
 
 	cfg, err := assemblePipelineConfig(*cfgPath, *hostFile, *webScope, *name)
 	if err != nil {
@@ -167,7 +180,7 @@ func assemblePipelineConfig(cfgPath, hostFile, webScope, name string) (*pipeline
 	}
 
 	if len(cfg.Host) == 0 && len(cfg.Web) == 0 {
-		return nil, errMissing("no targets: pass -c <config.json>, -host-file <file>, and/or -web-scope <burp.json>")
+		return nil, errMissing("no targets: pass -c <config.json>, -host-file <file>, and/or -web-scope <burp.json> (or run from a directory containing *-in-scope / target_assets.json)")
 	}
 	return cfg, nil
 }
