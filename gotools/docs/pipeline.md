@@ -1,10 +1,13 @@
 # pipeline
 
-Run the HOST and/or WEB methodology ([methodology.md](methodology.md)) from
-one JSON target file instead of hand-chaining commands per
-[playbook.md](playbook.md). `pipeline` orchestrates `srt`'s own subcommands
-end to end and writes everything — including a `manifest.json` summary — to
-one output directory.
+Run the HOST and/or WEB methodology ([methodology.md](methodology.md))
+instead of hand-chaining commands per [playbook.md](playbook.md).
+`pipeline` orchestrates `srt`'s own subcommands end to end and writes
+everything — including a `manifest.json` summary — to one output directory.
+Targets come from a JSON config file (`-c`), a plain IP/CIDR list
+(`-host-file`), a Burp scope export (`-web-scope`), or any combination —
+see [No JSON config needed](#no-json-config-needed) if you only have a
+plain host list and/or a Burp scope file.
 
 It's still a subset of the full methodology — a few steps (Google dorking,
 context-aware wordlist generation, content-based sensitive-info
@@ -20,12 +23,35 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-c` | — (required) | pipeline JSON config file |
+| `-c` | — | pipeline JSON config file (optional if `-host-file`/`-web-scope` are given) |
+| `-host-file` | — | plain file of IPs/CIDRs, one per line — merged into the config's `host` list |
+| `-web-scope` | — | Burp scope JSON export — concrete web hosts (via `burphosts`) merged into `web`, each gated by this file (also becomes the default `options.scope`) |
+| `-name` | config's `"name"` | engagement name for the manifest |
 | `-kind` | auto | `host`, `web`, or `host,web` — which section(s) of the config to run. Auto runs whichever of `host`/`web` the config actually has. |
 | `-o` | `options.outputDir`, else `srt-pipeline-out` | output directory |
 | `-dry-run` | off | print the planned targets/steps and exit — sends no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
+
+At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
+combine (so a JSON config can still add per-target overrides a plain host
+file can't express, while `-host-file`/`-web-scope` quickly add more
+targets to it).
+
+## No JSON config needed
+
+If all you have is a plain IP/CIDR list and/or a Burp scope export — no
+need to hand-write any JSON:
+
+```bash
+srt pipeline -host-file scope-ips.txt -web-scope target_scope.json -o ./out
+```
+
+This expands to the same thing a hand-written config would: every line of
+`scope-ips.txt` becomes a `host` entry, and every concrete host `burphosts`
+extracts from `target_scope.json` becomes a `web` entry with its `scope`
+field set to that same file — so `fuzz`'s requests are still gated by your
+exact Burp include/exclude rules, not just a flattened host list.
 
 ## Config file
 

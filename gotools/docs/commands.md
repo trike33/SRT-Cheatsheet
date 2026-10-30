@@ -467,20 +467,29 @@ left off instead of repeating work.
 
 ## pipeline
 
-Runs the HOST and/or WEB methodology ([methodology.md](methodology.md)) from
-one JSON target file. Full guide in [pipeline.md](pipeline.md).
+Runs the HOST and/or WEB methodology ([methodology.md](methodology.md)).
+Full guide in [pipeline.md](pipeline.md).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-c` | — (required) | pipeline JSON config file |
+| `-c` | — | pipeline JSON config file (optional if `-host-file`/`-web-scope` are given) |
+| `-host-file` | — | plain file of IPs/CIDRs, one per line — merged into `host` |
+| `-web-scope` | — | Burp scope JSON export — concrete hosts (via `burphosts`) merged into `web`, each gated by this scope file |
+| `-name` | config's `"name"` | engagement name for the manifest |
 | `-kind` | auto | `host`, `web`, or `host,web` |
 | `-o` | `options.outputDir` | output directory |
 | `-dry-run` | off | print planned steps, send no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
+At least one of `-c`, `-host-file`, `-web-scope` is required; combining them
+merges everything together.
+
 ```bash
 srt pipeline -c engagement.json -kind host,web -o ./out
+
+# no JSON config needed at all -- straight from a plain IP file and a Burp scope export
+srt pipeline -host-file scope-ips.txt -web-scope target_scope.json -o ./out
 ```
 
 ---

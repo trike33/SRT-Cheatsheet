@@ -23,7 +23,10 @@ func init() {
 
 func runPipeline(args []string) error {
 	fs := flag.NewFlagSet("pipeline", flag.ExitOnError)
-	cfgPath := fs.String("c", "", "pipeline JSON config file (required)")
+	cfgPath := fs.String("c", "", "pipeline JSON config file (optional if -host-file and/or -web-scope are given)")
+	hostFile := fs.String("host-file", "", "plain file of IPs/CIDRs, one per line -- merged into the config's \"host\" list")
+	webScope := fs.String("web-scope", "", "Burp scope JSON export -- concrete web hosts (via burphosts) are merged into \"web\", each gated by this scope file, which also becomes the default options.scope")
+	name := fs.String("name", "", "engagement name for the manifest (overrides the config's \"name\")")
 	kindFlag := fs.String("kind", "", `stage(s) to run: "host", "web", or "host,web" (default: auto -- run whichever sections the config has)`)
 	outDirFlag := fs.String("o", "", "output directory (overrides options.outputDir in the config)")
 	dryRun := fs.Bool("dry-run", false, "print the planned steps without sending any traffic")
@@ -34,7 +37,7 @@ func runPipeline(args []string) error {
 	}
 	cm := parseColorMode(*colorFlag)
 
-	cfg, err := loadPipelineConfig(*cfgPath)
+	cfg, err := assemblePipelineConfig(*cfgPath, *hostFile, *webScope, *name)
 	if err != nil {
 		return err
 	}
@@ -114,6 +117,59 @@ func resolveKinds(flagVal string, cfg *pipelineConfig) ([]string, error) {
 		}
 	}
 	return kinds, nil
+}
+
+// assemblePipelineConfig builds the pipelineConfig the rest of the command
+// runs on: starting from -c's JSON (if given), then merging in -host-file
+// (a plain IP/CIDR list, one per line) and -web-scope (a Burp scope JSON
+// export, turned into concrete web targets via burpHosts and gated by that
+// same file). Either source alone is enough to run; at least one is
+// required. This exists so a quick test doesn't require hand-writing JSON
+// when a plain host list and/or a Burp scope export already describe the
+// engagement.
+func assemblePipelineConfig(cfgPath, hostFile, webScope, name string) (*pipelineConfig, error) {
+	var cfg *pipelineConfig
+	if cfgPath != "" {
+		var err error
+		cfg, err = loadPipelineConfig(cfgPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cfg = &pipelineConfig{}
+	}
+
+	if hostFile != "" {
+		lines, err := inputLines(hostFile)
+		if err != nil {
+			return nil, fmt.Errorf("-host-file: %w", err)
+		}
+		for _, l := range lines {
+			cfg.Host = append(cfg.Host, targetEntry{Target: l})
+		}
+	}
+
+	if webScope != "" {
+		scope, err := loadBurpScope(webScope)
+		if err != nil {
+			return nil, fmt.Errorf("-web-scope: %w", err)
+		}
+		for _, h := range burpHosts(scope) {
+			cfg.Web = append(cfg.Web, targetEntry{Target: h, Scope: webScope})
+		}
+		if cfg.Options.Scope == "" {
+			cfg.Options.Scope = webScope
+		}
+	}
+
+	if name != "" {
+		cfg.Name = name
+	}
+
+	if len(cfg.Host) == 0 && len(cfg.Web) == 0 {
+		return nil, errMissing("no targets: pass -c <config.json>, -host-file <file>, and/or -web-scope <burp.json>")
+	}
+	return cfg, nil
 }
 
 // writeLinesFile writes lines to a new file at path, reusing writeLines.

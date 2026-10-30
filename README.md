@@ -19,7 +19,17 @@ See [`gotools/`](gotools/) for the tool itself:
   backlog.
 
 ```bash
+# install the latest release (Linux/macOS, no Go toolchain needed)
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash
+
+# or build from source
 cd gotools && make build && ./srt help
+```
+
+Update an existing install the same way:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
 ```
 
 [`legacy/`](legacy/) holds the original Python scripts the project started

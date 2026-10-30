@@ -78,6 +78,18 @@ func runBurpHosts(args []string) error {
 		return err
 	}
 
+	w, err := output(*out)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	return writeLines(w, burpHosts(scope))
+}
+
+// burpHosts extracts the unique host[/dir] entries (no scheme) from a Burp
+// scope's enabled include rules. Shared by runBurpHosts and pipeline's
+// -web-scope flag.
+func burpHosts(scope *burpScope) []string {
 	seen := map[string]struct{}{}
 	for _, item := range scope.Target.Scope.Include {
 		if !item.Enabled {
@@ -101,13 +113,7 @@ func runBurpHosts(args []string) error {
 		result = append(result, s)
 	}
 	sort.Strings(result)
-
-	w, err := output(*out)
-	if err != nil {
-		return err
-	}
-	defer w.Close()
-	return writeLines(w, result)
+	return result
 }
 
 // runBurpScope ports WEB/domains-parser.py: pretty, colored include (green) and

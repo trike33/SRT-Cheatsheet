@@ -3,7 +3,25 @@
 `srt` is a single, dependency-free Go binary for recon automation. This gets
 you from clone to a first scan in under a minute.
 
-## 1. Build
+## 1. Install
+
+Fastest path — installs the latest release binary, no Go toolchain needed
+(Linux/macOS; Windows: grab `srt-windows-amd64.exe` from
+[Releases](https://github.com/trike33/SRT-Cheatsheet/releases/latest)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash
+srt version
+```
+
+Update later the same way:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
+```
+
+Or build from source (no `go.sum`, no `pip install`, nothing to fetch —
+it's stdlib-only):
 
 ```bash
 cd gotools
@@ -11,8 +29,8 @@ make build        # produces ./srt — uses your local Go toolchain (Go 1.24+)
 ./srt version
 ```
 
-No `go.sum`, no `pip install`, nothing to fetch — it's stdlib-only, so this
-is the whole setup.
+The rest of this guide uses `./srt`; drop the `./` if you installed via
+`install.sh`.
 
 ## 2. Run one command
 
@@ -46,6 +64,13 @@ for a starting point:
 
 Results land in `./out/`, including a `manifest.json` summarizing every step
 that ran, was skipped, or failed.
+
+No JSON config handy? If you just have a plain IP/CIDR list and/or a Burp
+scope export, skip writing one:
+
+```bash
+./srt pipeline -host-file scope-ips.txt -web-scope target_scope.json -o ./out
+```
 
 ## Next
 

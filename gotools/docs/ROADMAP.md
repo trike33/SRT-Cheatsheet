@@ -38,6 +38,13 @@ Running log of what's shipped and what's queued, newest first.
   logs `<command>: still running (Ns elapsed)...` to stderr every 5 seconds
   until it finishes, so a long run on a big input never looks hung. `fuzz`
   and `portscan` keep their own richer live counters instead.
+- **`install.sh`/`update.sh`** — one-liner install/update: fetches the
+  right platform binary from this repo's latest GitHub Release and `sudo
+  install`s it to `/usr/local/bin` (`$PREFIX/bin` if set), no Go toolchain
+  needed. Linux/macOS; Windows grabs the `.exe` release asset directly.
+- **`pipeline -host-file`/`-web-scope`** — build a config straight from a
+  plain IP/CIDR list and/or a Burp scope export, no hand-written JSON
+  required; combines with `-c` when one is also given.
 
 ### HOST methodology (see [methodology.md](methodology.md))
 - **`resolve`** — forward (A/AAAA) and reverse (PTR) DNS lookup, concurrent.

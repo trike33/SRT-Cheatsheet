@@ -28,7 +28,20 @@ on big lists. `srt` fixes that:
 - **Faithful logic.** Parsing, regexes, param/extension lists and Snyk range
   checks match the Python, with a few clearly-marked bug-bounty tweaks.
 
-## Build
+## Install / Build
+
+Fastest path — installs the latest GitHub Release binary, no Go toolchain
+needed (Linux/macOS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash
+```
+
+Update the same way later: swap `install.sh` for `update.sh` in that command.
+Windows: grab `srt-windows-amd64.exe` from
+[Releases](https://github.com/trike33/SRT-Cheatsheet/releases/latest) directly.
+
+Or build from source:
 
 ```bash
 cd gotools
@@ -41,22 +54,10 @@ Requires Go 1.24+. Install system-wide with `sudo make install` (-> `/usr/local/
 
 ### CI
 
-The build workflow ships at [`gotools/ci/build.yml`](ci/build.yml). It vets,
-tests, and cross-compiles for linux/darwin/windows (amd64 + arm64) on every
-push; pushing a `vX.Y.Z` tag publishes those binaries as a GitHub Release.
-
-GitHub refuses workflow files pushed by an app without the `workflow` OAuth
-scope, so it lives here rather than under `.github/workflows/`. Activate it from
-a clone whose credentials have that scope:
-
-```bash
-mkdir -p .github/workflows
-git mv gotools/ci/build.yml .github/workflows/build.yml
-git commit -m "Enable build workflow" && git push
-```
-
-(or just upload `gotools/ci/build.yml` to `.github/workflows/build.yml` via the
-GitHub web UI.)
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) vets, tests,
+and cross-compiles for linux/darwin/windows (amd64 + arm64) on every push;
+pushing a `vX.Y.Z` tag publishes those binaries as a GitHub Release, which
+`install.sh`/`update.sh` fetch from.
 
 ## Docs
 

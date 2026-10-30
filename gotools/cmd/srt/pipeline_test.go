@@ -68,6 +68,80 @@ func TestLoadPipelineConfigMissingPath(t *testing.T) {
 	}
 }
 
+func TestAssemblePipelineConfigNoSourcesErrors(t *testing.T) {
+	if _, err := assemblePipelineConfig("", "", "", ""); err == nil {
+		t.Error("expected an error when -c, -host-file, and -web-scope are all empty")
+	}
+}
+
+func TestAssemblePipelineConfigHostFileOnly(t *testing.T) {
+	dir := t.TempDir()
+	hostFile := filepath.Join(dir, "hosts.txt")
+	if err := writeLinesFile(hostFile, []string{"10.0.0.1", "10.0.0.0/30"}); err != nil {
+		t.Fatalf("writing host file: %v", err)
+	}
+
+	cfg, err := assemblePipelineConfig("", hostFile, "", "")
+	if err != nil {
+		t.Fatalf("assemblePipelineConfig: %v", err)
+	}
+	if len(cfg.Host) != 2 || cfg.Host[0].Target != "10.0.0.1" || cfg.Host[1].Target != "10.0.0.0/30" {
+		t.Errorf("cfg.Host = %+v", cfg.Host)
+	}
+	if len(cfg.Web) != 0 {
+		t.Errorf("cfg.Web = %+v, want empty", cfg.Web)
+	}
+}
+
+func TestAssemblePipelineConfigWebScopeOnly(t *testing.T) {
+	scopeFile := writeTemp(t, loanDepotScope)
+
+	cfg, err := assemblePipelineConfig("", "", scopeFile, "")
+	if err != nil {
+		t.Fatalf("assemblePipelineConfig: %v", err)
+	}
+	if len(cfg.Host) != 0 {
+		t.Errorf("cfg.Host = %+v, want empty", cfg.Host)
+	}
+	if len(cfg.Web) == 0 {
+		t.Fatal("cfg.Web is empty, want hosts extracted from the Burp scope")
+	}
+	for _, e := range cfg.Web {
+		if e.Scope != scopeFile {
+			t.Errorf("web entry %+v: Scope = %q, want %q", e, e.Scope, scopeFile)
+		}
+	}
+	if cfg.Options.Scope != scopeFile {
+		t.Errorf("cfg.Options.Scope = %q, want %q (default from -web-scope)", cfg.Options.Scope, scopeFile)
+	}
+}
+
+func TestAssemblePipelineConfigMergesWithJSONConfig(t *testing.T) {
+	dir := t.TempDir()
+	jsonCfg := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(jsonCfg, []byte(`{"name":"from-json","web":[{"target":"existing.example.com","wordlist":"w.txt"}]}`), 0o644); err != nil {
+		t.Fatalf("writing config.json: %v", err)
+	}
+	hostFile := filepath.Join(dir, "hosts.txt")
+	if err := writeLinesFile(hostFile, []string{"10.0.0.1"}); err != nil {
+		t.Fatalf("writing host file: %v", err)
+	}
+
+	cfg, err := assemblePipelineConfig(jsonCfg, hostFile, "", "override-name")
+	if err != nil {
+		t.Fatalf("assemblePipelineConfig: %v", err)
+	}
+	if cfg.Name != "override-name" {
+		t.Errorf("cfg.Name = %q, want the -name override", cfg.Name)
+	}
+	if len(cfg.Host) != 1 || cfg.Host[0].Target != "10.0.0.1" {
+		t.Errorf("cfg.Host = %+v, want the -host-file entry merged in", cfg.Host)
+	}
+	if len(cfg.Web) != 1 || cfg.Web[0].Target != "existing.example.com" || cfg.Web[0].Wordlist != "w.txt" {
+		t.Errorf("cfg.Web = %+v, want the JSON config's web entry preserved", cfg.Web)
+	}
+}
+
 func TestResolveKindsAuto(t *testing.T) {
 	cases := []struct {
 		name string
