@@ -30,6 +30,13 @@ make build        # produces ./srt — uses your local Go toolchain (Go 1.24+)
 ./srt version
 ```
 
+Or as a Go binary, runnable from any directory (needs `$(go env GOPATH)/bin`
+on your `PATH`):
+
+```bash
+go install github.com/trike33/srt-cheatsheet/gotools/cmd/srt@latest
+```
+
 The rest of this guide uses `./srt`; drop the `./` if you installed via
 `install.sh`.
 

@@ -65,6 +65,13 @@ Running log of what's shipped and what's queued, newest first.
   previous project, bare `cd` goes home, bare `project` shows where you are.
   Tab completes directories (unique match, or longest common prefix), and a
   switch reports any scope files auto-detected in the new project.
+- **Go-binary install, run from anywhere** — `go install
+  github.com/trike33/srt-cheatsheet/gotools/cmd/srt@latest` (or `make
+  go-install`) gives a self-contained `srt` on `PATH`; nothing is read from
+  the source tree and relative paths resolve against the CWD. `srt version`
+  reports the module version for `go install` builds (ldflags still win),
+  and the shell re-execs itself via `os.Executable`, so it works from any
+  directory.
 - **Shell is the default mode** — bare `srt` on an interactive terminal
   drops straight into the shell; `srt <command> ...` (e.g. `srt pipeline`)
   stays plain CLI. With no TTY on stdin (scripts, pipes) bare `srt` still
@@ -184,5 +191,5 @@ Suggestions welcome — open an issue.
 - ~~Auto-detect known scope files~~ — done, see Shipped.
 - On this new pseudo shell we should know the amount of traffic we are sending in Realtime and be able to halt the traffic immediately if to heavy.
 - ~~Finish the shell tests and make shell the default mode~~ — done, see Shipped.
-- Obv in case you didnt notice this tool is always meant to be installed as a go binary and be executed from everywhere in the filesystem.
+- ~~Install as a Go binary, run from anywhere~~ — done, see Shipped.
 

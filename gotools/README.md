@@ -52,6 +52,19 @@ make build        # produces ./srt  (uses the local Go toolchain, no download)
 GOTOOLCHAIN=local go build -o srt ./cmd/srt
 ```
 
+Or install straight from the repo as a Go binary — no clone, no `./`, run it
+from any directory (`go install` drops it in `$(go env GOBIN)`, default
+`$(go env GOPATH)/bin`; put that on your `PATH`):
+
+```bash
+go install github.com/trike33/srt-cheatsheet/gotools/cmd/srt@latest
+cd ~/engagements/acme && srt        # bare srt opens the shell in the current dir
+```
+
+`srt` reads nothing from the source tree: relative paths (wordlists, scope
+files, `srt-pipeline-out/`) always resolve against wherever you run it.
+From a clone, `make go-install` does the same.
+
 Requires Go 1.24+. Install system-wide with `sudo make install` (-> `/usr/local/bin/srt`).
 
 ### CI
