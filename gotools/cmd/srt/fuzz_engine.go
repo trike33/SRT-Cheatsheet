@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -184,7 +183,7 @@ func (e *fuzzEngine) process(hj hostJob) {
 	// Mark this target done for resume (regardless of match).
 	e.resumeRecord('R', target)
 
-	if e.matcher.show(meta) && !e.softFiltered(j.base, meta) {
+	if e.matcher.show(meta) && !e.softFiltered(j.base, j.word, meta) {
 		e.matchCount.Add(1)
 		hj.hb.matches.Add(1)
 		e.emit(target, meta)
@@ -253,15 +252,19 @@ func (e *fuzzEngine) doRequest(target, word string) (respMeta, string, error) {
 	return respMeta{}, "", lastErr
 }
 
-// calibrate probes a few random paths under a directory and records the sizes
-// of responses that would otherwise be reported, so this directory's soft-404s
-// get filtered. Calibration is per-directory: a size that is a soft-404 under
-// /admin won't hide a real finding elsewhere.
+// calibrate probes random paths under a directory and records the response
+// fingerprints that would otherwise be reported, so this directory's soft-404s
+// get filtered. Probes vary in length (and carry an extension) so reflected
+// paths and extension-specific error pages are all seen. Calibration is
+// per-directory: a fingerprint that is a soft-404 under /admin won't hide a
+// real finding elsewhere.
 func (e *fuzzEngine) calibrate(base string) {
-	const probes = 4
-	cd := &calibData{sizes: map[int]struct{}{}}
-	for i := 0; i < probes; i++ {
-		rnd := randToken(16)
+	cd := newCalibData(e.acTol, e.acLearn)
+	for _, p := range []struct {
+		n   int
+		ext string
+	}{{6, ""}, {12, ""}, {20, ""}, {6, ".txt"}, {12, ".html"}, {20, ".php"}} {
+		rnd := randToken(p.n) + p.ext
 		target := strings.ReplaceAll(base, fuzzKeyword, rnd)
 		if e.scope != nil && !e.scope.inScope(target) {
 			continue
@@ -271,27 +274,21 @@ func (e *fuzzEngine) calibrate(base string) {
 			continue
 		}
 		if e.matcher.show(meta) {
-			cd.sizes[meta.size] = struct{}{}
+			cd.addCalibrated(meta, rnd)
 		}
 	}
-	if len(cd.sizes) == 0 {
-		return
-	}
 	e.calMu.Lock()
-	e.cal[base] = cd
+	e.cal[base] = cd // kept even when empty: it still learns at runtime
 	e.calMu.Unlock()
 
-	sizes := make([]int, 0, len(cd.sizes))
-	for s := range cd.sizes {
-		sizes = append(sizes, s)
+	if d := cd.describe(); d != "" {
+		warn("calibrate %s: filtering soft-404 %s", strings.TrimSuffix(base, fuzzKeyword), d)
 	}
-	sort.Ints(sizes)
-	warn("calibrate %s: filtering soft-404 sizes=%v", strings.TrimSuffix(base, fuzzKeyword), sizes)
 }
 
-// softFiltered reports whether a response matches this directory's calibrated
-// soft-404 fingerprint.
-func (e *fuzzEngine) softFiltered(base string, meta respMeta) bool {
+// softFiltered reports whether a response matches this directory's soft-404
+// fingerprint, calibrated up front or learned from the run so far.
+func (e *fuzzEngine) softFiltered(base, word string, meta respMeta) bool {
 	if !e.autocal {
 		return false
 	}
@@ -301,8 +298,13 @@ func (e *fuzzEngine) softFiltered(base string, meta respMeta) bool {
 	if cd == nil {
 		return false
 	}
-	_, ok := cd.sizes[meta.size]
-	return ok
+	if cd.matches(meta, word) {
+		return true
+	}
+	if msg := cd.observe(meta, word); msg != "" {
+		warn("calibrate %s: %s", strings.TrimSuffix(base, fuzzKeyword), msg)
+	}
+	return false
 }
 
 // emit writes a matched result to stdout (and the output file if configured).

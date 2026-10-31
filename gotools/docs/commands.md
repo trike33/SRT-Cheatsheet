@@ -439,10 +439,29 @@ srt fuzz -tl hosts.txt -w big.txt -rate 10 -rate-global 200 -ac
 | `-ml` | `-fl` | line count |
 | `-mr` | `-fr` | body regex |
 | `-ac` | | auto-calibrate: fingerprint and filter soft-404s **per directory** |
+| `-ac-tol` | | with `-ac`: size/word tolerance in percent (default `1`; `0` = exact sizes) |
+| `-ac-learn` | | with `-ac`: filter a cluster after N near-identical hits (default `12`; `0` = off) |
 
 Default `-mc`: `200-299,301,302,307,308,401,403,405,500`. Use `-mc all` to match
 everything. `-ac` recalibrates for each directory it recurses into, so a
 soft-404 size under `/admin` never hides a real finding under `/api`.
+
+**Soft-404s that vary in length.** Some apps answer every missing path with a
+`200` whose size wobbles (`3302`, `3305`, `3310`, `3312` — a CSRF token, a
+timestamp, or the requested path echoed back). `-ac` handles this three ways:
+
+- **Reflection-normalized size** — echoes of the tried word are subtracted, so
+  `/a` and `/a-very-long-word` look the same.
+- **Tolerance band** (`-ac-tol`, default 1%, floor a few bytes) around the
+  calibration probes, which are varied in length and extension. The *word
+  count* must also fall in its band, so a genuinely different page of similar
+  byte length is still reported.
+- **Runtime learning** (`-ac-learn`) — if N hits in one directory share a
+  status and near-identical shape, they are filtered from then on and a
+  `learned soft-404` line is logged. The first N are already printed by then.
+
+Raise `-ac-tol` for noisier apps; `-ac-tol 0 -ac-learn 0` restores exact-size
+matching.
 
 **Highlighting / recursion / output**
 

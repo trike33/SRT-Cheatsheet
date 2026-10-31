@@ -5,6 +5,11 @@ Running log of what's shipped and what's queued, newest first.
 ## Shipped
 
 ### Fuzzer precision & scale
+- **Jitter-tolerant soft-404 filtering** — `-ac` fingerprints are bands:
+  reflection-normalized size, `-ac-tol` percent tolerance, a word-count band
+  (so a different page with a similar byte length still shows), and
+  `-ac-learn` runtime learning of clusters calibration missed. Handles apps
+  whose "not found" 200 varies in length (3302/3305/3310/3312).
 - **Per-directory soft-404 calibration** (`-ac`) — recalibrates on every
   directory recursion descends into, so a soft-404 size under one directory
   never hides a finding under another.

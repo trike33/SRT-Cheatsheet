@@ -95,6 +95,8 @@ func runFuzz(args []string) error {
 	mr := fs.String("mr", "", "match body regex")
 	fr := fs.String("fr", "", "filter body regex")
 	ac := fs.Bool("ac", false, "auto-calibrate: fingerprint soft-404s per directory and filter matching responses")
+	acTol := fs.Float64("ac-tol", 1.0, "with -ac: size/word tolerance in percent -- a soft-404 whose length jitters (dynamic tokens, reflected path) still matches; 0 = exact sizes only")
+	acLearn := fs.Int("ac-learn", 12, "with -ac: if this many hits in one directory share a status and near-identical size, treat them as an undetected soft-404 and filter the rest (0 = off)")
 	hl := fs.String("hl", "", "highlight response bodies matching this regex (prints snippets under the hit)")
 	autoThrottle := fs.Bool("auto-throttle", false, "automatically back off a host's rate when it returns 429/503")
 	resume := fs.String("resume", "", "state file: skip already-done work and persist progress so a re-run continues")
@@ -198,6 +200,8 @@ func runFuzz(args []string) error {
 		perHostConc:  *hostConc,
 		gLimiter:     globalLimiter,
 		autocal:      *ac,
+		acTol:        *acTol,
+		acLearn:      *acLearn,
 		cal:          map[string]*calibData{},
 		hlRe:         hlRe,
 		autoThrottle: *autoThrottle,
@@ -257,6 +261,8 @@ type fuzzEngine struct {
 
 	// per-directory soft-404 calibration (-ac).
 	autocal bool
+	acTol   float64 // -ac-tol, percent
+	acLearn int     // -ac-learn threshold
 	calMu   sync.RWMutex
 	cal     map[string]*calibData // keyed by base template
 
@@ -289,12 +295,6 @@ type fuzzEngine struct {
 	matchCount atomic.Int64
 	skipCount  atomic.Int64 // out of scope
 	errCount   atomic.Int64
-}
-
-// calibData holds a directory's soft-404 fingerprint (response sizes seen for
-// random, non-existent paths under that directory).
-type calibData struct {
-	sizes map[int]struct{}
 }
 
 func (e *fuzzEngine) stopped() bool { return e.stopF.Load() }

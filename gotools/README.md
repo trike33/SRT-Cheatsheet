@@ -205,6 +205,8 @@ Burp scope.
 - **Auto-calibration** (`-ac`): probes a few random paths first, fingerprints the
   soft-404 response, and auto-filters anything that matches — **per directory**,
   so recursion recalibrates and a soft-404 in `/admin` can't hide a finding in `/api`.
+  Fingerprints are *bands*, not exact sizes: a soft-404 whose length jitters
+  (CSRF tokens, timestamps, 3302/3305/3310/3312…) still matches. See below.
 - **Body highlighting** (`-hl <regex>`): prints context snippets of matching
   response bodies (keys, secrets, versions); also added to `-json`.
 - **Auto-throttle** (`-auto-throttle`): per-host backoff on 429/503, so a slow
