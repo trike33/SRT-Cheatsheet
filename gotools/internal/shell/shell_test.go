@@ -417,3 +417,50 @@ func TestCompleteDirArg(t *testing.T) {
 		t.Errorf("only cd/project complete: %q", got)
 	}
 }
+
+func TestExecDoneSetsLastRunNotNotice(t *testing.T) {
+	m := newTestModel()
+	m.trafficFile = filepath.Join(t.TempDir(), "t.json")
+	os.WriteFile(m.trafficFile, []byte(`{"requests":5,"bytes_out":10,"bytes_in":20}`), 0o644)
+
+	got, _ := m.Update(execDoneMsg{cmd: "probe"})
+	gm := got.(shellModel)
+	if !strings.Contains(gm.lastRun, "probe") {
+		t.Errorf("lastRun = %q, want it to mention the command", gm.lastRun)
+	}
+	if gm.notice != "" {
+		t.Errorf("notice = %q, traffic feedback should go to lastRun, not notice", gm.notice)
+	}
+}
+
+func TestLastRunSurvivesAKeystroke(t *testing.T) {
+	m := newTestModel()
+	m.lastRun = "last: probe — 5 req"
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	gm := got.(shellModel)
+	if gm.lastRun != m.lastRun {
+		t.Errorf("lastRun = %q after a keystroke, want it unchanged (unlike notice)", gm.lastRun)
+	}
+}
+
+func TestRenderTrafficShowsSessionAndLastRun(t *testing.T) {
+	m := newTestModel()
+	if got := m.renderTraffic(); !strings.Contains(got, "no command run yet") {
+		t.Errorf("renderTraffic with nothing run = %q", got)
+	}
+	m.lastRun = "last: fuzz — 100 req"
+	m.rate = 50
+	m.save = true
+	got := m.renderTraffic()
+	if !strings.Contains(got, "50 req/s") || !strings.Contains(got, "save on") || !strings.Contains(got, "last: fuzz") {
+		t.Errorf("renderTraffic = %q", got)
+	}
+}
+
+func TestViewIncludesTrafficBox(t *testing.T) {
+	m := newTestModel()
+	m.lastRun = "last: portscan — 9 req"
+	if v := m.View(); !strings.Contains(v, "portscan") || !strings.Contains(v, "session:") {
+		t.Errorf("View() missing the traffic box: %q", v)
+	}
+}

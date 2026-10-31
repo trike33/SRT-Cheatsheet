@@ -223,6 +223,16 @@ func inputBoxStyle(colorOn bool, width int) lipgloss.Style {
 	return s.Border(lipgloss.NormalBorder())
 }
 
+// trafficBoxStyle is dimmer than inputBoxStyle (gray border, not indigo) so
+// the two boxes read as "active input" vs. "passive info" at a glance.
+func trafficBoxStyle(colorOn bool, width int) lipgloss.Style {
+	s := lipgloss.NewStyle().Padding(0, 1).Width(width)
+	if colorOn {
+		return s.Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorGray)).Foreground(lipgloss.Color(colorGray))
+	}
+	return s.Border(lipgloss.NormalBorder())
+}
+
 func dimStyle(colorOn bool) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if colorOn {
@@ -246,8 +256,30 @@ func (m shellModel) View() string {
 		boxWidth = 20
 	}
 	inputBox := inputBoxStyle(m.colorOn, boxWidth).Render(prompt + highlighted)
+	trafficBox := trafficBoxStyle(m.colorOn, boxWidth).Render(m.renderTraffic())
 
-	return inputBox + "\n" + m.renderStatus()
+	return inputBox + "\n" + trafficBox + "\n" + m.renderStatus()
+}
+
+// renderTraffic is the permanent traffic box's content: the session total
+// (every command run so far) and the last command's own numbers, always
+// visible -- unlike the status line's notice, this never clears on the next
+// keystroke, so you don't have to catch it before you start typing again.
+func (m shellModel) renderTraffic() string {
+	rate := "unlimited"
+	if m.rate > 0 {
+		rate = fmt.Sprintf("%g req/s", m.rate)
+	}
+	save := "off"
+	if m.save {
+		save = "on"
+	}
+	session := fmt.Sprintf("session: %s · rate %s · save %s", m.traffic.String(), rate, save)
+	last := m.lastRun
+	if last == "" {
+		last = "last: (no command run yet)"
+	}
+	return session + "\n" + last
 }
 
 func (m shellModel) renderStatus() string {
@@ -257,9 +289,6 @@ func (m shellModel) renderStatus() string {
 	}
 	wd, _ := os.Getwd()
 	left := fmt.Sprintf("project: %s · color: %s · history: %d", projectName(wd), colorState, len(m.history))
-	if m.traffic.Requests > 0 {
-		left += " · traffic: " + m.traffic.String()
-	}
 	if m.notice != "" {
 		left = m.notice
 	}

@@ -407,7 +407,7 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 		select {
 		case <-stop:
 			e.flushResume()
-			fmt.Fprint(os.Stderr, "\r\033[K")
+			colorout.ClearLine(os.Stderr)
 			return
 		case now := <-t.C:
 			dt := now.Sub(last).Seconds()
@@ -415,7 +415,7 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 			e.flushResume()
 
 			var b strings.Builder
-			fmt.Fprintf(&b, "\r\033[K%s reqs=%d matches=%d skip=%d err=%d",
+			fmt.Fprintf(&b, "%s reqs=%d matches=%d skip=%d err=%d",
 				colorout.Spinner(frame), e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
 			frame++
 
@@ -438,7 +438,12 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 				fmt.Fprintf(&b, "  %s=%d/%d(%.0f/s)", shortHost(hb.name), hb.matches.Load(), reqs, rate)
 				shown++
 			}
-			fmt.Fprint(os.Stderr, b.String())
+			// Overwrite truncates to the terminal's width, so the line can
+			// never wrap -- a wrapped line is what breaks the \r-overwrite
+			// trick: \r then only returns to the start of the last wrapped
+			// row, leaving every earlier row (one per host shown) stuck on
+			// screen as new ticks pile up below it instead of replacing it.
+			colorout.Overwrite(os.Stderr, b.String())
 		}
 	}
 }

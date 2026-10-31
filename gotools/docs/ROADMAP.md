@@ -103,13 +103,31 @@ Running log of what's shipped and what's queued, newest first.
   directory.
 - **Live traffic counter + halt** — every network touch (HTTP requests and
   wire bytes, TCP connect attempts, DNS lookups) is metered at three
-  chokepoints (`http.go`, `probePort`, the resolvers). Commands run from the
-  `shell` log a `[traffic] ...` line every 2s, the status bar keeps a session
-  total (`traffic` prints it), and Ctrl+C halts a command instantly with its
-  totals. `limit bytes <size>` sets a per-command byte ceiling; a breach kills
-  the command immediately (exit 3, "HALTED"). Plain CLI runs aren't metered.
-  Counts are per process, so a `pipeline` run is metered as a whole; external
-  tools it shells out to (`vulnx`) aren't counted.
+  chokepoints (`netx`'s client, `portscan.probePort`, the resolvers).
+  Commands run from the `shell` log a `[traffic] ...` line every 2s, the
+  shell keeps a session total in its own permanent traffic box (see below),
+  and Ctrl+C halts a command instantly with its totals. `limit bytes <size>`
+  sets a per-command byte ceiling; a breach kills the command immediately
+  (exit 3, "HALTED"). Plain CLI runs aren't metered. Counts are per process,
+  so a `pipeline` run is metered as a whole; external tools it shells out to
+  (`vulnx`) aren't counted.
+- **Self-overwriting live counters, width-safe** — the heartbeat
+  (`ioutil.StartHeartbeatEvery`), `fuzz`'s per-host progress ticker, and the
+  shell's `[traffic] ...` line all update the same terminal row in place
+  (`colorout.Overwrite`) instead of scrolling a new line per tick, and the
+  line is truncated to the terminal's actual width first
+  (`colorout.TermWidth`) — printing something longer than the terminal and
+  letting it wrap breaks the whole trick, since `\r` only returns to the
+  start of the *last* wrapped row, not back to the top of the previous
+  print, so every earlier row is left stuck on screen as new ticks pile up
+  below it (this is what a multi-host `fuzz` run on a narrow terminal used
+  to look like). Redirected to a file/pipe, each tick still gets its own
+  newline-terminated line, so a backgrounded run's log keeps every tick.
+- **Permanent traffic box in the shell** — session traffic (and the last
+  finished command's own traffic) now live in a dedicated bordered box that
+  is always visible and never clears on the next keystroke, instead of a
+  few seconds in the transient status-line notice that disappeared the
+  moment you started typing the next command.
 - **Global request-rate cap** — `srt -rate 50 <command>` (or `$SRT_RATE`)
   throttles the whole process to N requests/second, whatever the command or
   its concurrency: every HTTP request, TCP connect and DNS lookup takes a

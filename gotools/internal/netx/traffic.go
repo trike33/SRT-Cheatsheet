@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/halt"
 )
 
@@ -228,16 +229,26 @@ func ReadTrafficFile(path string) (Totals, bool) {
 
 // StartMonitor runs for commands launched by the shell (it's a no-op
 // otherwise, i.e. plain CLI use is untouched). Every 100ms it enforces the
-// limits and persists totals; every 2s it logs a traffic line. A breach or a
-// halt.Run call stops the command immediately via os.Exit. The returned func
-// writes the final totals.
+// limits and persists totals; every 2s it logs a traffic line, overwriting
+// the same line in place on a terminal (colorout.Overwrite) rather than
+// scrolling a new one every tick. A breach or a halt.Run call stops the
+// command immediately via os.Exit. The returned func writes the final
+// totals and, if a traffic line was ever drawn, clears it so whatever the
+// command prints next starts on a clean row.
 func StartMonitor() (finish func()) {
 	file := os.Getenv(EnvTrafficFile)
 	if file == "" {
 		return func() {}
 	}
 	limits := limitsFromEnv()
-	finish = func() { writeTrafficFile(file, Snapshot()) }
+	var logged atomic.Bool // whether an overwrite-line tick has actually printed
+	persist := func() { writeTrafficFile(file, Snapshot()) }
+	finish = func() {
+		persist()
+		if logged.Load() {
+			colorout.ClearLine(os.Stderr)
+		}
+	}
 
 	halt.On(finish)
 
@@ -262,10 +273,11 @@ func StartMonitor() (finish func()) {
 				fmt.Fprintf(os.Stderr, "\nsrt: HALTED — %s (%s)\n", why, snap)
 				os.Exit(3)
 			}
-			finish()
+			persist()
 			if snap.Requests > 0 && time.Since(lastLog) >= 2*time.Second {
 				lastLog = time.Now()
-				fmt.Fprintf(os.Stderr, "[traffic] %s · %.0f req/s\n", snap, rate)
+				logged.Store(true)
+				colorout.Overwrite(os.Stderr, fmt.Sprintf("[traffic] %s · %.0f req/s", snap, rate))
 			}
 		}
 	}()

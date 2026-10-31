@@ -83,7 +83,8 @@ type shellModel struct {
 	save        bool        // record each command's results in the project database
 	rate        float64     // req/s throttle applied to each command (0 = unlimited)
 	prevDir     string      // previous project, for `cd -`
-	notice      string      // transient info line (not an error)
+	notice      string      // transient info line (not an error) -- cleared on the next keystroke
+	lastRun     string      // last finished command's traffic summary -- persists in its own box
 
 	lastErr  error
 	quitting bool
@@ -138,16 +139,16 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		recordSession(msg)
 		if t, ok := netx.ReadTrafficFile(m.trafficFile); ok {
 			m.traffic.Add(t)
-			m.notice = fmt.Sprintf("%s: %s", msg.cmd, t)
+			m.lastRun = fmt.Sprintf("last: %s — %s", msg.cmd, t)
 			if execExitCode(msg.err) == 3 {
-				m.notice = fmt.Sprintf("%s HALTED by limit: %s", msg.cmd, t)
+				m.lastRun = fmt.Sprintf("last: %s HALTED by limit — %s", msg.cmd, t)
 			}
 		}
 		if m.trafficFile != "" {
 			os.Remove(m.trafficFile)
 		}
 		if c := execExitCode(msg.err); msg.sess != nil && (c == 130 || c == 3) {
-			m.notice = strings.TrimSpace(m.notice + " — stopped; type `resume` to continue")
+			m.lastRun = strings.TrimSpace(m.lastRun + " — stopped; type `resume` to continue")
 		}
 		if msg.err != nil {
 			var exitErr *exec.ExitError

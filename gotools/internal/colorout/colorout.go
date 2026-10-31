@@ -3,7 +3,12 @@
 // a --color auto|always|never mode, and a liveness spinner.
 package colorout
 
-import "os"
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/term"
+)
 
 // ANSI colors used by the robots and burpscope commands.
 const (
@@ -76,4 +81,56 @@ func IsTerminal(f *os.File) bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// TermWidth returns f's terminal width in columns, or 0 if f isn't a
+// terminal or its size can't be determined.
+func TermWidth(f *os.File) int {
+	if !IsTerminal(f) {
+		return 0
+	}
+	w, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || w <= 0 {
+		return 0
+	}
+	return w
+}
+
+// Overwrite prints s to f as a single self-updating line: a leading \r
+// returns the cursor to the start of the line and a trailing "erase to end
+// of line" wipes anything left over from a longer previous tick -- the
+// standard trick behind every live progress counter in srt (fuzz's,
+// portscan's, the heartbeat, the shell's per-command traffic line).
+//
+// The part that trick depends on, and that's easy to get wrong: s must
+// never wrap to a second terminal row, or \r only returns to the start of
+// that *last* row, not back to the top of the previous print, and every
+// earlier wrapped row is left stuck on screen as new ticks pile up below it
+// instead of replacing it. So Overwrite truncates s to f's width first,
+// using TermWidth, which makes wrapping impossible by construction.
+//
+// When f isn't a terminal (redirected to a file/pipe) -- or its width can't
+// be read -- there is no line to overwrite, so s is left untouched and
+// printed as an ordinary newline-terminated line instead: redirected output
+// stays one entry per tick, which is what you want in a log file.
+func Overwrite(f *os.File, s string) {
+	width := TermWidth(f)
+	if width <= 0 {
+		fmt.Fprintln(f, s)
+		return
+	}
+	if r := []rune(s); len(r) > width-1 {
+		s = string(r[:width-1])
+	}
+	fmt.Fprintf(f, "\r\033[K%s", s)
+}
+
+// ClearLine erases the current line in place, for the moment a live counter
+// is done updating and should leave the terminal clean (e.g. right before
+// printing a final summary on that same row). A no-op when f isn't a
+// terminal, since there's no line to erase.
+func ClearLine(f *os.File) {
+	if TermWidth(f) > 0 {
+		fmt.Fprint(f, "\r\033[K")
+	}
 }

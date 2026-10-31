@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 )
 
 // InputLines reads non-empty, whitespace-trimmed lines from path. If path is
@@ -110,12 +112,16 @@ func StartHeartbeat(label string) (stop func()) {
 }
 
 // StartHeartbeatEvery is StartHeartbeat with an explicit interval, split out
-// so tests don't have to wait out the real HeartbeatInterval. It logs via
-// Warn (a plain, newline-terminated log line, never an overwritten spinner)
-// specifically so it can't garble mid-write with a Warn call from the work
-// it's watching over. stop blocks until the background goroutine has
-// actually exited, so a caller that reassigns os.Stderr right after
-// stopping (as a test capturing it would) can't race the last tick's Warn.
+// so tests don't have to wait out the real HeartbeatInterval. On a terminal
+// it overwrites the same line in place every tick (colorout.Overwrite), so a
+// long quiet command leaves one line ticking rather than a scroll of
+// identical "still running" lines; stop() clears that line so whatever
+// prints next (the command's real result) starts clean. Redirected to a
+// file or pipe, each tick is its own newline-terminated line instead, same
+// as a plain Warn call, so a backgrounded run's log still shows every tick.
+// stop blocks until the background goroutine has actually exited, so a
+// caller that reassigns os.Stderr right after stopping (as a test capturing
+// it would) can't race the last tick's write.
 func StartHeartbeatEvery(label string, interval time.Duration) (stop func()) {
 	done := make(chan struct{})
 	exited := make(chan struct{})
@@ -129,13 +135,14 @@ func StartHeartbeatEvery(label string, interval time.Duration) (stop func()) {
 			case <-done:
 				return
 			case <-t.C:
-				Warn("%s: still running (%s elapsed)...", label, time.Since(start).Round(time.Second))
+				colorout.Overwrite(os.Stderr, fmt.Sprintf("[!] %s: still running (%s elapsed)...", label, time.Since(start).Round(time.Second)))
 			}
 		}
 	}()
 	return func() {
 		close(done)
 		<-exited
+		colorout.ClearLine(os.Stderr)
 	}
 }
 
