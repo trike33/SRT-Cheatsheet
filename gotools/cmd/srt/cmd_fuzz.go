@@ -60,6 +60,7 @@ func runFuzz(args []string) error {
 	var wordlists stringSlice
 	fs.Var(&wordlists, "w", "wordlist file (repeatable). Omit to read the wordlist from stdin")
 	var exts stringSlice
+	extAuto := fs.Bool("ext-auto", false, "work out which extensions each host serves: tech-detect hints (PHP -> .php ...) plus live verification of common extensions; combines with -e")
 	fs.Var(&exts, "e", "extension to also try per word, e.g. -e .php -e .bak (repeatable)")
 	scopeFile := fs.String("scope", "", "Burp scope JSON: only in-scope requests are sent (and seeds targets if no -u/-tl)")
 
@@ -186,6 +187,7 @@ func runFuzz(args []string) error {
 		maxDepth:     *depth,
 		words:        words,
 		exts:         exts,
+		extAuto:      *extAuto,
 		cm:           cm,
 		jsonOut:      *jsonOut,
 		silent:       *silent,
@@ -244,6 +246,8 @@ type fuzzEngine struct {
 	maxDepth    int
 	words       []string
 	exts        []string
+	extAuto     bool
+	extc        extCache
 	cm          colorMode
 	jsonOut     bool
 	silent      bool
@@ -412,11 +416,12 @@ func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int) {
 	if e.autocal {
 		e.calibrate(base) // per-directory soft-404 fingerprint
 	}
+	exts := e.extsFor(base) // -e plus -ext-auto's per-host discoveries
 	for _, w := range e.words {
 		if e.stopped() || e.baseDead(base) {
 			return
 		}
-		for _, cand := range expandWord(w, e.exts) {
+		for _, cand := range expandWord(w, exts) {
 			e.sched.pushJob(hb, fuzzJob{base: base, word: cand, depth: depth})
 		}
 	}

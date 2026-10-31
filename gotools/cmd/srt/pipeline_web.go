@@ -193,6 +193,9 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 		for _, ext := range e.Extensions {
 			args = append(args, "-e", ext)
 		}
+		if len(e.Extensions) == 0 && cfg.Options.autoExtensionsOrDefault(true) {
+			args = append(args, "-ext-auto") // tech-detect hints + live verification
+		}
 		if cfg.Options.Concurrency > 0 {
 			args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))
 		}

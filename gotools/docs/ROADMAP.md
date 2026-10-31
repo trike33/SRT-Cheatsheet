@@ -5,6 +5,13 @@ Running log of what's shipped and what's queued, newest first.
 ## Shipped
 
 ### Fuzzer precision & scale
+- **Automatic extension discovery** — `fuzz -ext-auto` combines tech-detect
+  with the soft-404 logic: the root page's detected stack (PHP, ASP.NET,
+  Express…) trusts its extensions outright, and the generic candidates
+  (`.html .txt .bak .zip`…) are verified live against a per-extension
+  baseline, so jittery-200 apps don't yield false extensions. Per host, shared
+  across recursion. `pipeline` enables it for web targets with no explicit
+  `extensions` (`options.autoExtensions: false` opts out).
 - **Jitter-tolerant soft-404 filtering** — `-ac` fingerprints are bands:
   reflection-normalized size, `-ac-tol` percent tolerance, a word-count band
   (so a different page with a similar byte length still shows), and
@@ -172,7 +179,7 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   "easy wins" pass (default creds/common misconfigs); BeanShell detection
   (no fixed port to match on, needs banner-based detection).
 - **WEB**: Google dorking; context-aware wordlist generation for `fuzz`
-  (candidates derived from the detected tech stack/app context — `probe`'s
+  (extensions now are, via `-ext-auto`; candidate *words* derived from the detected tech stack/app context — `probe`'s
   tech-detect output is the natural input for this now, not just static
   wordlists); a re-validation step for URLs pulled from `gau`/dorking;
   parameter fuzzing/guessing beyond `params`' URL-based classification,

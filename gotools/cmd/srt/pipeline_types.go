@@ -50,6 +50,7 @@ type pipelineOptions struct {
 	Scope              string `json:"scope,omitempty"`
 	Ports              string `json:"ports,omitempty"`
 	Proxy              string `json:"proxy,omitempty"`
+	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
 }
 
@@ -64,6 +65,13 @@ func (o pipelineOptions) timeoutDuration(def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func (o pipelineOptions) autoExtensionsOrDefault(def bool) bool {
+	if o.AutoExtensions == nil {
+		return def
+	}
+	return *o.AutoExtensions
 }
 
 func (o pipelineOptions) insecureOrDefault(def bool) bool {

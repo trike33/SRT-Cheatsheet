@@ -381,6 +381,7 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-tl` | — | file of target URLs, one per line (each may contain `FUZZ`) |
 | `-w` | stdin | wordlist file (repeatable) |
 | `-e` | — | extra extension per word, e.g. `-e .php` (repeatable) |
+| `-ext-auto` | | discover which extensions each host serves (see below); combines with `-e` |
 | `-scope` | — | Burp scope JSON: gate requests + seed targets when no `-u`/`-tl` |
 
 **Traffic control** (see [multi-host](#multi-host-sharing-one-wordlist-across-hosts))
@@ -445,6 +446,24 @@ srt fuzz -tl hosts.txt -w big.txt -rate 10 -rate-global 200 -ac
 Default `-mc`: `200-299,301,302,307,308,401,403,405,500`. Use `-mc all` to match
 everything. `-ac` recalibrates for each directory it recurses into, so a
 soft-404 size under `/admin` never hides a real finding under `/api`.
+
+**Automatic extensions (`-ext-auto`).** Instead of guessing `-e .php -e .bak`,
+the fuzzer works out what each host serves, once per host:
+
+1. **Tech hints** — the root page is fingerprinted with `probe`'s tech-detect
+   and the matching extensions are added directly: PHP/WordPress/Drupal/Joomla/
+   Laravel → `.php` (+ `.phtml`/`.inc`), ASP.NET/IIS → `.aspx .ashx .asmx .asp`,
+   Express → `.js .json`, Django → `.json`.
+2. **Live verification** — every other common extension (`.php .asp .aspx .jsp
+   .html .htm .js .json .txt .xml .bak .old .zip`) is tested by requesting
+   `index`/`default`/`login` with it, and kept only if the response differs from
+   what random non-existent names with that extension return. That baseline uses
+   the soft-404 band logic, so an app that answers every miss with a jittery
+   `200` doesn't make every extension look valid.
+
+It logs `ext-auto <host>: tech=… hinted=… discovered=…`. Your own `-e` values
+are always kept. Cost: roughly 8 requests per verified extension per host, sent
+before the real run (and subject to `-rate`).
 
 **Soft-404s that vary in length.** Some apps answer every missing path with a
 `200` whose size wobbles (`3302`, `3305`, `3310`, `3312` — a CSRF token, a

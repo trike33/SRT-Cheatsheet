@@ -113,7 +113,7 @@ exact Burp include/exclude rules, not just a flattened host list.
 | `ports` | host | ports to scan (`portscan -p`), overrides `options.ports` (default `common,uncommon`) |
 | `wordlist` | web | wordlist for `fuzz -w`, overrides `options.wordlist`. No wordlist resolved → `fuzz` is **skipped** for that target, not an error. |
 | `scope` | web | Burp scope JSON for `fuzz -scope`, overrides `options.scope` |
-| `extensions` | web | extra extensions for `fuzz -e` (repeatable) |
+| `extensions` | web | extra extensions for `fuzz -e` (repeatable). When omitted, `fuzz -ext-auto` discovers them per host from tech-detect + live checks (disable with `options.autoExtensions: false`) |
 | `snykUrl` + `snykVersion` | web | both set → also runs `snyk -url -version` for that target |
 
 ## Steps
