@@ -530,3 +530,22 @@ func TestHelpPaneOpensAndCloses(t *testing.T) {
 		t.Error("Esc should close the pane")
 	}
 }
+
+func TestRunningACommandClosesHelpPane(t *testing.T) {
+	m := newTestModel()
+	m.helpOpen, m.helpName = true, "fuzz"
+	nm, cmd := typeLine(m, "version").runLine()
+	if nm.(shellModel).helpOpen {
+		t.Error("launching a command must close the help pane first")
+	}
+	if cmd == nil {
+		t.Error("expected the command to be launched")
+	}
+}
+
+func TestCtrlLClearsScreenKeepingInput(t *testing.T) {
+	got, cmd := typeLine(newTestModel(), "fuzz -u").Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	if cmd == nil || string(got.(shellModel).input) != "fuzz -u" {
+		t.Errorf("ctrl+l should clear the screen and keep the typed line (cmd=%v, input=%q)", cmd != nil, string(got.(shellModel).input))
+	}
+}

@@ -110,6 +110,13 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 		}
 	}
 
+	// A command takes over the screen, so close the help pane (and its mouse
+	// capture) first; otherwise its output would be drawn around the pane.
+	var closePane tea.Cmd
+	if m.helpOpen {
+		closePane = m.closeHelp()
+	}
+
 	c := m.cmdFor(cmdName, runArgs)
 	base, snap := m.traffic, m
 	pinned := &pinnedExec{
@@ -124,9 +131,13 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 			return hm.renderHeader()
 		},
 	}
-	return m, tea.Exec(pinned, func(err error) tea.Msg {
+	run := tea.Exec(pinned, func(err error) tea.Msg {
 		return execDoneMsg{cmd: cmdName, err: err, sess: sess, stateFile: stateFile, dir: cwd}
 	})
+	if closePane != nil {
+		return m, tea.Sequence(closePane, run)
+	}
+	return m, run
 }
 
 // recordSession updates the on-disk session list from a finished command:

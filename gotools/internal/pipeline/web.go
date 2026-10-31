@@ -151,22 +151,27 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 		}))
 	}
 
-	// --- 05: robots, per target (also stdout-only, same capture trick) ---
+	// --- 05: robots, all targets in one run (also stdout-only, same capture
+	// trick). One invocation, not one per target, so robots can fetch the
+	// targets' robots.txt files concurrently instead of waiting out each dead
+	// host's timeout in turn.
+	var robotsBases []string
 	for _, e := range cfg.Web {
-		if e.Target == "" {
-			continue
+		if e.Target != "" {
+			robotsBases = append(robotsBases, baseURL(e.Target))
 		}
-		base := baseURL(e.Target)
+	}
+	if len(robotsBases) > 0 {
 		robotsArgs := []string{
 			"-timeout", cfg.Options.timeoutDuration(15 * time.Second).String(),
 			// bool flags need the "=value" form in one token: "-insecure value"
 			// (two tokens) leaves "value" as a stray positional arg, which
 			// robots would wrongly treat as an extra base URL to probe.
 			"-insecure=" + strconv.FormatBool(cfg.Options.insecureOrDefault(true)),
-			base, // positional base URL must come after all flags
 		}
-		robotsFile := filepath.Join(outDir, "05_robots_"+safeName(e.Target)+".txt")
-		steps = append(steps, runStep("web", "robots", e.Target, robotsFile, func() error {
+		robotsArgs = append(robotsArgs, ioutil.DedupStrings(robotsBases)...) // positional base URLs after all flags
+		robotsFile := filepath.Join(outDir, "05_robots.txt")
+		steps = append(steps, runStep("web", "robots", "", robotsFile, func() error {
 			out, runErr := captureStdout(func() error {
 				return robots.Run(robotsArgs)
 			})

@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
@@ -34,6 +36,7 @@ func Run(args []string) error {
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request timeout")
 	insecure := fs.Bool("insecure", true, "skip TLS verification")
 	conc := fs.Int("c", 20, "concurrent path probes per host")
+	hostConc := fs.Int("hc", 32, "base URLs whose robots.txt is fetched concurrently")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -60,22 +63,53 @@ func Run(args []string) error {
 	}
 
 	client := netx.NewClient(*timeout, *insecure)
+
+	// Fetch every robots.txt up front, concurrently: with hundreds of
+	// bases, most of them dead or non-HTTP ports that sit out the full
+	// timeout, doing this one base at a time is what made big runs crawl.
+	type fetched struct {
+		allow, disallow []string
+		err             error
+	}
+	fetchedAll := make([]fetched, len(bases))
+	var wg sync.WaitGroup
+	var doneFetch atomic.Int64
+	sem := make(chan struct{}, max(1, *hostConc))
+	start := time.Now()
+	for i, base := range bases {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, base string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			a, d, err := parseRobots(client, base)
+			fetchedAll[i] = fetched{a, d, err}
+			if n := doneFetch.Add(1); len(bases) > 1 {
+				ioutil.Progress("robots: fetched %d/%d · %s", n, len(bases), ioutil.ElapsedETA(n, int64(len(bases)), time.Since(start)))
+			}
+		}(i, base)
+	}
+	wg.Wait()
+	if len(bases) > 1 {
+		colorout.ClearLine(os.Stderr)
+	}
+
 	unreachable := 0
 	defer func() {
 		ioutil.Warn("checked %d site(s), %d without a robots.txt", len(bases), unreachable)
 	}()
-	for _, base := range bases {
-		allow, disallow, err := parseRobots(client, base)
-		if err != nil {
-			ioutil.Warn("%s: %v", base, err)
+	for i, base := range bases {
+		f := fetchedAll[i]
+		if f.err != nil {
+			ioutil.Warn("%s: %v", base, f.err)
 			unreachable++
 			continue
 		}
 		fmt.Println(cm.Wrap(colorout.Cyan, "--- "+base+" ---"))
 		fmt.Println(cm.Wrap(colorout.Cyan, "[Allow]"))
-		probePaths(client, base, filterWildcards(allow), cm, *conc)
+		probePaths(client, base, filterWildcards(f.allow), cm, *conc)
 		fmt.Println(cm.Wrap(colorout.Cyan, "[Disallow]"))
-		probePaths(client, base, filterWildcards(disallow), cm, *conc)
+		probePaths(client, base, filterWildcards(f.disallow), cm, *conc)
 	}
 	return nil
 }

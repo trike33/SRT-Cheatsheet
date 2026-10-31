@@ -210,6 +210,9 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		return m.runLine()
 
+	case tea.KeyCtrlL: // same as typing `clear`, without touching the line being edited
+		return m, tea.ClearScreen
+
 	case tea.KeyEsc:
 		if m.helpOpen {
 			return m, m.closeHelp()
