@@ -25,7 +25,7 @@ stdlib-only forever.)
 
 **vulnx is the one exception.** CVE lookups from a grabbed service/software
 version are kept as an external call, via the `runExternal` hook already
-built in `gotools/cmd/srt/pipeline_external.go` (looks the binary up on
+built in `gotools/internal/pipeline/external.go` (looks the binary up on
 `PATH`, skips cleanly if it's missing — never aborts a run over an optional
 tool).
 

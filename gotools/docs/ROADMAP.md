@@ -174,7 +174,7 @@ Running log of what's shipped and what's queued, newest first.
 - **vulnx integration** — `pipeline`'s HOST stage runs `vulnx search
   "<banner>"` (github.com/projectdiscovery/vulnx) for every non-web open
   port with a grabbed banner, via the `runExternal` helper in
-  `pipeline_external.go` (skips cleanly if `vulnx` isn't installed). Works
+  `internal/pipeline/external.go` (skips cleanly if `vulnx` isn't installed). Works
   unauthenticated, just rate-limited without `vulnx auth` configured.
 
 ### WEB methodology (see [methodology.md](methodology.md))

@@ -263,7 +263,7 @@ queued.
 `srt`'s policy is to implement that gap natively rather than shell out to
 third-party tools (naabu, httpx, subfinder, katana, nuclei, dalfox). The one
 exception is **vulnx** (github.com/projectdiscovery/vulnx), for CVE lookups
-from a grabbed service/software version — `gotools/cmd/srt/pipeline_external.go`
+from a grabbed service/software version — `gotools/internal/pipeline/external.go`
 ships the plumbing for this (`runExternal`: look up a binary on `PATH`, run
 it, capture its output, and report a clean `"skipped"` step instead of
 failing the run when it isn't installed), used by the HOST stage's `vulnx`
