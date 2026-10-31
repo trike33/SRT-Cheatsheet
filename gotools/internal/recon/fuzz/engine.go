@@ -166,8 +166,12 @@ func (e *fuzzEngine) process(hj hostJob) {
 		return
 	}
 
+	start := time.Now()
 	meta, loc, err := e.doRequest(target, j.word)
 	if err != nil {
+		if e.sched.adaptiveConc {
+			hj.hb.adaptRecord(false, time.Since(start))
+		}
 		e.errCount.Add(1)
 		e.recordResult(j.base, false)
 		return
@@ -176,9 +180,14 @@ func (e *fuzzEngine) process(hj hostJob) {
 	hj.hb.reqs.Add(1)
 	e.recordResult(j.base, true)
 
+	overloadish := meta.Status == 429 || meta.Status == 503
+	if e.sched.adaptiveConc {
+		hj.hb.adaptRecord(!overloadish, time.Since(start))
+	}
+
 	// Adaptive per-host throttle on rate-limit / overload responses.
 	if e.autoThrottle {
-		if meta.Status == 429 || meta.Status == 503 {
+		if overloadish {
 			e.sched.throttle(hj.hb)
 		} else {
 			e.sched.relax(hj.hb)
@@ -193,13 +202,13 @@ func (e *fuzzEngine) process(hj hostJob) {
 		hj.hb.matches.Add(1)
 		e.emit(target, meta)
 
-		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && dirRedirect(target, loc) {
+		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && e.looksLikeDir(target, loc, meta, j.word, j.base) {
 			newBase := strings.TrimRight(target, "/") + "/" + fuzzKeyword
 			if e.scope == nil || e.scope.InScope(strings.ReplaceAll(newBase, fuzzKeyword, "")) {
 				// Recursion stays on the SAME host bucket, so it inherits that
 				// host's rate/concurrency limits.
 				e.resumeRecord('D', newBase)
-				e.startFeeder(hj.hb, newBase, j.depth+1)
+				e.startFeeder(hj.hb, newBase, j.depth+1, j.base)
 			}
 		}
 	}
@@ -263,8 +272,25 @@ func (e *fuzzEngine) doRequest(target, word string) (RespMeta, string, error) {
 // paths and extension-specific error pages are all seen. Calibration is
 // per-directory: a fingerprint that is a soft-404 under /admin won't hide a
 // real finding elsewhere.
-func (e *fuzzEngine) calibrate(base string) {
+//
+// It starts from the nearest already-known fingerprint instead of from zero:
+// parentBase's own calibration during recursion, or this host's preflight
+// baseline at the top level (parentBase == ""). The probes below still run
+// and widen/add to that on top, so a directory with its own distinct
+// soft-404 isn't masked by what it inherited -- this only saves the probes
+// that would have rediscovered the exact same bands.
+func (e *fuzzEngine) calibrate(base, parentBase string) {
 	cd := newCalibData(e.acTol, e.acLearn)
+	if parentBase != "" {
+		e.calMu.RLock()
+		parent := e.cal[parentBase]
+		e.calMu.RUnlock()
+		if parent != nil {
+			cd.seedFrom(parent)
+		}
+	} else if bl := e.baselineFor(originOf(base)); bl != nil {
+		cd.seedFrom(bl)
+	}
 	for _, p := range []struct {
 		n   int
 		ext string
@@ -294,7 +320,7 @@ func (e *fuzzEngine) calibrate(base string) {
 // softFiltered reports whether a response matches this directory's soft-404
 // fingerprint, calibrated up front or learned from the run so far.
 func (e *fuzzEngine) softFiltered(base, word string, meta RespMeta) bool {
-	if !e.autocal {
+	if !e.calibrationEnabled(originOf(base)) {
 		return false
 	}
 	e.calMu.RLock()
@@ -483,6 +509,42 @@ func statusColor(status int) string {
 	default:
 		return colorout.Red
 	}
+}
+
+// looksLikeDir reports whether target should be recursed into: either the
+// classic signal (a redirect to the same path with a trailing slash), or --
+// for an app that serves a directory listing directly without redirecting --
+// a direct 2xx on an extensionless path whose "+/" form also resolves to a
+// real (non-soft-404) page. The second case costs one extra confirmation
+// request, so it's narrowed to exactly the shape a flat file can't have
+// (no dot in its last path segment) before firing it.
+func (e *fuzzEngine) looksLikeDir(target, loc string, meta RespMeta, word, base string) bool {
+	if dirRedirect(target, loc) {
+		return true
+	}
+	if loc != "" || meta.Status < 200 || meta.Status >= 300 || strings.HasSuffix(target, "/") {
+		return false
+	}
+	if strings.Contains(lastSegment(target), ".") {
+		return false // has an extension, so it reads as a file, not a directory
+	}
+	slashTarget := target + "/"
+	if e.scope != nil && !e.scope.InScope(slashTarget) {
+		return false
+	}
+	sm, _, err := e.doRequest(slashTarget, word)
+	if err != nil {
+		return false
+	}
+	return e.matcher.show(sm) && !e.softFiltered(base, word, sm)
+}
+
+// lastSegment returns the final path segment of a URL-shaped string.
+func lastSegment(target string) string {
+	if i := strings.LastIndexByte(target, '/'); i >= 0 {
+		return target[i+1:]
+	}
+	return target
 }
 
 // dirRedirect reports whether loc is a redirect from target to target+"/",

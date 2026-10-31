@@ -111,7 +111,9 @@ func Run(args []string) error {
 	acLearn := fs.Int("ac-learn", 12, "with -ac: if this many hits in one directory share a status and near-identical size, treat them as an undetected soft-404 and filter the rest (0 = off)")
 	hl := fs.String("hl", "", "highlight response bodies matching this regex (prints snippets under the hit)")
 	autoThrottle := fs.Bool("auto-throttle", false, "automatically back off a host's rate when it returns 429/503")
+	adaptiveConc := fs.Bool("adaptive-conc", false, "let each host's concurrency float with observed latency/errors instead of a fixed -hc (climbs slowly, backs off immediately on errors/slowdowns; -hc still caps it if set)")
 	resume := fs.String("resume", "", "state file: skip already-done work and persist progress so a re-run continues")
+	mutateCase := fs.Bool("mutate-case", false, "also try lower/UPPER/Title-case variants of every word")
 
 	// Recursion & output.
 	recursion := fs.Bool("recursion", false, "recurse into discovered directories")
@@ -218,6 +220,8 @@ func Run(args []string) error {
 		cal:          map[string]*calibData{},
 		hlRe:         hlRe,
 		autoThrottle: *autoThrottle,
+		adaptiveConc: *adaptiveConc,
+		mutateCase:   *mutateCase,
 	}
 
 	// Resume state: load prior progress and open the file for appends.
@@ -273,6 +277,10 @@ type fuzzEngine struct {
 	gLimiter     *rateLimiter  // global rate cap across all hosts
 	sched        *scheduler
 	autoThrottle bool // adaptive per-host backoff on 429/503
+	adaptiveConc bool // -adaptive-conc: per-host concurrency floats with latency/errors
+
+	// wordlist mutations (-mutate-case, and the %ext% token in a word).
+	mutateCase bool
 
 	// per-directory soft-404 calibration (-ac).
 	autocal bool
@@ -280,6 +288,16 @@ type fuzzEngine struct {
 	acLearn int     // -ac-learn threshold
 	calMu   sync.RWMutex
 	cal     map[string]*calibData // keyed by base template
+
+	// preflight baseline: "what does a miss look like" probed once per host
+	// origin before any fuzzing starts (always runs, independent of -ac).
+	// Per-directory calibrate() seeds from it instead of starting cold, and
+	// a host whose misses don't 404 gets -ac auto-enabled for it even if the
+	// operator didn't pass the flag.
+	baselineMu sync.RWMutex
+	baseline   map[string]*calibData // origin -> baseline fingerprint
+	forcedMu   sync.Mutex
+	forcedCal  map[string]bool // origin -> -ac auto-enabled by preflight
 
 	// response-body highlighting (-hl).
 	hlRe *regexp.Regexp
@@ -289,7 +307,9 @@ type fuzzEngine struct {
 	resumeW          *bufio.Writer
 	resumeCloser     io.Closer
 	resumeMu         sync.Mutex
-	resumeDone       map[string]struct{} // targets completed in a prior run
+	resumeLines      int // appended lines since the last compaction
+	resumeDoneMu     sync.RWMutex
+	resumeDone       map[string]struct{} // targets completed (prior run + this one)
 	resumeDiscovered []string            // dirs discovered in a prior run, re-seeded
 	resumeSkip       atomic.Int64
 
@@ -354,7 +374,13 @@ func (e *fuzzEngine) run(bases []string) {
 		bases = ioutil.DedupStrings(append(append([]string{}, bases...), e.resumeDiscovered...))
 	}
 
-	e.sched = newScheduler(e.workerCount, e.perHostIval, e.perHostConc, e.gLimiter, &e.stopF)
+	e.sched = newScheduler(e.workerCount, e.perHostIval, e.perHostConc, e.gLimiter, &e.stopF, e.adaptiveConc)
+
+	// Preflight: probe each host's root with a couple of guaranteed-missing
+	// paths before any real fuzzing starts, so the engine knows what a miss
+	// actually looks like here (and auto-enables -ac for a host that doesn't
+	// 404 cleanly) rather than finding out from the first page of "hits".
+	e.preflightCheck(bases)
 
 	// Seed a feeder per base, grouped by host so the scheduler can interleave
 	// them. This happens before dispatch starts, so feeders>0 keeps it alive.
@@ -363,7 +389,7 @@ func (e *fuzzEngine) run(bases []string) {
 	for _, b := range bases {
 		hb := e.sched.hostBucket(hostOf(b))
 		hosts[hb.name] = struct{}{}
-		e.startFeeder(hb, b, 0)
+		e.startFeeder(hb, b, 0, "")
 	}
 	if len(hosts) > 1 {
 		ioutil.Warn("fuzzing %d hosts, work interleaved fairly across them", len(hosts))
@@ -406,8 +432,10 @@ func (e *fuzzEngine) run(bases []string) {
 
 // startFeeder dedupes a base, registers a feeder with the scheduler, and
 // launches it. Call it BEFORE finishing the request that triggers recursion so
-// the scheduler never sees zero outstanding work mid-flight.
-func (e *fuzzEngine) startFeeder(hb *hostBucket, base string, depth int) {
+// the scheduler never sees zero outstanding work mid-flight. parentBase is
+// the directory this one was discovered under (empty at the top level), so
+// feed can seed this directory's calibration from its parent's.
+func (e *fuzzEngine) startFeeder(hb *hostBucket, base string, depth int, parentBase string) {
 	e.visitedMu.Lock()
 	if _, done := e.visited[base]; done {
 		e.visitedMu.Unlock()
@@ -417,25 +445,38 @@ func (e *fuzzEngine) startFeeder(hb *hostBucket, base string, depth int) {
 	e.visitedMu.Unlock()
 
 	e.sched.addFeeder()
-	go e.feed(hb, base, depth)
+	go e.feed(hb, base, depth, parentBase)
 }
 
-// feed calibrates this directory (if -ac) and then streams one job per word
-// (and extension) into the host's queue, applying backpressure, before
-// releasing its feeder registration.
-func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int) {
+// feed calibrates this directory (if calibration is enabled for its host)
+// and then streams one job per word (mutated, and with extensions/%ext%
+// expanded) into the host's queue, applying backpressure, before releasing
+// its feeder registration.
+func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int, parentBase string) {
 	defer e.sched.feederDone()
-	if e.autocal {
-		e.calibrate(base) // per-directory soft-404 fingerprint
+	if e.calibrationEnabled(originOf(base)) {
+		e.calibrate(base, parentBase) // per-directory soft-404 fingerprint
 	}
 	exts := e.extsFor(base) // -e plus -ext-auto's per-host discoveries
-	e.planned.Add(int64(len(e.words) * (1 + len(exts))))
+	mult := 1
+	if e.mutateCase {
+		mult = 4 // word, lower, upper, title -- an upper bound; dedup may land under this
+	}
+	e.planned.Add(int64(len(e.words) * mult * (1 + len(exts))))
 	for _, w := range e.words {
 		if e.stopped() || e.baseDead(base) {
 			return
 		}
-		for _, cand := range expandWord(w, exts) {
-			e.sched.pushJob(hb, fuzzJob{base: base, word: cand, depth: depth})
+		for _, mw := range e.mutateWord(w) {
+			if cands, isTok := expandExtToken(mw, exts); isTok {
+				for _, cand := range cands {
+					e.sched.pushJob(hb, fuzzJob{base: base, word: cand, depth: depth})
+				}
+				continue
+			}
+			for _, cand := range expandWord(mw, exts) {
+				e.sched.pushJob(hb, fuzzJob{base: base, word: cand, depth: depth})
+			}
 		}
 	}
 }

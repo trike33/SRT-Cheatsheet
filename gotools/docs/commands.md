@@ -412,7 +412,13 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-w` | stdin | wordlist file (repeatable) |
 | `-e` | — | extra extension per word, e.g. `-e .php` (repeatable) |
 | `-ext-auto` | | discover which extensions each host serves (see below); combines with `-e` |
+| `-mutate-case` | off | also try lower/UPPER/Title-case variants of every word |
 | `-scope` | — | Burp scope JSON: gate requests + seed targets when no `-u`/`-tl` |
+
+A wordlist line can also carry a literal `%ext%` token (e.g. `backup.%ext%`)
+that expands against the resolved extensions directly, instead of only ever
+having one appended as a suffix — see [fuzz.md](fuzz.md)'s wordlist
+mutations section.
 
 **Traffic control** (see [multi-host](#multi-host-sharing-one-wordlist-across-hosts))
 
@@ -427,7 +433,8 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-c` | `40` | total concurrent workers (global) |
 | `-rate` | `0` | max requests/sec **per host** (0 = unlimited) |
 | `-rate-global` | `0` | max requests/sec across **all** hosts (0 = unlimited) |
-| `-hc` | `0` | max concurrent requests **per host** (0 = unlimited) |
+| `-hc` | `0` | max concurrent requests **per host** (0 = unlimited; still a ceiling with `-adaptive-conc`) |
+| `-adaptive-conc` | off | let each host's concurrency float with observed latency/errors instead of a fixed `-hc` |
 | `-delay` | `0` | fixed delay before each request |
 | `-jitter` | `0` | random extra delay up to this |
 | `-timeout` | `10s` | per-request timeout |
@@ -475,7 +482,16 @@ srt fuzz -tl hosts.txt -w big.txt -rate 10 -rate-global 200 -ac
 
 Default `-mc`: `200-299,301,302,307,308,401,403,405,500`. Use `-mc all` to match
 everything. `-ac` recalibrates for each directory it recurses into, so a
-soft-404 size under `/admin` never hides a real finding under `/api`.
+soft-404 size under `/admin` never hides a real finding under `/api`; a child
+directory seeds its calibration from its parent's instead of starting cold.
+
+**Preflight (always runs, `-ac` or not).** Before any real fuzzing starts,
+srt fires two guaranteed-nonexistent paths at each host's root to see what a
+miss actually looks like there. A host whose "miss" would pass the
+configured matchers (i.e. look like a hit) gets soft-404 filtering
+auto-enabled for it even without `-ac` — logged as `preflight <host>: a
+non-existent path doesn't 404 (...) -- auto-enabling soft-404 filtering`.
+Either way, the fingerprint seeds that host's top-level `-ac` calibration.
 
 **Automatic extensions (`-ext-auto`).** Instead of guessing `-e .php -e .bak`,
 the fuzzer works out what each host serves, once per host:
@@ -519,6 +535,11 @@ matching.
 | `-hl` | — | highlight response bodies matching this regex (prints snippets) |
 | `-recursion` | off | recurse into discovered directories |
 | `-depth` | `0` | max recursion depth (0 = unlimited) |
+
+`-recursion` follows the classic redirect-to-trailing-slash signal, plus a
+direct `2xx` on an extensionless word once its `<word>/` form is confirmed to
+also resolve to a real page (for apps that list a directory inline, no
+redirect) — never probed for a word that has a dot in it.
 | `-resume` | — | state file: skip done work and persist progress for restart |
 | `-o` | — | write matched results to a file |
 | `-json` | off | emit JSON lines (adds `highlights` when `-hl` is set) |

@@ -66,7 +66,7 @@ Recursion stays on the host where a directory was found, so it inherits that
 host's `-rate`/`-hc`. A host abandoned via `-maxerrors` stops without affecting
 the others.
 
-## Killing false positives: `-ac`
+## Killing false positives: `-ac`, and the preflight check that backs it
 
 Many sites return `200` for everything (soft-404s). `-ac` probes a few random
 paths first, fingerprints the response (size + word count), and auto-filters
@@ -76,6 +76,26 @@ anything that matches. Turn it on whenever results look too good:
 srt fuzz -u https://host/FUZZ -w words.txt -ac
 # stderr: [!] calibrate: filtering size=29 words=3 (soft-404 on host)
 ```
+
+Before any of that, **every run** — with or without `-ac` — fires two
+guaranteed-nonexistent paths at each target's root first, the same sanity
+check you'd do by hand ("what does a 404 look like here?") before trusting
+`-mc`. If that comes back looking like a real miss, nothing changes. If it
+comes back looking like a *hit* under your configured matchers, srt knows the
+whole run is about to drown in false positives and auto-enables soft-404
+filtering for that host on its own, even though you never passed `-ac`:
+
+```bash
+srt fuzz -u https://host/FUZZ -w words.txt
+# stderr: [!] preflight http://host: a non-existent path doesn't 404
+#         (status=200 size=1561-1568) -- auto-enabling soft-404 filtering
+#         for this host
+```
+
+That preflight fingerprint also seeds every directory's own calibration
+(including a child directory seeding from its parent's during `-recursion`)
+instead of starting from zero each time, so later calibration probes only
+need to confirm or widen what's already known rather than rediscover it.
 
 You can also filter manually: `-fs 1337` (hide that size), `-fw 12`, `-fc 404`,
 `-fr 'Not Found'`, etc. Matchers (`-mc/-ms/-mw/-ml/-mr`) and filters combine —
@@ -120,6 +140,22 @@ host's per-request interval (exponential backoff, capped at 5s) and decays it
 back toward normal as good responses return. One slow host backs off on its own
 without you babysitting `-rate`, and the other hosts are unaffected.
 
+## Adaptive concurrency (`-adaptive-conc`)
+
+`-hc` is a fixed ceiling you have to guess up front. `-adaptive-conc` instead
+lets each host's concurrency float: it starts conservative, climbs one slot
+at a time after a run of clean, on-pace responses, and backs off immediately
+— a transport error, a `429`/`503`, or a response much slower than that
+host's own recent average — before anything actually breaks. If `-hc` is also
+set, it still caps how high the adaptive limit can climb; it just stops being
+the only number controlling it.
+
+```bash
+srt fuzz -u https://host/FUZZ -w big.txt -adaptive-conc -ac
+# fast, healthy host: climbs well past a conservative hand-picked -hc
+# struggling host: eases off on its own before you'd notice the slowdown
+```
+
 ## Resumable runs (`-resume`)
 
 ```bash
@@ -134,12 +170,47 @@ discovered directories, so a big multi-host run survives interruptions.
 
 ## Recursion
 
-`-recursion` descends into discovered directories (detected via a redirect to
-the same path with a trailing slash). `-depth` caps how deep; scope still
-applies at every level.
+`-recursion` descends into discovered directories. Two things count as a
+directory:
+
+- the classic signal — a redirect to the same path with a trailing slash;
+- **or**, for an app that serves a listing directly with no redirect: a
+  direct `2xx` on a word with no extension, confirmed with one extra request
+  for `<word>/` that also resolves to a real (non-soft-404) page. A hit that
+  has a dot in it (`report.pdf`) is never probed this way — only something
+  that could plausibly be a directory in the first place.
+
+`-depth` caps how deep; scope still applies at every level. A child
+directory's soft-404 calibration (with `-ac`, or auto-enabled by preflight)
+seeds from its parent's instead of starting cold.
 
 ```bash
 srt fuzz -u https://host/FUZZ -w words.txt -e .php -recursion -depth 3 -ac
+```
+
+## Wordlist mutations (`-mutate-case`, `%ext%`)
+
+`-mutate-case` also tries lower/UPPER/Title-case variants of every word —
+catches the handful of apps or filesystems that are case-sensitive and where
+the wordlist's own casing isn't the one in use (`Admin`, `BACKUP.ZIP`,
+`login.PHP`).
+
+A wordlist line can also spell out exactly where an extension goes with the
+literal `%ext%` token, instead of only ever having one appended as a suffix
+the way `-e`/`-ext-auto` do for a plain word:
+
+```
+backup.%ext%
+config.%ext%.bak
+```
+
+Each `%ext%` word expands to one candidate per resolved extension (`-e`
+and/or `-ext-auto`'s discoveries) — `backup.%ext%` becomes `backup.php`,
+`backup.bak`, and so on. A word with no `%ext%` in it is unaffected and still
+gets the normal suffix-append treatment.
+
+```bash
+srt fuzz -u https://host/FUZZ -w words-with-tokens.txt -ext-auto -mutate-case -ac
 ```
 
 ## Output

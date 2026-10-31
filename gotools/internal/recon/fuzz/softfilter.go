@@ -91,6 +91,22 @@ func (c *calibData) widen(b *respBand, ns, words int) bool {
 	return true
 }
 
+// seedFrom copies parent's calibrated bands into c, so a child directory (or
+// a fresh per-directory calibration at the top level) starts from an
+// already-known fingerprint -- the preflight baseline for this host, or the
+// parent directory's own calibration during recursion -- instead of from
+// zero. addCalibrated's own covers/widen dedup logic still applies once c is
+// probed on top, so a directory with its own distinct soft-404 isn't masked
+// by what it inherited.
+func (c *calibData) seedFrom(parent *calibData) {
+	parent.mu.Lock()
+	defer parent.mu.Unlock()
+	for _, b := range parent.filter {
+		cp := *b
+		c.filter = append(c.filter, &cp)
+	}
+}
+
 func (c *calibData) addCalibrated(meta RespMeta, word string) {
 	ns := normalizedSize(meta, word)
 	c.mu.Lock()

@@ -4,6 +4,41 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Fuzzer: preflight baseline, parent-seeded calibration, smarter recursion, adaptive concurrency, mutations
+- **Preflight baseline probe** — every `fuzz` run, with or without `-ac`,
+  fires two guaranteed-nonexistent paths at each target host's root before
+  any real fuzzing starts (the "what does a 404 look like here" check a
+  human runs by hand). A host whose miss comes back looking like a *hit*
+  under the configured matchers gets soft-404 filtering auto-enabled for it
+  on its own, with a stderr line saying so; a host that 404s cleanly is left
+  alone. Either way the fingerprint is recorded as that host's baseline.
+- **Parent-to-child (and baseline-to-directory) calibration inheritance** —
+  `-ac`'s per-directory calibration now seeds from the nearest already-known
+  fingerprint — the preflight baseline at the top level, or the parent
+  directory's own calibration once `-recursion` descends — before running
+  its own probes on top. Saves probe requests on deep trees without masking
+  a directory with a genuinely different soft-404 of its own.
+- **Smarter directory detection for `-recursion`** — besides the classic
+  redirect-to-trailing-slash signal, a direct `2xx` on an extensionless word
+  is now also recursed into once its `<word>/` form is confirmed to resolve
+  to a real (non-soft-404) page too — for apps that serve a directory
+  listing inline with no redirect. Narrowed to words with no dot, so a flat
+  file is never probed this way.
+- **Adaptive per-host concurrency (`-adaptive-conc`)** — an AIMD controller
+  per host: starts conservative, climbs one slot at a time after a run of
+  clean, on-pace responses, and backs off immediately on a transport error,
+  `429`/`503`, or a response much slower than that host's own recent
+  average. `-hc`, if also set, still caps how high it can climb.
+- **Wordlist mutations** — `-mutate-case` also tries lower/UPPER/Title-case
+  variants of every word; a literal `%ext%` token in a wordlist line (e.g.
+  `backup.%ext%`) expands against the resolved extensions instead of only
+  ever having one appended as a suffix.
+- **Resume-log compaction** — a `-resume` state file is now rewritten down
+  to one line per completed target and one per discovered directory every
+  20k appended lines, instead of growing by one line per request for the
+  life of a long run; a failed compaction (e.g. a read-only output dir)
+  leaves the original file and writer untouched.
+
 ### Excluded-but-tracked hosts + native traceroute
 - **`host` entries can be marked `"excluded": true`** in a `pipeline`
   config: never portscanned, never handed off to WEB — only `ipexpand` ->
@@ -275,15 +310,14 @@ so they aren't lost:
 
 ### Fuzzer / pipeline
 
-- **Recursion content-length auto-filter inheritance** — optionally seed a
-  child directory's calibration from its parent to save probe requests.
-- **Smarter directory detection** — treat a `200` on a trailing-slash request
-  as a directory even without a redirect.
-- **Per-host adaptive concurrency** — raise/lower `-hc` based on latency.
-- **Resume compaction** — periodically rewrite the state file to dedupe.
+- ~~Recursion content-length auto-filter inheritance~~ — done, see Shipped
+  (preflight-to-directory and parent-to-child calibration seeding).
+- ~~Smarter directory detection~~ — done, see Shipped.
+- ~~Per-host adaptive concurrency~~ — done, see Shipped (`-adaptive-conc`).
+- ~~Resume compaction~~ — done, see Shipped.
+- ~~Wordlist mutations~~ — done, see Shipped (`-mutate-case`, `%ext%`).
 - **Output formats** — ndjson streaming to a file, and a `-mc`-less "show all"
   summary table grouped by status.
-- **Wordlist mutations** — case/extension permutations, `%ext%` style tokens.
 - **Release automation** once workflow scope is available (tag → binaries).
 
 Suggestions welcome — open an issue.

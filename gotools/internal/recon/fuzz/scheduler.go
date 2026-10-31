@@ -27,9 +27,10 @@ type scheduler struct {
 	byNm  map[string]*hostBucket
 	rr    int
 
-	perHostIval time.Duration // 0 = unlimited
-	perHostConc int           // 0 = unlimited
-	maxQueue    int           // per-host backpressure (0 = unbounded)
+	perHostIval  time.Duration // 0 = unlimited
+	perHostConc  int           // 0 = unlimited
+	adaptiveConc bool          // -adaptive-conc: let each host's cap float with observed latency/errors
+	maxQueue     int           // per-host backpressure (0 = unbounded)
 
 	feeders     int // outstanding feeder goroutines
 	inflightTot int // requests dispatched but not yet finished
@@ -49,6 +50,12 @@ type hostBucket struct {
 	// live stats for the per-host progress line.
 	reqs    atomic.Int64
 	matches atomic.Int64
+
+	// adaptive per-host concurrency (-adaptive-conc): AIMD on top of latency.
+	adaptMu    sync.Mutex
+	concLimit  int     // current adaptive cap (0 = not primed yet)
+	emaLatency float64 // ms, exponential moving average
+	successRun int     // consecutive clean responses since the last raise
 }
 
 type hostJob struct {
@@ -56,15 +63,80 @@ type hostJob struct {
 	hb  *hostBucket
 }
 
-func newScheduler(workers int, perHostIval time.Duration, perHostConc int, gLimiter *rateLimiter, stop *atomic.Bool) *scheduler {
+func newScheduler(workers int, perHostIval time.Duration, perHostConc int, gLimiter *rateLimiter, stop *atomic.Bool, adaptiveConc bool) *scheduler {
 	return &scheduler{
-		byNm:        map[string]*hostBucket{},
-		perHostIval: perHostIval,
-		perHostConc: perHostConc,
-		maxQueue:    4096,
-		ready:       make(chan hostJob), // unbuffered: bounded by worker count
-		gLimiter:    gLimiter,
-		stop:        stop,
+		byNm:         map[string]*hostBucket{},
+		perHostIval:  perHostIval,
+		perHostConc:  perHostConc,
+		adaptiveConc: adaptiveConc,
+		maxQueue:     4096,
+		ready:        make(chan hostJob), // unbuffered: bounded by worker count
+		gLimiter:     gLimiter,
+		stop:         stop,
+	}
+}
+
+// Adaptive concurrency tuning constants: start conservative, climb slowly
+// (one slot every adaptiveStep clean responses in a row), and back off hard
+// and immediately the moment a host shows signs of strain.
+const (
+	adaptiveStart = 4
+	adaptiveMax   = 200
+	adaptiveStep  = 8
+)
+
+// effCap returns the concurrency cap to enforce for hb right now: the static
+// -hc ceiling when adaptive concurrency is off, or the tighter of -hc (if
+// set) and the host's own adaptive cap when it's on. 0 means unlimited.
+func (hb *hostBucket) effCap(staticCap int, adaptive bool) int {
+	if !adaptive {
+		return staticCap
+	}
+	hb.adaptMu.Lock()
+	c := hb.concLimit
+	hb.adaptMu.Unlock()
+	if c <= 0 {
+		c = adaptiveStart
+	}
+	if staticCap > 0 && staticCap < c {
+		return staticCap
+	}
+	return c
+}
+
+// adaptRecord feeds one completed request's outcome into the AIMD controller:
+// ok is false for a transport error or a 429/503 (shrink immediately,
+// multiplicative decrease); otherwise elapsed is compared against this host's
+// recent average latency -- a request much slower than usual is an early
+// overload signal even before anything starts erroring, so the cap holds and
+// eases back a step instead of climbing further. Only after a run of clean,
+// on-pace responses does the cap grow, one slot at a time.
+func (hb *hostBucket) adaptRecord(ok bool, elapsed time.Duration) {
+	hb.adaptMu.Lock()
+	defer hb.adaptMu.Unlock()
+	if hb.concLimit <= 0 {
+		hb.concLimit = adaptiveStart
+	}
+	ms := float64(elapsed.Milliseconds())
+	if hb.emaLatency == 0 {
+		hb.emaLatency = ms
+	} else {
+		hb.emaLatency = hb.emaLatency*0.8 + ms*0.2
+	}
+	if !ok {
+		hb.concLimit = max(1, hb.concLimit*2/3)
+		hb.successRun = 0
+		return
+	}
+	if hb.emaLatency > 0 && ms > hb.emaLatency*2 {
+		hb.concLimit = max(1, hb.concLimit-1)
+		hb.successRun = 0
+		return
+	}
+	hb.successRun++
+	if hb.successRun >= adaptiveStep && hb.concLimit < adaptiveMax {
+		hb.concLimit++
+		hb.successRun = 0
 	}
 }
 
@@ -202,7 +274,7 @@ func (s *scheduler) pickLocked() (hostJob, bool, time.Duration) {
 		if len(hb.jobs) == 0 {
 			continue
 		}
-		if s.perHostConc > 0 && hb.inflight >= s.perHostConc {
+		if capN := hb.effCap(s.perHostConc, s.adaptiveConc); capN > 0 && hb.inflight >= capN {
 			continue
 		}
 		// Effective interval = configured per-host rate, widened by any adaptive
