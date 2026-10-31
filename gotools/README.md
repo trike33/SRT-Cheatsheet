@@ -97,6 +97,7 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `ipports` | `legacy/HOST/format-ips.py` | Append ports (default 8080,8443) as `host:port` |
 | `resolve` | **new** | Forward (A/AAAA) or reverse (PTR) DNS lookup, concurrent |
 | `portscan` | **new** | Native concurrent TCP connect port scanner (replaces naabu) |
+| `traceroute` | **new** | Native ICMP route trace (needs `CAP_NET_RAW`/root); backs `pipeline`'s excluded-but-tracked hosts |
 | `domains` | `legacy/HOST/domain-extracter.py` | Pull unique domains out of httpx output / any text |
 | `scopecheck` | `legacy/HOST/domain_enum.py` | Keep hosts whose resolved IP is in a scope file (concurrent DNS) |
 | `subdomains` | **new** | Find subdomains: passive (crt.sh) + optional active DNS brute force (replaces subfinder) |

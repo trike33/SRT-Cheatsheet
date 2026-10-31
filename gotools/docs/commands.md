@@ -10,7 +10,7 @@ done — so a long run on a big input never looks hung. `fuzz` and `portscan`
 show their own richer live counters instead of this generic line.
 
 Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
-[portscan](#portscan) · [domains](#domains) · [scopecheck](#scopecheck) ·
+[portscan](#portscan) · [traceroute](#traceroute) · [domains](#domains) · [scopecheck](#scopecheck) ·
 [subdomains](#subdomains) · [probe](#probe) · [burphosts](#burphosts) ·
 [burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
 [params](#params) · [dirlist](#dirlist) · [robots](#robots) · [snyk](#snyk) ·
@@ -109,6 +109,35 @@ echo 10.0.0.5 | srt portscan -p 1-65535 -c 500   # full sweep, higher concurrenc
 (873) and Java RMI (1098/1099) are the two examples called out in
 [methodology.md](methodology.md); `srt pipeline`'s HOST stage flags any open
 port from this list automatically.
+
+---
+
+## traceroute
+
+Native ICMP route trace — one echo per TTL (1 up to `-max-hops`), matching
+each reply to its probe by id/sequence so unrelated ICMP traffic on the host
+is ignored. `srt`'s replacement for shelling out to `traceroute`/`tracert`;
+backs the HOST methodology's route trace for `pipeline`'s
+[excluded-but-tracked hosts](pipeline.md#steps). IPv4 only for now.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin | input host/IP list |
+| `-max-hops` | `30` | maximum TTL to probe |
+| `-timeout` | `1s` | per-hop wait for a response before moving to the next TTL |
+| `-o` | stdout | output file |
+| `-json` | off | JSON lines (`target`, `addr`, `reached`, `hops: [{ttl, addr, rttMs}]`) instead of a plain per-hop listing |
+
+```bash
+echo 8.8.8.8 | srt traceroute
+srt traceroute -l hosts.txt -max-hops 20 -json -o trace.json
+```
+
+**Needs a raw ICMP socket** — `CAP_NET_RAW` on Linux, or root. Without it,
+`traceroute` fails once up front with that explanation rather than per
+target. Not implemented on Windows yet (needs a different raw-socket API);
+the binary still builds and runs there, this one command just reports it
+can't.
 
 ---
 

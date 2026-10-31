@@ -50,11 +50,13 @@ scope (IPs, or a pipeline JSON config's "host" list)
    and **excluded** the way a Burp/program scope does.
 2. **Excluded hosts are never actively touched.** The only information
    gathered about them is passive: a reverse DNS lookup and a route trace.
-   *(Partially implemented: `srt resolve -reverse` does the reverse lookup
-   and is reused for this; there's no way yet to mark a `host` entry
-   excluded-but-tracked in the `pipeline` schema, and there's no traceroute
-   helper. `scopecheck` is a different check — which hosts/domains resolve
-   *into* scope — not this.)*
+   *(Implemented: a `pipeline` `host` entry with `"excluded": true` skips
+   `portscan` and the WEB hand-off entirely, running only `ipexpand` ->
+   `resolve -reverse` -> `srt traceroute` (a native ICMP route tracer).
+   `traceroute` needs a raw socket (`CAP_NET_RAW` or root) to send/receive
+   ICMP; without one it's skipped cleanly, same as `vulnx` when that's not
+   on `PATH` — never fails the run. IPv4 only for now. `scopecheck` is a
+   different check — which hosts/domains resolve *into* scope — not this.)*
 3. **Included hosts**:
    - DNS check. *(Implemented: `srt resolve`, wired into `pipeline`'s HOST
      stage as a reverse lookup per discovered IP.)*

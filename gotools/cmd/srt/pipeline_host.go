@@ -23,12 +23,26 @@ import (
 // options.Ports -> "common,uncommon") so each distinct port spec only scans
 // once.
 //
-// Excluded hosts (reverse DNS + route trace only, never actively probed)
-// aren't handled here yet — the config schema has no way to mark a host
-// excluded-but-tracked today; see ROADMAP.md.
+// A host entry with "excluded": true skips all of that (see runExcludedHosts
+// below): reverse DNS + a route trace only, same as the methodology's
+// excluded-but-tracked hosts, never a portscan or a WEB hand-off.
 func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepResult {
 	var steps []stepResult
 	if len(cfg.Host) == 0 {
+		return steps
+	}
+
+	var included []targetEntry
+	var excluded []targetEntry
+	for _, e := range cfg.Host {
+		if e.Excluded {
+			excluded = append(excluded, e)
+		} else {
+			included = append(included, e)
+		}
+	}
+	steps = append(steps, runExcludedHosts(excluded, outDir)...)
+	if len(included) == 0 {
 		return steps
 	}
 
@@ -39,7 +53,7 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepRes
 
 	groups := map[string][]string{}
 	var order []string
-	for _, e := range cfg.Host {
+	for _, e := range included {
 		if e.Target == "" {
 			continue
 		}
@@ -122,6 +136,53 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepRes
 		steps = append(steps, runWebStage(webCfg, webDir)...)
 	}
 
+	return steps
+}
+
+// runExcludedHosts handles "host" entries marked "excluded": true -- the
+// methodology's excluded-but-tracked hosts. They're never actively probed:
+// no portscan, no WEB hand-off, just ipexpand (to resolve any CIDR to
+// concrete IPs) -> reverse DNS -> a best-effort route trace.
+//
+// traceroute needs a raw ICMP socket (CAP_NET_RAW or root); without one, that
+// step is **skipped** rather than failing the run, the same shape `pipeline`
+// already uses for an optional capability (vulnx).
+func runExcludedHosts(entries []targetEntry, outDir string) []stepResult {
+	var steps []stepResult
+	var raw []string
+	for _, e := range entries {
+		if e.Target != "" {
+			raw = append(raw, e.Target)
+		}
+	}
+	if len(raw) == 0 {
+		return steps
+	}
+
+	rawFile := filepath.Join(outDir, "00_excluded_raw.txt")
+	if err := writeLinesFile(rawFile, raw); err != nil {
+		return []stepResult{{Kind: "host", Name: "ipexpand-excluded", Status: "error", Detail: err.Error()}}
+	}
+
+	expandFile := filepath.Join(outDir, "01_excluded_ipexpand.txt")
+	steps = append(steps, runStep("host", "ipexpand-excluded", "", expandFile, func() error {
+		return runIPExpand([]string{"-l", rawFile, "-o", expandFile})
+	}))
+
+	resolveFile := filepath.Join(outDir, "02_excluded_resolve.txt")
+	steps = append(steps, runStep("host", "resolve-excluded", "", resolveFile, func() error {
+		return runResolve([]string{"-l", expandFile, "-reverse", "-o", resolveFile})
+	}))
+
+	if err := checkRawICMPAvailable(); err != nil {
+		steps = append(steps, skipStep("host", "traceroute-excluded", "",
+			fmt.Sprintf("no raw ICMP socket available (%v) -- needs CAP_NET_RAW or root", err)))
+		return steps
+	}
+	traceFile := filepath.Join(outDir, "03_excluded_traceroute.json")
+	steps = append(steps, runStep("host", "traceroute-excluded", "", traceFile, func() error {
+		return runTraceroute([]string{"-l", expandFile, "-json", "-o", traceFile})
+	}))
 	return steps
 }
 

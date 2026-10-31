@@ -20,6 +20,10 @@ type targetEntry struct {
 	Extensions  []string `json:"extensions,omitempty"`
 	SnykURL     string   `json:"snykUrl,omitempty"`
 	SnykVersion string   `json:"snykVersion,omitempty"`
+	// Excluded marks a "host" entry excluded-but-tracked, the way a
+	// Burp/program scope does: never actively probed (no portscan, no WEB
+	// hand-off), only reverse DNS + a route trace. See methodology.md.
+	Excluded bool `json:"excluded,omitempty"`
 }
 
 func (t *targetEntry) UnmarshalJSON(b []byte) error {
@@ -168,6 +172,10 @@ func skipStep(kind, name, target, reason string) stepResult {
 var stepKinds = map[string]string{
 	"ipexpand": "ip", "resolve": "resolve", "domains": "domain", "subdomains": "subdomain",
 	"gau": "gau", "sensitive": "sensitive", "params": "params", "robots": "robots", "snyk": "snyk",
+	"ipexpand-excluded": "ip", "resolve-excluded": "resolve",
+	// traceroute-excluded isn't listed: runTraceroute already saves
+	// structured "route" records itself (see traceroute's sink.add call),
+	// so ingesting its JSON output file line-by-line here would duplicate it.
 }
 
 // ingestStepOutput stores a finished step's line output in the active run.

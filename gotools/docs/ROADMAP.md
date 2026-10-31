@@ -4,6 +4,23 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Excluded-but-tracked hosts + native traceroute
+- **`host` entries can be marked `"excluded": true`** in a `pipeline`
+  config: never portscanned, never handed off to WEB — only `ipexpand` ->
+  `resolve -reverse` -> `srt traceroute`, matching the methodology's
+  excluded-but-tracked hosts exactly.
+- **`srt traceroute`** — a native ICMPv4 route tracer (one echo per TTL,
+  matched to its reply by id/sequence so unrelated ICMP traffic on the host
+  can't be mistaken for it). Needs a raw socket (`CAP_NET_RAW` on Linux, or
+  root); checked once up front and **skipped cleanly** without one — in
+  `traceroute` itself and in `pipeline`'s excluded-host step — the same
+  shape already used for `vulnx` when it's not installed. Not implemented
+  on Windows yet (needs a different raw-socket API — WSASocket/IP_HDRINCL —
+  that nobody's wired up); the binary still cross-compiles there, the
+  command just reports it can't run. IPv4 only for now; `golang.org/x/sys`
+  (already pulled in transitively) is now a direct dependency for the raw
+  socket calls, no new dependency tree.
+
 ### Fuzzer precision & scale
 - **Automatic extension discovery** — `fuzz -ext-auto` combines tech-detect
   with the soft-404 logic: the root page's detected stack (PHP, ASP.NET,
@@ -184,9 +201,7 @@ to reimplement what naabu/httpx/subfinder/katana/nuclei/dalfox would give
 us rather than shell out to them (vulnx is the one exception, now wired up
 — see Shipped above).
 
-- **HOST**: excluded-but-tracked hosts (reverse DNS + route trace, never
-  actively probed) — the `pipeline` schema has no way to mark a `host` entry
-  excluded today, and there's no traceroute helper yet either; a native
+- **HOST**: ~~excluded-but-tracked hosts~~ — done, see Shipped. A native
   "easy wins" pass (default creds/common misconfigs); BeanShell detection
   (no fixed port to match on, needs banner-based detection).
 - **WEB**: Google dorking; context-aware wordlist generation for `fuzz`

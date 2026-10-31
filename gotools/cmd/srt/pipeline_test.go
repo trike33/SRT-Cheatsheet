@@ -296,6 +296,82 @@ func TestHostStageGroupsByPorts(t *testing.T) {
 	}
 }
 
+func TestTargetEntryUnmarshalExcluded(t *testing.T) {
+	var e targetEntry
+	if err := json.Unmarshal([]byte(`{"target":"10.0.0.0/24","excluded":true}`), &e); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Excluded || e.Target != "10.0.0.0/24" {
+		t.Errorf("%+v", e)
+	}
+	var bare targetEntry
+	json.Unmarshal([]byte(`"10.0.0.1"`), &bare)
+	if bare.Excluded {
+		t.Error("a bare-string entry must default to not excluded")
+	}
+}
+
+// TestHostStageSkipsExcludedHosts exercises the real runHostStage with a mix
+// of included and excluded entries: the excluded one must never reach
+// portscan (and so can never be handed off to WEB), only ipexpand + reverse
+// DNS + a best-effort traceroute. Offline-safe: loopback, a tiny closed port
+// range, and traceroute against 127.0.0.1 completes in one hop if a raw ICMP
+// socket is available, or is cleanly skipped otherwise -- either way no
+// network egress.
+func TestHostStageSkipsExcludedHosts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &pipelineConfig{
+		Host: []targetEntry{
+			{Target: "127.0.0.1", Ports: "65530-65531"},                 // included: portscanned
+			{Target: "127.0.0.2", Ports: "65530-65531", Excluded: true}, // excluded: tracked only
+		},
+	}
+	steps := runHostStage(cfg, dir, true)
+
+	var names []string
+	for _, s := range steps {
+		names = append(names, s.Name)
+		if s.Status == "error" {
+			t.Errorf("unexpected error step: %+v", s)
+		}
+	}
+	if countName(names, "portscan") != 1 {
+		t.Errorf("exactly one portscan (the included host) expected, got steps = %v", names)
+	}
+	if countName(names, "ipexpand-excluded") != 1 || countName(names, "resolve-excluded") != 1 {
+		t.Errorf("excluded host should still get ipexpand/resolve, got steps = %v", names)
+	}
+	hasTraceStep := countName(names, "traceroute-excluded") == 1
+	for _, s := range steps {
+		if s.Name == "traceroute-excluded" && s.Status != "ok" && s.Status != "skipped" {
+			t.Errorf("traceroute-excluded should be ok or cleanly skipped, got %+v", s)
+		}
+	}
+	if !hasTraceStep {
+		t.Error("expected a traceroute-excluded step (ok or skipped)")
+	}
+}
+
+func TestHostStageAllExcludedNeverPortscans(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &pipelineConfig{Host: []targetEntry{{Target: "127.0.0.1", Excluded: true}}}
+	steps := runHostStage(cfg, dir, true)
+	for _, s := range steps {
+		if s.Name == "portscan" || s.Name == "web-handoff" {
+			t.Errorf("an all-excluded run must never portscan or hand off to WEB: %+v", s)
+		}
+	}
+}
+
+func TestRunExcludedHostsEmptyIsNoop(t *testing.T) {
+	if steps := runExcludedHosts(nil, t.TempDir()); len(steps) != 0 {
+		t.Errorf("no excluded entries should produce no steps, got %+v", steps)
+	}
+	if steps := runExcludedHosts([]targetEntry{{Target: ""}}, t.TempDir()); len(steps) != 0 {
+		t.Errorf("an entry with no target should produce no steps, got %+v", steps)
+	}
+}
+
 func TestHostStageSkipsWebHandoffWhenDisabled(t *testing.T) {
 	dir := t.TempDir()
 	// Port 0 is never a real open port, so webEntries stays empty either way;

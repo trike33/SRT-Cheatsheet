@@ -115,6 +115,7 @@ exact Burp include/exclude rules, not just a flattened host list.
 | `scope` | web | Burp scope JSON for `fuzz -scope`, overrides `options.scope` |
 | `extensions` | web | extra extensions for `fuzz -e` (repeatable). When omitted, `fuzz -ext-auto` discovers them per host from tech-detect + live checks (disable with `options.autoExtensions: false`) |
 | `snykUrl` + `snykVersion` | web | both set → also runs `snyk -url -version` for that target |
+| `excluded` | host | `true` → excluded-but-tracked: never portscanned or handed off to WEB, only `resolve -reverse` + `traceroute` |
 
 ## Steps
 
@@ -138,9 +139,19 @@ spec only runs once:
      `vulnx search "<banner>"` step (github.com/projectdiscovery/vulnx).
      **Skipped** if `vulnx` isn't installed, never fails the run.
 
-Hosts marked excluded-but-tracked (reverse DNS + route trace only, never
-actively probed) aren't supported yet — there's no way to mark a `host`
-entry excluded in the schema today; see [ROADMAP.md](ROADMAP.md).
+A `host` entry with `"excluded": true` is excluded-but-tracked instead:
+steps 3-4 above don't run for it at all. In their place:
+
+5. `ipexpand` (its own group, separate from the included hosts above).
+6. `resolve -reverse` — same as included hosts, informational only.
+7. `traceroute` — a native ICMP route trace (see
+   [`traceroute`'s docs](commands.md#traceroute)). Needs a raw socket
+   (`CAP_NET_RAW` or root); **skipped** cleanly without one, same shape as
+   the `vulnx` step above.
+
+An excluded host never reaches portscan, so it can never be classified as a
+web service and never gets handed off to WEB — exactly what "never actively
+probed" means.
 
 ### `web` stage → `<outputDir>/web/`
 
