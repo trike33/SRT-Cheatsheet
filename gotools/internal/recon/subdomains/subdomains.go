@@ -31,6 +31,14 @@ func init() {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("subdomains", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"d", "l", "w"}},
+			{Title: "ENUMERATION", Names: []string{"passive", "active"}},
+			{Title: "PERFORMANCE", Names: []string{"c", "timeout", "resolve-timeout"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	domain := fs.String("d", "", "single target domain")
 	list := fs.String("l", "", "file of target domains (or stdin)")
 	wordlist := fs.String("w", "", "wordlist for active DNS brute force (e.g. www, api, mail, ...); omit to skip active enum")

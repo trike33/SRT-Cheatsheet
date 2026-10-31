@@ -35,6 +35,13 @@ type Result struct {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("resolve", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l", "reverse"}},
+			{Title: "PERFORMANCE", Names: []string{"c", "timeout"}},
+			{Title: "OUTPUT", Names: []string{"o", "json"}},
+		})
+	}
 	in := fs.String("l", "", "input file: hostnames, or IPs with -reverse (default: stdin)")
 	reverse := fs.Bool("reverse", false, "treat input as IPs and do a reverse (PTR) lookup instead of forward A/AAAA")
 	conc := fs.Int("c", 40, "concurrent DNS lookups")

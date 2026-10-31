@@ -38,6 +38,12 @@ var domainRe = regexp.MustCompile(`https?://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("domains", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "input file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
@@ -74,6 +80,13 @@ func Run(args []string) error {
 // large subdomain lists.
 func RunScopeCheck(args []string) error {
 	fs := flag.NewFlagSet("scopecheck", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l", "scope"}},
+			{Title: "PERFORMANCE", Names: []string{"c", "timeout"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "hosts/subdomains file (default: stdin)")
 	scopeFile := fs.String("scope", "", "scope file of IPs/CIDRs (required)")
 	out := fs.String("o", "", "output file (default: stdout)")

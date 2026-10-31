@@ -34,6 +34,12 @@ func init() {
 // de-duplicated, numerically sorted list of individual IP addresses.
 func Run(args []string) error {
 	fs := flag.NewFlagSet("ipexpand", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "input scope file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
@@ -94,6 +100,13 @@ func Run(args []string) error {
 // IP so the output feeds straight into `httpx -l -`.
 func RunPorts(args []string) error {
 	fs := flag.NewFlagSet("ipports", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OPTIONS", Names: []string{"ports"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "input IP file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	portsFlag := fs.String("ports", "8080,8443", "comma-separated ports to append")

@@ -72,6 +72,12 @@ func stripRegexChars(s string) string {
 // ready to pipe into httpx or katana.
 func runBurpHosts(args []string) error {
 	fs := flag.NewFlagSet("burphosts", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "Burp scope JSON file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
@@ -126,6 +132,12 @@ func BurpHosts(scope *BurpScope) []string {
 // exclude (red) path listing with wildcard-host collapsing.
 func runBurpScope(args []string) error {
 	fs := flag.NewFlagSet("burpscope", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OUTPUT", Names: []string{"o", "color"}},
+		})
+	}
 	in := fs.String("l", "", "Burp scope JSON file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")

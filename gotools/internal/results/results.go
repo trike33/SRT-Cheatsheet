@@ -10,11 +10,18 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func RunResults(args []string) error {
 	fs := flag.NewFlagSet("results", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "FILTERS", Names: []string{"kind", "status", "host", "port", "q", "run", "history"}},
+			{Title: "OUTPUT", Names: []string{"limit", "json", "keys", "count"}},
+		})
+	}
 	var f queryFilter
 	kind, status := f.bind(fs)
 	jsonOut := fs.Bool("json", false, "JSON lines")
@@ -100,6 +107,11 @@ func listRuns(db *sql.DB, limit int) ([]runInfo, error) {
 
 func RunRuns(args []string) error {
 	fs := flag.NewFlagSet("runs", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "OUTPUT", Names: []string{"n", "json"}},
+		})
+	}
 	n := fs.Int("n", 20, "most recent runs to show (0 = all)")
 	jsonOut := fs.Bool("json", false, "JSON lines")
 	if err := fs.Parse(args); err != nil {

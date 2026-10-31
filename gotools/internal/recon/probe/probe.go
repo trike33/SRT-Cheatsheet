@@ -117,6 +117,13 @@ var signatures = []signature{
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c"}},
+			{Title: "OUTPUT", Names: []string{"o", "json"}},
+		})
+	}
 	in := fs.String("l", "", "target list: URLs or bare hosts (default: stdin)")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-request timeout")
 	insecure := fs.Bool("insecure", true, "skip TLS verification")

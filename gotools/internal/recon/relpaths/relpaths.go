@@ -25,6 +25,11 @@ func init() {
 // tree into an ffuf wordlist.
 func Run(args []string) error {
 	fsFlags := flag.NewFlagSet("relpaths", flag.ExitOnError)
+	fsFlags.Usage = func() {
+		cli.PrintGroupedUsage(fsFlags, []cli.UsageSection{
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	out := fsFlags.String("o", "", "output file (default: stdout)")
 	if err := fsFlags.Parse(args); err != nil {
 		return err

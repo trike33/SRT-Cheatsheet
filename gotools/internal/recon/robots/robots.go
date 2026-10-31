@@ -31,6 +31,13 @@ func init() {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("robots", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c", "hc"}},
+			{Title: "OUTPUT", Names: []string{"color"}},
+		})
+	}
 	in := fs.String("l", "", "file of base URLs (optional; args/stdin also accepted)")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request timeout")

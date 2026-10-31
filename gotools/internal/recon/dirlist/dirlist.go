@@ -36,6 +36,13 @@ var hrefRe = regexp.MustCompile(`(?i)href\s*=\s*["']([^"']+)["']`)
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("dirlist", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OPTIONS", Names: []string{"timeout", "insecure", "depth"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "file of directory-listing URLs (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request timeout")

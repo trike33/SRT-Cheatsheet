@@ -48,6 +48,13 @@ type tracerouteResult struct {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("traceroute", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OPTIONS", Names: []string{"max-hops", "timeout"}},
+			{Title: "OUTPUT", Names: []string{"o", "json"}},
+		})
+	}
 	in := fs.String("l", "", "target list: hosts or IPs (default: stdin)")
 	maxHops := fs.Int("max-hops", 30, "maximum TTL to probe")
 	timeout := fs.Duration("timeout", time.Second, "per-hop wait for a response")

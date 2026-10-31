@@ -82,6 +82,14 @@ func collectWayback(timeout time.Duration, host string, withSubs bool) ([]string
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("gau", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"d", "l", "sub"}},
+			{Title: "FILTERS", Names: []string{"ce", "cp"}},
+			{Title: "PERFORMANCE", Names: []string{"timeout"}},
+			{Title: "OUTPUT", Names: []string{"o", "v"}},
+		})
+	}
 	domain := fs.String("d", "", "single target domain")
 	list := fs.String("l", "", "file of target domains (or stdin)")
 	subs := fs.Bool("sub", false, "include subdomains (*.domain)")
@@ -165,6 +173,12 @@ func Run(args []string) error {
 
 func RunSensitive(args []string) error {
 	fs := flag.NewFlagSet("sensitive", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "OUTPUT", Names: []string{"o"}},
+		})
+	}
 	in := fs.String("l", "", "URL list file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
@@ -185,6 +199,12 @@ func RunSensitive(args []string) error {
 
 func RunParams(args []string) error {
 	fs := flag.NewFlagSet("params", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "FILTERS", Names: []string{"class"}},
+		})
+	}
 	in := fs.String("l", "", "URL list file (default: stdin)")
 	only := fs.String("class", "", "only show one class (e.g. ssrf, sqli, xss, lfi, rce, open-redirect)")
 	if err := fs.Parse(args); err != nil {

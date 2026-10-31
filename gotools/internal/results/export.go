@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
@@ -30,6 +31,12 @@ func safeDir(host string) string {
 
 func RunExport(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "FILTERS", Names: []string{"kind", "status", "host", "port", "q", "run", "history", "limit"}},
+			{Title: "OUTPUT", Names: []string{"o", "format"}},
+		})
+	}
 	var f queryFilter
 	kind, status := f.bind(fs)
 	out := fs.String("o", "", "output directory (tree) or file (json/csv; - for stdout)")

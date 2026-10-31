@@ -132,6 +132,15 @@ func statePrior(s *scanState) []Result {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("portscan", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"l", "p"}},
+			{Title: "PROBES", Names: []string{"banner"}},
+			{Title: "PERFORMANCE", Names: []string{"c", "timeout"}},
+			{Title: "RESUME", Names: []string{"resume"}},
+			{Title: "OUTPUT", Names: []string{"o", "json"}},
+		})
+	}
 	in := fs.String("l", "", "input IP/host list (default: stdin)")
 	portsFlag := fs.String("p", "common", `ports: "common", "uncommon", "all", or explicit e.g. "80,443,8000-9000" (comma-combinable, e.g. "common,uncommon")`)
 	conc := fs.Int("c", 200, "concurrent connection attempts")

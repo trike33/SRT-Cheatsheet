@@ -63,6 +63,22 @@ type fuzzResult struct {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"u", "tl", "w", "e", "ext-auto", "mutate-case", "scope"}},
+			{Title: "TRAFFIC CONTROL", Names: []string{
+				"X", "H", "d", "ua", "proxy", "c", "rate", "rate-global", "hc", "adaptive-conc",
+				"delay", "jitter", "timeout", "retries", "insecure", "random-agent", "auto-throttle",
+				"maxtime", "maxerrors",
+			}},
+			{Title: "MATCHERS / FILTERS", Names: []string{
+				"mc", "fc", "ms", "fs", "mw", "fw", "ml", "fl", "mr", "fr", "ac", "ac-tol", "ac-learn",
+			}},
+			{Title: "RECURSION", Names: []string{"recursion", "depth"}},
+			{Title: "MISCELLANEOUS", Names: []string{"hl", "resume"}},
+			{Title: "OUTPUT", Names: []string{"o", "json", "silent", "color"}},
+		})
+	}
 
 	// Targets & wordlists.
 	var targets stringSlice

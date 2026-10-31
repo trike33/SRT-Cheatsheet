@@ -41,6 +41,12 @@ var (
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("snyk", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"url", "version"}},
+			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure"}},
+		})
+	}
 	snykURL := fs.String("url", "", "Snyk package advisory URL (required)")
 	version := fs.String("version", "", "installed version to test, e.g. 3.7 or 3.7.2 (required)")
 	timeout := fs.Duration("timeout", 30*time.Second, "HTTP timeout")

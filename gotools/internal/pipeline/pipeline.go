@@ -34,6 +34,13 @@ func init() {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("pipeline", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect"}},
+			{Title: "OUTPUT", Names: []string{"o", "color"}},
+		})
+	}
 	cfgPath := fs.String("c", "", "pipeline JSON config file (optional if -host-file and/or -web-scope are given)")
 	hostFile := fs.String("host-file", "", "plain file of IPs/CIDRs, one per line -- merged into the config's \"host\" list")
 	webScope := fs.String("web-scope", "", "Burp scope JSON export -- concrete web hosts (via burphosts) are merged into \"web\", each gated by this scope file, which also becomes the default options.scope")

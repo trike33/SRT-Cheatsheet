@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
@@ -93,6 +94,11 @@ func dbRemove(args []string) error {
 // under -kind.
 func dbImport(args []string) error {
 	fs := flag.NewFlagSet("db import", flag.ExitOnError)
+	fs.Usage = func() {
+		cli.PrintGroupedUsage(fs, []cli.UsageSection{
+			{Title: "OPTIONS", Names: []string{"kind", "name"}},
+		})
+	}
 	kind := fs.String("kind", "", "record kind for plain-text lines (e.g. subdomain); not needed for portscan/fuzz/probe JSON")
 	name := fs.String("name", "", "run name (default: import <file>)")
 	if err := fs.Parse(args); err != nil {
