@@ -311,9 +311,9 @@ func TestHandleKeyQuit(t *testing.T) {
 	if !got.(shellModel).quitting || cmd == nil {
 		t.Error("ctrl+d on empty line should quit")
 	}
-	got, _ = typeLine(newTestModel(), "ab").Update(tea.KeyMsg{Type: tea.KeyCtrlD})
-	if got.(shellModel).quitting {
-		t.Error("ctrl+d on a non-empty line must not quit")
+	got, cmd = typeLine(newTestModel(), "ab").Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if !got.(shellModel).quitting || cmd == nil {
+		t.Error("ctrl+d should quit even with text typed")
 	}
 }
 
@@ -477,5 +477,56 @@ func TestViewIncludesTrafficBox(t *testing.T) {
 	m.lastRun = "last: portscan — 9 req"
 	if v := m.View(); !strings.Contains(v, "portscan") || !strings.Contains(v, "session:") {
 		t.Errorf("View() missing the traffic box: %q", v)
+	}
+}
+
+func TestParseFlagUsage(t *testing.T) {
+	text := "Usage of fuzz:\n  -c int\n    \ttotal workers (default 40)\n  -ac\n    \tauto-calibrate\n  -v\tverbose\n  -u value\n    \ttarget URL\n    \tsecond line\n"
+	got := parseFlagUsage(text)
+	if len(got) != 4 {
+		t.Fatalf("want 4 flags, got %+v", got)
+	}
+	if got[0].Name != "c" || got[0].Arg != "int" || got[0].Desc != "total workers (default 40)" {
+		t.Errorf("flag c: %+v", got[0])
+	}
+	if got[1].Arg != "" || got[2].Desc != "verbose" || got[3].Desc != "target URL second line" {
+		t.Errorf("unexpected: %+v", got)
+	}
+}
+
+func TestFlagHint(t *testing.T) {
+	m := newTestModel()
+	m.helpCache = map[string]*cmdHelp{"fuzz": {flags: parseFlagUsage("  -u value\n    \ttarget URL\n  -ua string\n    \tUser-Agent\n  -c int\n    \tworkers\n")}}
+
+	if h := typeLine(m, "fuzz -c").flagHint(); len(h) != 1 || !strings.Contains(h[0], "workers") {
+		t.Errorf("exact flag hint: %q", h)
+	}
+	if h := typeLine(m, "fuzz -u").flagHint(); len(h) != 2 || !strings.Contains(h[0], "target URL") {
+		t.Errorf("prefix hint should list -u first then -ua: %q", h)
+	}
+	if h := typeLine(m, "fuzz -c ").flagHint(); len(h) != 1 {
+		t.Errorf("value position should remind the flag: %q", h)
+	}
+	if h := typeLine(m, "fuzz").flagHint(); h != nil {
+		t.Errorf("no hint before arguments: %q", h)
+	}
+}
+
+func TestHelpPaneOpensAndCloses(t *testing.T) {
+	m := typeLine(newTestModel(), "help fuzz")
+	nm, cmd := m.runLine()
+	m = nm.(shellModel)
+	if !m.helpOpen || m.helpName != "fuzz" || cmd == nil {
+		t.Fatalf("pane not opened: open=%v name=%q", m.helpOpen, m.helpName)
+	}
+	m.helpCache["fuzz"] = &cmdHelp{text: strings.Repeat("line\n", 100)}
+	m.height = 30
+	m.scrollHelp(10)
+	if m.helpScroll != 10 {
+		t.Errorf("scroll = %d", m.helpScroll)
+	}
+	nm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if nm.(shellModel).helpOpen {
+		t.Error("Esc should close the pane")
 	}
 }

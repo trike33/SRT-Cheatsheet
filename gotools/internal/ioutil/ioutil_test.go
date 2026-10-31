@@ -91,3 +91,22 @@ func TestRangeSet(t *testing.T) {
 		t.Error("invalid range should error")
 	}
 }
+
+func TestFormatClockAndETA(t *testing.T) {
+	if got := FormatClock(83 * time.Second); got != "1:23" {
+		t.Errorf("FormatClock = %q", got)
+	}
+	if got := FormatClock(3725 * time.Second); got != "1:02:05" {
+		t.Errorf("FormatClock hours = %q", got)
+	}
+	// 25 of 100 done in 10s -> 30s left.
+	if left, ok := ETA(25, 100, 10*time.Second); !ok || left != 30*time.Second {
+		t.Errorf("ETA = %v, %v", left, ok)
+	}
+	if _, ok := ETA(0, 100, time.Second); ok {
+		t.Error("no ETA before any progress")
+	}
+	if got := ElapsedETA(0, 100, 5*time.Second); got != "elapsed 0:05 · ETA ?" {
+		t.Errorf("ElapsedETA = %q", got)
+	}
+}

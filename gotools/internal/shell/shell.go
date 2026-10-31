@@ -47,11 +47,6 @@ func Run(args []string) error {
 		return fmt.Errorf("determining srt's own binary path: %w", err)
 	}
 
-	// Printed once, directly, before the Bubble Tea program starts: it
-	// becomes ordinary scrollback, not part of the live-redrawn view below
-	// it -- matching a banner-once-then-a-persistent-input-box layout.
-	fmt.Println(renderBanner())
-
 	m := newShellModel(self)
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return err
@@ -76,6 +71,12 @@ type shellModel struct {
 
 	colorOn bool
 	width   int
+	height  int
+
+	helpCache  map[string]*cmdHelp // per-command usage, nil value = still loading
+	helpOpen   bool                // right-hand help pane visible
+	helpName   string
+	helpScroll int
 
 	traffic     netx.Totals // session total across every command run
 	trafficFile string      // per-command handoff file the child writes to
@@ -131,7 +132,25 @@ func (m shellModel) Init() tea.Cmd { return nil }
 func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case helpLoadedMsg:
+		if m.helpCache == nil {
+			m.helpCache = map[string]*cmdHelp{}
+		}
+		m.helpCache[msg.name] = msg.help
+		return m, nil
+
+	case tea.MouseMsg:
+		if m.helpOpen {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.scrollHelp(-3)
+			case tea.MouseButtonWheelDown:
+				m.scrollHelp(3)
+			}
+		}
 		return m, nil
 
 	case execDoneMsg:
@@ -162,7 +181,14 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		nm, cmd := m.handleKey(msg)
+		if sm, ok := nm.(shellModel); ok {
+			if hc := sm.ensureHint(); hc != nil {
+				cmd = tea.Batch(cmd, hc)
+			}
+			return sm, cmd
+		}
+		return nm, cmd
 	}
 	return m, nil
 }
@@ -177,17 +203,28 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyCtrlD:
-		if len(m.input) == 0 {
-			m.quitting = true
-			return m, tea.Quit
-		}
-		if m.cursor < len(m.input) {
-			m.input = append(m.input[:m.cursor], m.input[m.cursor+1:]...)
-		}
-		return m, nil
+		// Always quits, even with text typed (Delete removes the char under the cursor).
+		m.quitting = true
+		return m, tea.Quit
 
 	case tea.KeyEnter:
 		return m.runLine()
+
+	case tea.KeyEsc:
+		if m.helpOpen {
+			return m, m.closeHelp()
+		}
+		return m, nil
+
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlUp, tea.KeyCtrlDown:
+		if m.helpOpen {
+			delta := map[tea.KeyType]int{
+				tea.KeyPgUp: -m.bodyHeight() + 1, tea.KeyPgDown: m.bodyHeight() - 1,
+				tea.KeyCtrlUp: -1, tea.KeyCtrlDown: 1,
+			}[msg.Type]
+			m.scrollHelp(delta)
+		}
+		return m, nil
 
 	case tea.KeyTab:
 		m.completeCommandName()
@@ -374,7 +411,7 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "clear":
-		return m, tea.Sequence(tea.ClearScreen, tea.Println(renderBanner()))
+		return m, tea.ClearScreen
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
@@ -418,16 +455,17 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "help":
+		topic := helpPaneKey
 		if len(cmdArgs) > 0 {
-			cmdName, cmdArgs = cmdArgs[0], []string{"-h"}
+			topic = cmdArgs[0]
 		}
+		cmd := m.openHelp(topic)
+		return m, cmd
 	}
 
-	if cmdName != "help" {
-		if _, ok := cli.Lookup(cmdName); !ok {
-			m.lastErr = fmt.Errorf("unknown command %q (type \"help\" to list commands)", cmdName)
-			return m, nil
-		}
+	if _, ok := cli.Lookup(cmdName); !ok {
+		m.lastErr = fmt.Errorf("unknown command %q (type \"help\" to list commands)", cmdName)
+		return m, nil
 	}
 
 	return m.launch(cmdName, cmdArgs, false)
@@ -519,7 +557,7 @@ func (m *shellModel) childEnv() []string {
 	if f, err := os.CreateTemp("", "srt-traffic-*.json"); err == nil {
 		f.Close()
 		m.trafficFile = f.Name()
-		env = append(env, netx.EnvTrafficFile+"="+m.trafficFile)
+		env = append(env, netx.EnvTrafficFile+"="+m.trafficFile, netx.EnvQuietTraffic+"=1")
 	}
 	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, store.EnvSave+"=") })
 	if m.save {

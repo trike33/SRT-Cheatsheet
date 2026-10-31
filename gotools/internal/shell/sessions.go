@@ -12,6 +12,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 )
 
 // Resumable sessions. Long-running commands (portscan, fuzz, pipeline) can be
@@ -109,7 +111,20 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 	}
 
 	c := m.cmdFor(cmdName, runArgs)
-	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+	base, snap := m.traffic, m
+	pinned := &pinnedExec{
+		cmd:         c,
+		trafficFile: m.trafficFile,
+		header: func(live netx.Totals, rate float64) string {
+			hm := snap
+			hm.traffic = base
+			hm.traffic.Add(live)
+			hm.lastRun = fmt.Sprintf("running: %s — %s · %.0f req/s", cmdName, live, rate)
+			hm.width = max(hm.width, 80)
+			return hm.renderHeader()
+		},
+	}
+	return m, tea.Exec(pinned, func(err error) tea.Msg {
 		return execDoneMsg{cmd: cmdName, err: err, sess: sess, stateFile: stateFile, dir: cwd}
 	})
 }

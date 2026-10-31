@@ -1,9 +1,12 @@
 package pipeline
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 )
 
 // This is the extension point for driving a third-party tool from the
@@ -32,8 +35,15 @@ func runExternal(kind, name, target, bin string, args []string, outFile string) 
 		}
 		defer out.Close()
 		cmd.Stdout = out
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr // surfaced via Warn so the step summary/log handles it
+		runErr := cmd.Run()
+		for _, l := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+			if l != "" {
+				ioutil.Warn("%s: %s", bin, l)
+			}
+		}
+		return runErr
 	})
 }
 

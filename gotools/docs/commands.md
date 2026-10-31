@@ -653,9 +653,14 @@ probe JSON is recognized automatically; plain lines need `-kind`), and
 Interactive REPL: run commands by name with history and Tab-completion,
 without retyping `srt` each time. Each line dispatches as a real subprocess
 of `srt` itself (never in-process), so a bad flag just prints its own error
-and returns you to the prompt — it never kills the shell session. `help
-<command>` shows that command's real flags (literally runs `<command> -h`),
-and `help` alone lists every command.
+and returns you to the prompt — it never kills the shell session.
+
+Dynamic help: while you type a flag (`fuzz -u`), a hint under the input box
+shows that flag's type and description (taken from the command's own `-h`);
+after a flag that takes a value it reminds you what the value is. `help
+<command>` opens the full flag reference in a scrollable pane on the right
+while you keep typing on the left — PgUp/PgDn, Ctrl+Up/Down or the mouse wheel
+scroll it, Esc closes it. `help` alone lists every command in the same pane.
 
 ```bash
 srt shell

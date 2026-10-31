@@ -60,10 +60,15 @@ func Run(args []string) error {
 	}
 
 	client := netx.NewClient(*timeout, *insecure)
+	unreachable := 0
+	defer func() {
+		ioutil.Warn("checked %d site(s), %d without a robots.txt", len(bases), unreachable)
+	}()
 	for _, base := range bases {
 		allow, disallow, err := parseRobots(client, base)
 		if err != nil {
 			ioutil.Warn("%s: %v", base, err)
+			unreachable++
 			continue
 		}
 		fmt.Println(cm.Wrap(colorout.Cyan, "--- "+base+" ---"))

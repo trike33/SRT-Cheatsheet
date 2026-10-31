@@ -33,8 +33,11 @@ import (
 // sends more than N requests/second, whatever the command's concurrency.
 const (
 	EnvTrafficFile = "SRT_TRAFFIC_FILE"
-	EnvRate        = "SRT_RATE"
-	EnvMaxBytes    = "SRT_MAX_BYTES"
+	// EnvQuietTraffic set to "1" suppresses the child's own "[traffic]" line;
+	// the shell shows live traffic in its pinned header instead.
+	EnvQuietTraffic = "SRT_QUIET_TRAFFIC"
+	EnvRate         = "SRT_RATE"
+	EnvMaxBytes     = "SRT_MAX_BYTES"
 )
 
 // Totals is a traffic snapshot: how many requests, and how many bytes in
@@ -241,6 +244,7 @@ func StartMonitor() (finish func()) {
 		return func() {}
 	}
 	limits := limitsFromEnv()
+	quiet := os.Getenv(EnvQuietTraffic) == "1"
 	var logged atomic.Bool // whether an overwrite-line tick has actually printed
 	persist := func() { writeTrafficFile(file, Snapshot()) }
 	finish = func() {
@@ -274,7 +278,7 @@ func StartMonitor() (finish func()) {
 				os.Exit(3)
 			}
 			persist()
-			if snap.Requests > 0 && time.Since(lastLog) >= 2*time.Second {
+			if !quiet && snap.Requests > 0 && time.Since(lastLog) >= 2*time.Second {
 				lastLog = time.Now()
 				logged.Store(true)
 				colorout.Overwrite(os.Stderr, fmt.Sprintf("[traffic] %s · %.0f req/s", snap, rate))

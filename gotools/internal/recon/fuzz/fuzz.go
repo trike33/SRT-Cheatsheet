@@ -307,6 +307,7 @@ type fuzzEngine struct {
 	deadBases  map[string]struct{}
 
 	reqCount   atomic.Int64
+	planned    atomic.Int64 // jobs queued so far (grows as recursion finds directories)
 	matchCount atomic.Int64
 	skipCount  atomic.Int64 // out of scope
 	errCount   atomic.Int64
@@ -428,6 +429,7 @@ func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int) {
 		e.calibrate(base) // per-directory soft-404 fingerprint
 	}
 	exts := e.extsFor(base) // -e plus -ext-auto's per-host discoveries
+	e.planned.Add(int64(len(e.words) * (1 + len(exts))))
 	for _, w := range e.words {
 		if e.stopped() || e.baseDead(base) {
 			return

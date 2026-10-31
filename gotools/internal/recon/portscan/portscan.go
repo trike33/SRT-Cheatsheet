@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/halt"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
@@ -180,8 +182,12 @@ func Run(args []string) error {
 		scanned = state.mark
 	}
 
+	startScanned := atomic.LoadInt64(&scanned) // resumed probes don't count toward the pace
+	progStart := time.Now()
 	stopProg := make(chan struct{})
+	progDone := make(chan struct{})
 	go func() {
+		defer close(progDone)
 		t := time.NewTicker(2 * time.Second)
 		defer t.Stop()
 		for {
@@ -189,7 +195,9 @@ func Run(args []string) error {
 			case <-stopProg:
 				return
 			case <-t.C:
-				ioutil.Warn("scanned %d/%d, %d open", atomic.LoadInt64(&scanned), total, atomic.LoadInt64(&open))
+				n := atomic.LoadInt64(&scanned)
+				ioutil.Progress("scanned %d/%d, %d open · %s", n, total, atomic.LoadInt64(&open),
+					ioutil.ElapsedETA(n-startScanned, total-startScanned, time.Since(progStart)))
 			}
 		}
 	}()
@@ -252,6 +260,8 @@ func Run(args []string) error {
 	}
 
 	close(stopProg)
+	<-progDone
+	colorout.ClearLine(os.Stderr)
 	ioutil.Warn("done: %d open port(s) across %d host(s), %d port(s) each", open, len(hosts), len(ports))
 	return nil
 }

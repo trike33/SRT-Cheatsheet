@@ -402,6 +402,7 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 	defer t.Stop()
 	prev := map[string]int64{}
 	last := time.Now()
+	started := last
 	frame := 0
 	for {
 		select {
@@ -415,8 +416,10 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 			e.flushResume()
 
 			var b strings.Builder
-			fmt.Fprintf(&b, "%s reqs=%d matches=%d skip=%d err=%d",
-				colorout.Spinner(frame), e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
+			done := e.reqCount.Load() + e.skipCount.Load()
+			fmt.Fprintf(&b, "%s %s · reqs=%d matches=%d skip=%d err=%d",
+				colorout.Spinner(frame), ioutil.ElapsedETA(done, e.planned.Load(), now.Sub(started)),
+				e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load())
 			frame++
 
 			hosts := e.sched.hostsSnapshot()

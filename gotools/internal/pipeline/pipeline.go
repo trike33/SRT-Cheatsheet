@@ -55,10 +55,10 @@ func Run(args []string) error {
 		if cwd, err := os.Getwd(); err == nil {
 			*hostFile, *webScope = scope.DetectScopeFiles(cwd)
 			if *hostFile != "" {
-				fmt.Fprintf(os.Stderr, "pipeline: auto-detected host scope %s\n", *hostFile)
+				fmt.Fprintf(os.Stderr, "pipeline: auto-detected host scope %s\n", filepath.Base(*hostFile))
 			}
 			if *webScope != "" {
-				fmt.Fprintf(os.Stderr, "pipeline: auto-detected web scope %s\n", *webScope)
+				fmt.Fprintf(os.Stderr, "pipeline: auto-detected web scope %s\n", filepath.Base(*webScope))
 			}
 		}
 	}
@@ -102,6 +102,10 @@ func Run(args []string) error {
 		}
 	}
 
+	pipelineLogPath = filepath.Join(outDir, "pipeline.log")
+	if !*resume {
+		os.Remove(pipelineLogPath)
+	}
 	activeCheckpoint = loadCheckpoint(filepath.Join(outDir, "checkpoint.json"), *resume)
 	if *resume {
 		ioutil.Warn("resuming: completed steps in %s will be skipped", outDir)

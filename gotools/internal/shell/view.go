@@ -3,11 +3,13 @@ package shell
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/scope"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/version"
 )
 
@@ -23,11 +25,11 @@ const (
 	colorGreen  = "114"
 )
 
-// renderBanner builds the once-only startup banner: a small block-art mark
-// in the glyph's own gradient, plus version/build/cwd, in a bordered box.
-// Printed directly (not through the Bubble Tea program), so it's ordinary
-// scrollback, not part of the view that redraws on every keystroke below it.
-func renderBanner() string {
+// renderHeader builds the live header: a small block-art mark in the glyph's
+// own gradient with version/build/cwd, beside a project box (project, the
+// scope files auto-detection recognized, and the session traffic). It is part
+// of the redrawn view, so the traffic numbers stay current.
+func (m shellModel) renderHeader() string {
 	glyph := []string{
 		"  ▄███▄  ",
 		" ███████ ",
@@ -49,11 +51,40 @@ func renderBanner() string {
 
 	row := lipgloss.JoinHorizontal(lipgloss.Center, glyphBlock, "  ", info)
 
-	return lipgloss.NewStyle().
+	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(colorIndigo)).
-		Padding(0, 2).
-		Render(row)
+		Padding(0, 2)
+	left := box.Render(row)
+
+	// The project box takes the rest of the row; on a narrow terminal it
+	// drops below the version box instead.
+	avail := m.width - lipgloss.Width(left) - 1
+	if avail < 50 {
+		return lipgloss.JoinVertical(lipgloss.Left, left, box.Width(max(m.width-2, 20)).Render(m.renderProjectBox()))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Center, left, " ", box.Width(avail-2).Render(m.renderProjectBox()))
+}
+
+// renderProjectBox is the header's second box: the current project, which
+// scope files auto-detection recognized in it (the same detection `pipeline`
+// uses when given no explicit scope), and the permanent traffic summary.
+func (m shellModel) renderProjectBox() string {
+	wd, _ := os.Getwd()
+	host, web := scope.DetectScopeFiles(wd)
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(colorGray))
+	found := func(label, path string) string {
+		if path == "" {
+			return dim.Render(label + " (none detected)")
+		}
+		return dim.Render(label+" ") + lipgloss.NewStyle().Foreground(lipgloss.Color(colorGreen)).Render(filepath.Base(path))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPurple)).Render("project: "+projectName(wd)),
+		found("host scope:", host),
+		found("web scope: ", web),
+		dim.Render(m.renderTraffic()),
+	)
 }
 
 // versionLine mirrors the version package's own format, so the banner and
@@ -223,16 +254,6 @@ func inputBoxStyle(colorOn bool, width int) lipgloss.Style {
 	return s.Border(lipgloss.NormalBorder())
 }
 
-// trafficBoxStyle is dimmer than inputBoxStyle (gray border, not indigo) so
-// the two boxes read as "active input" vs. "passive info" at a glance.
-func trafficBoxStyle(colorOn bool, width int) lipgloss.Style {
-	s := lipgloss.NewStyle().Padding(0, 1).Width(width)
-	if colorOn {
-		return s.Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorGray)).Foreground(lipgloss.Color(colorGray))
-	}
-	return s.Border(lipgloss.NormalBorder())
-}
-
 func dimStyle(colorOn bool) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if colorOn {
@@ -251,17 +272,25 @@ func (m shellModel) View() string {
 	prompt := promptStyle(m.colorOn).Render("srt> ")
 	highlighted := m.renderHighlightedLine()
 
-	boxWidth := m.width - 4
+	boxWidth := m.mainWidth() - 4
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
 	inputBox := inputBoxStyle(m.colorOn, boxWidth).Render(prompt + highlighted)
-	trafficBox := trafficBoxStyle(m.colorOn, boxWidth).Render(m.renderTraffic())
 
-	return inputBox + "\n" + trafficBox + "\n" + m.renderStatus()
+	main := inputBox + "\n"
+	if hint := m.flagHint(); len(hint) > 0 {
+		main += strings.Join(hint, "\n") + "\n"
+	}
+	main += m.renderStatus()
+
+	if !m.helpOpen {
+		return m.renderHeader() + "\n" + main
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, main, " ", m.renderHelpPane())
 }
 
-// renderTraffic is the permanent traffic box's content: the session total
+// renderTraffic is the header's traffic summary: the session total
 // (every command run so far) and the last command's own numbers, always
 // visible -- unlike the status line's notice, this never clears on the next
 // keystroke, so you don't have to catch it before you start typing again.
@@ -287,8 +316,7 @@ func (m shellModel) renderStatus() string {
 	if m.colorOn {
 		colorState = "on"
 	}
-	wd, _ := os.Getwd()
-	left := fmt.Sprintf("project: %s · color: %s · history: %d", projectName(wd), colorState, len(m.history))
+	left := fmt.Sprintf("color: %s · history: %d", colorState, len(m.history))
 	if m.notice != "" {
 		left = m.notice
 	}
@@ -296,10 +324,14 @@ func (m shellModel) renderStatus() string {
 		left = classStyle(classUnknown, m.colorOn).Render("! " + m.lastErr.Error())
 	}
 	right := `"help" for commands · "exit" or Ctrl+D to quit`
+	if m.helpOpen {
+		right = "" // the pane's own title says how to close it
+	}
 
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	w := m.mainWidth()
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 1 {
 		gap = 1
 	}
-	return dimStyle(m.colorOn).Render(left + strings.Repeat(" ", gap) + right)
+	return dimStyle(m.colorOn).MaxWidth(w).Render(left + strings.Repeat(" ", gap) + right)
 }

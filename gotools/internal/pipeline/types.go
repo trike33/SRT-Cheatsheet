@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
@@ -140,11 +142,14 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	key := stepKey(kind, name, target, output)
 	if activeCheckpoint != nil && activeCheckpoint.has(key) {
 		if _, statErr := os.Stat(output); output == "" || statErr == nil {
+			reportStep(name, target, "resumed (already completed)", nil)
 			return stepResult{Kind: kind, Name: name, Target: target, Output: output, Status: "ok", Detail: "resumed: already completed in a previous run", Duration: "0s"}
 		}
 	}
 	start := time.Now()
+	stopCapture := ioutil.CaptureWarnings()
 	err := fn()
+	warnings := stopCapture()
 	sr := stepResult{
 		Kind:     kind,
 		Name:     name,
@@ -156,7 +161,13 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	if err != nil {
 		sr.Status = "error"
 		sr.Detail = err.Error()
+		reportStep(name, target, "error: "+err.Error(), warnings)
 	} else {
+		summary := "ok"
+		if n := len(warnings); n > 0 {
+			summary = warnings[n-1] // commands end with their own result line ("found 3 subdomain(s)...")
+		}
+		reportStep(name, target, summary, warnings)
 		if activeCheckpoint != nil {
 			activeCheckpoint.mark(key)
 		}
@@ -192,5 +203,41 @@ func ingestStepOutput(step, output string) {
 		if strings.TrimSpace(l) != "" {
 			store.CurrentSink().Add(store.TextRecord(kind, l))
 		}
+	}
+}
+
+// pipelineLogPath, when set, receives every warning a step printed, so the
+// terminal only needs the one-line summary reportStep gives.
+var pipelineLogPath string
+
+// reportStep prints a step's one-line result and logs its full warning
+// output. The last warning is the step's own summary; the rest are counted
+// and left in the log instead of scrolling past.
+func reportStep(name, target, summary string, warnings []string) {
+	colorout.ClearLine(os.Stderr) // erase any live progress line first
+	label := name
+	switch name { // their "target" is just the port spec, which says nothing here
+	case "ipexpand", "resolve", "portscan":
+		target = ""
+	}
+	if target != "" {
+		label += " " + target
+	}
+	line := fmt.Sprintf("[%s] %s", label, summary)
+	if n := len(warnings) - 1; n > 0 && pipelineLogPath != "" {
+		line += fmt.Sprintf(" (+%d message(s) in %s)", n, filepath.Base(pipelineLogPath))
+	}
+	fmt.Fprintln(os.Stderr, line)
+
+	if pipelineLogPath == "" || len(warnings) == 0 {
+		return
+	}
+	f, err := os.OpenFile(pipelineLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	for _, w := range warnings {
+		fmt.Fprintf(f, "[%s] %s\n", label, w)
 	}
 }

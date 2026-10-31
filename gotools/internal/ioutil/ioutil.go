@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
@@ -91,9 +92,48 @@ func WriteLines(w io.Writer, lines []string) error {
 // print sections directly rather than through Output().
 func Stdout() io.Writer { return os.Stdout }
 
+var (
+	warnMu   sync.Mutex
+	warnSink *[]string // non-nil while CaptureWarnings is active
+)
+
 // Warn prints a formatted message to stderr so stdout stays clean for piping.
+// While CaptureWarnings is active the message is collected instead.
 func Warn(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "[!] "+format+"\n", a...)
+	msg := fmt.Sprintf(format, a...)
+	warnMu.Lock()
+	if warnSink != nil {
+		*warnSink = append(*warnSink, msg)
+		warnMu.Unlock()
+		return
+	}
+	warnMu.Unlock()
+	fmt.Fprintf(os.Stderr, "[!] %s\n", msg)
+}
+
+// CaptureWarnings diverts every Warn call into a list until the returned
+// function is called, which restores normal printing and returns what was
+// collected. It lets a caller that runs many commands in-process (pipeline)
+// replace their per-item chatter with one summary line. Live progress
+// (Progress, the heartbeat, traffic counters) is not captured.
+func CaptureWarnings() (stop func() []string) {
+	var got []string
+	warnMu.Lock()
+	warnSink = &got
+	warnMu.Unlock()
+	return func() []string {
+		warnMu.Lock()
+		defer warnMu.Unlock()
+		warnSink = nil
+		return got
+	}
+}
+
+// Progress shows a live status line that overwrites itself on a terminal
+// (one line per call when redirected). Unlike Warn it is never captured, so
+// a long step keeps showing its progress even inside a pipeline.
+func Progress(format string, a ...any) {
+	colorout.Overwrite(os.Stderr, "[!] "+fmt.Sprintf(format, a...))
 }
 
 // HeartbeatInterval is how often StartHeartbeat reassures the user a command
@@ -237,4 +277,36 @@ func ErrMissing(msg string) error { return errors.New(msg) }
 // ContextTimeout is a thin wrapper so command code stays terse.
 func ContextTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
+}
+
+// FormatClock renders a duration as m:ss, or h:mm:ss from an hour up, for
+// live elapsed/ETA counters.
+func FormatClock(d time.Duration) string {
+	s := int(d.Round(time.Second) / time.Second)
+	if s < 0 {
+		s = 0
+	}
+	if s >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", s/3600, s%3600/60, s%60)
+	}
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
+}
+
+// ETA estimates the time left from the average pace so far: done of total
+// units in elapsed. ok is false until there is enough signal to guess (no
+// progress yet, or nothing left to do).
+func ETA(done, total int64, elapsed time.Duration) (left time.Duration, ok bool) {
+	if done <= 0 || total <= done || elapsed <= 0 {
+		return 0, false
+	}
+	return time.Duration(float64(elapsed) * float64(total-done) / float64(done)), true
+}
+
+// ElapsedETA formats "elapsed 1:23 · ETA 4:10" ("ETA ?" while unknown).
+func ElapsedETA(done, total int64, elapsed time.Duration) string {
+	eta := "?"
+	if left, ok := ETA(done, total, elapsed); ok {
+		eta = FormatClock(left)
+	}
+	return fmt.Sprintf("elapsed %s · ETA %s", FormatClock(elapsed), eta)
 }
