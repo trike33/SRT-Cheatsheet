@@ -207,7 +207,7 @@ func TestApplyGlobalRate(t *testing.T) {
 	t.Setenv(envRate, "")
 	for _, args := range [][]string{{"srt", "-rate", "25", "version"}, {"srt", "--rate=25", "version"}} {
 		os.Args = args
-		applyGlobalRate()
+		applyGlobalFlags()
 		if len(os.Args) != 2 || os.Args[1] != "version" {
 			t.Errorf("flag not stripped: %v", os.Args)
 		}

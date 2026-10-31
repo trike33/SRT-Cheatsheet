@@ -21,8 +21,9 @@ The originals hardcoded filenames, mixed status output into stdout, and were slo
 on big lists. `srt` fixes that:
 
 - **One static binary.** `go build` and scp it to a VPS and run it. No
-  `pip install`, no venv, no runtime deps — and only one build-time
-  dependency (`golang.org/x/term`, for `shell`'s line editor).
+  `pip install`, no venv, no runtime deps — and only a few build-time
+  dependencies, all vendored by `go build` (Bubble Tea for `shell`, and a pure-Go
+  SQLite driver for the results database — no cgo, still cross-compiles).
 - **Pipe-first.** Every command reads from `-l <file>` **or stdin**, and writes to
   stdout **or `-o <file>`**. Status/progress goes to **stderr**, so stdout stays
   clean for the next tool in the pipe.
@@ -111,6 +112,7 @@ Run `srt <command> -h` for flags. Each maps to a script in this repo:
 | `relpaths` | `legacy/relative_paths.py` | List files under a dir as relative paths (ffuf wordlist) |
 | `fuzz` | **new** | Scope-aware concurrent directory/file bruteforcer with precise traffic control |
 | `pipeline` | **new** | JSON-driven HOST/WEB assessment orchestrator |
+| `results` / `runs` / `export` / `db` | **new** | Save scan results to a per-project SQLite db (`-save`, always on in `pipeline` and the shell), query them (`results`), list runs, and export a per-host directory tree, CSV or JSON |
 | `shell` | **new** | Interactive REPL (the default when you run bare `srt` in a terminal): run commands by name, with history, Tab-completion, and `cd`/`project` switching |
 | `version` | **new** | Print version + build info |
 

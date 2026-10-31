@@ -104,6 +104,17 @@ Running log of what's shipped and what's queued, newest first.
   a tight cap, high `-c` concurrency queues behind the gate, so waiting time
   counts toward a request's timeout — lower `-c` or raise `-timeout` if you
   see spurious timeouts.
+- **Results database** — `pipeline`, the `shell`, and `-save` on any command
+  persist results to a per-project SQLite file (`.srt/srt.db`; pure-Go driver
+  `modernc.org/sqlite`, so `srt` stays one static binary, ~+8 MB). Generic
+  `records` table (kind, key, host, port, url, status, length, JSON data)
+  grouped into `runs`; **runs are never overwritten**, so re-running the
+  methodology keeps history (that backlog item is done too). `srt results`
+  (filters + table/JSON/keys/count; default view = newest observation of each
+  result), `srt runs`, `srt export` (per-host directory tree, CSV, JSON) and
+  `srt db path|stats|import|rm`. Global flags `-save` and `-db <path>`
+  (`$SRT_SAVE`, `$SRT_DB`). Structured for portscan/fuzz/probe; other
+  commands are saved from stdout line by line. Flushed on Ctrl+C/halts.
 - **Stop & resume** — an interrupted scan continues instead of restarting.
   - `portscan -resume <file>`: progress is one watermark over the fixed
     host-major probe sequence (plus every open port, written the moment it's
@@ -205,10 +216,6 @@ so they aren't lost:
   parameter to the vulnerability classes worth testing it for.
 - **A payload library**, sourced from PayloadsAllTheThings, for active
   testing modules to draw on (ties into auto-detect-and-send below).
-- **Persist scan results to a local SQLite db**, fetchable via native `srt`
-  commands, instead of only flat files/JSON.
-- **Re-run the full methodology without overwriting old scans** — versioned
-  or timestamped runs (likely the same db as above).
 - **Detect error-based and time-based behaviors** — blind SQLi/command
   injection style signals during active testing.
 - **Screenshot discovered websites** (gowitness/aquatone-style).

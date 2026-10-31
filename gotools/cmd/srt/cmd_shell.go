@@ -67,6 +67,7 @@ type shellModel struct {
 	traffic     trafficTotals // session total across every command run
 	trafficFile string        // per-command handoff file the child writes to
 	limits      trafficLimits // halt ceilings applied to each command via env
+	save        bool          // record each command's results in the project database
 	rate        float64       // req/s throttle applied to each command (0 = unlimited)
 	prevDir     string        // previous project, for `cd -`
 	notice      string        // transient info line (not an error)
@@ -102,6 +103,7 @@ func newShellModel(self string) shellModel {
 		rate = v // `srt -rate N` / $SRT_RATE picked the shell's cap
 	}
 	return shellModel{
+		save:    true,
 		rate:    rate,
 		self:    self,
 		names:   shellCommandNames(),
@@ -362,6 +364,18 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
+	case "save":
+		switch {
+		case len(cmdArgs) == 1 && (cmdArgs[0] == "on" || cmdArgs[0] == "off"):
+			m.save = cmdArgs[0] == "on"
+			m.notice = "save: " + cmdArgs[0] + " (results database: " + dbPath() + ")"
+		case len(cmdArgs) == 0:
+			state := map[bool]string{true: "on", false: "off"}[m.save]
+			m.notice = "save: " + state + " (results database: " + dbPath() + ")"
+		default:
+			m.lastErr = errMissing("usage: save [on|off]")
+		}
+		return m, nil
 	case "sessions":
 		m.listSessions()
 		return m, nil
@@ -434,11 +448,11 @@ func (m *shellModel) applyColorCommand(args []string) {
 // shellCommandNames lists every registered command plus the shell's own
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
-	names := make([]string, 0, len(registry)+11)
+	names := make([]string, 0, len(registry)+12)
 	for n := range registry {
 		names = append(names, n)
 	}
-	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume", "save")
 	sort.Strings(names)
 	return names
 }
@@ -495,6 +509,10 @@ func (m *shellModel) childEnv() []string {
 		f.Close()
 		m.trafficFile = f.Name()
 		env = append(env, envTrafficFile+"="+m.trafficFile)
+	}
+	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, envSave+"=") })
+	if m.save {
+		env = append(env, envSave+"=1")
 	}
 	// Drop any inherited SRT_RATE so `limit rate off` really lifts the cap.
 	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, envRate+"=") })

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"sort"
@@ -34,42 +35,89 @@ func register(c *command) {
 	registry[c.name] = c
 }
 
-// applyGlobalRate handles the global request-rate cap: a leading
-// `-rate N` / `--rate N` / `-rate=N` before the command, else $SRT_RATE.
-// It strips the flag from os.Args and arms the process-wide gate. Setting
-// the env var too lets the shell (and anything it spawns) inherit the cap.
-func applyGlobalRate() {
-	raw := os.Getenv(envRate)
-	if len(os.Args) > 1 {
+// applyGlobalFlags consumes the leading global flags -- `-rate N`, `-save`,
+// `-db <path>`, in any order, before the command name -- and strips them from
+// os.Args. -rate arms the process-wide request cap (also $SRT_RATE); -save
+// stores the command's results in the project database (also $SRT_SAVE=1);
+// -db points at a different database file (also $SRT_DB). Each is mirrored
+// into the environment so the shell and anything it spawns inherit it.
+func applyGlobalFlags() {
+	for len(os.Args) > 1 {
 		a := os.Args[1]
-		for _, p := range []string{"-rate", "--rate"} {
-			switch {
-			case a == p && len(os.Args) > 2:
-				raw = os.Args[2]
-				os.Args = append(os.Args[:1], os.Args[3:]...)
-			case strings.HasPrefix(a, p+"="):
-				raw = strings.TrimPrefix(a, p+"=")
-				os.Args = append(os.Args[:1], os.Args[2:]...)
-			default:
-				continue
-			}
+		name, val, hasVal := strings.Cut(a, "=")
+		name = strings.TrimLeft(name, "-")
+		if !strings.HasPrefix(a, "-") || (name != "rate" && name != "save" && name != "db") {
 			break
 		}
+		consumed := 1
+		if name != "save" && !hasVal {
+			if len(os.Args) < 3 {
+				fmt.Fprintf(os.Stderr, "srt: -%s needs a value\n", name)
+				os.Exit(2)
+			}
+			val, consumed = os.Args[2], 2
+		}
+		os.Args = append(os.Args[:1], os.Args[1+consumed:]...)
+		switch name {
+		case "rate":
+			os.Setenv(envRate, val)
+		case "save":
+			os.Setenv(envSave, "1")
+		case "db":
+			os.Setenv("SRT_DB", val)
+		}
 	}
-	if raw == "" {
-		return
+	if raw := os.Getenv(envRate); raw != "" {
+		v, err := parseRate(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "srt: %v\n", err)
+			os.Exit(2)
+		}
+		gate.set(v)
 	}
-	v, err := parseRate(raw)
+}
+
+const envSave = "SRT_SAVE"
+
+// structuredSaveCommands record rich results themselves (see sink.add call
+// sites); every other command is saved by teeing its stdout line by line.
+var structuredSaveCommands = map[string]bool{"portscan": true, "fuzz": true, "probe": true, "pipeline": true}
+
+// dbCommands read the database, so they are never run "with -save".
+var dbCommands = map[string]bool{"runs": true, "results": true, "export": true, "db": true, "shell": true}
+
+// teeStdoutToSink mirrors the command's stdout to the real stdout and stores
+// each line as a record of the given kind. The returned func restores stdout
+// and waits for the copy to finish.
+func teeStdoutToSink(kind string) func() {
+	r, w, err := os.Pipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "srt: %v\n", err)
-		os.Exit(2)
+		return func() {}
 	}
-	gate.set(v)
-	os.Setenv(envRate, raw)
+	real := os.Stdout
+	os.Stdout = w
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+		for sc.Scan() {
+			line := sc.Text()
+			fmt.Fprintln(real, line)
+			if strings.TrimSpace(line) != "" {
+				sink.add(textRecord(kind, line))
+			}
+		}
+	}()
+	return func() {
+		os.Stdout = real
+		w.Close()
+		<-done
+	}
 }
 
 func main() {
-	applyGlobalRate()
+	applyGlobalFlags()
 	if len(os.Args) < 2 {
 		// Bare `srt` opens the interactive shell; with no TTY (a script,
 		// a pipe) there's nobody to type at it, so fall back to usage.
@@ -97,6 +145,18 @@ func main() {
 		os.Exit(2)
 	}
 
+	// -save / $SRT_SAVE: record this command's results in the project database.
+	var untee func()
+	if os.Getenv(envSave) != "" && !dbCommands[os.Args[1]] && sink == nil {
+		if _, err := startSink(os.Args[1], os.Args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "srt: -save: %v\n", err)
+			os.Exit(1)
+		}
+		if !structuredSaveCommands[os.Args[1]] {
+			untee = teeStdoutToSink(os.Args[1])
+		}
+	}
+
 	// Under the shell, meter traffic and enforce its limits (no-op otherwise).
 	var finishTraffic func()
 	if os.Args[1] != "shell" {
@@ -109,6 +169,10 @@ func main() {
 		})
 	}
 	err := c.run(os.Args[2:])
+	if untee != nil {
+		untee()
+	}
+	sink.close()
 	if finishTraffic != nil {
 		finishTraffic()
 	}
@@ -121,8 +185,9 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "srt - bug-bounty recon helpers (SRT-Cheatsheet)")
 	fmt.Fprintln(os.Stderr, "\nUsage:")
-	fmt.Fprintln(os.Stderr, "  srt [-rate <req/s>] <command> [flags]")
+	fmt.Fprintln(os.Stderr, "  srt [-rate <req/s>] [-save] [-db <path>] <command> [flags]")
 	fmt.Fprintln(os.Stderr, "\n  -rate (or $SRT_RATE) caps the whole process's request rate, whatever the command or concurrency.")
+	fmt.Fprintln(os.Stderr, "  -save (or $SRT_SAVE=1) stores the command's results in .srt/srt.db; see 'srt results', 'srt export'.")
 	fmt.Fprintln(os.Stderr, "\nMost commands read a list from -l <file> or stdin and write to stdout or -o <file>.")
 	fmt.Fprintln(os.Stderr, "\nCommands:")
 

@@ -1,1 +1,4 @@
 .srt/
+gotools/srt
+gotools/cmd/srt/srt
+*.test

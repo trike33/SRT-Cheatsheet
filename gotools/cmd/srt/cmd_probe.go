@@ -115,6 +115,9 @@ func runProbe(args []string) error {
 		}(i, t)
 	}
 	wg.Wait()
+	for _, r := range results {
+		sink.add(probeRecord(r))
+	}
 
 	w, err := output(*out)
 	if err != nil {

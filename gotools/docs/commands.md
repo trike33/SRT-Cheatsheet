@@ -15,6 +15,7 @@ Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
 [params](#params) · [dirlist](#dirlist) · [robots](#robots) · [snyk](#snyk) ·
 [relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
+[results](#results) · [runs](#runs) · [export](#export) · [db](#db) ·
 [shell](#shell) · [version](#version)
 
 ---
@@ -529,6 +530,92 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 # no JSON config needed at all -- straight from a plain IP file and a Burp scope export
 srt pipeline -host-file scope-ips.txt -web-scope target_scope.json -o ./out
 ```
+
+---
+
+## Saving results: results · runs · export · db
+
+Scan results can persist to a local SQLite database instead of living only in
+flat files. It is per project — `<cwd>/.srt/srt.db`, so `cd` between engagements
+and each keeps its own — or wherever `SRT_DB` / `-db <path>` points. Nothing
+is overwritten: every command or pipeline execution is a **run**, and old runs
+stay queryable.
+
+**What gets saved.** `pipeline` always saves (opt out with `-no-db`). The
+`shell` saves everything by default (`save off` / `save on`). For a single
+command from the plain CLI, put the global flag **before** the command name:
+
+```bash
+srt -save portscan -l scope.txt -p common,uncommon
+srt -save fuzz -u https://target/FUZZ -w words.txt -ac
+srt -save -db ~/acme.db probe -l hosts.txt
+```
+
+`portscan`, `fuzz`, `probe` and `pipeline` record structured results (ports with
+banners; URLs with status/length/words/lines; probe title/server/tech). Any
+other command is saved by capturing its stdout line by line (kind = the command
+name) — so use stdout, not `-o`, with `-save`. Results from older runs or other
+tools load with `srt db import`.
+
+### results
+
+Query what's saved. Without `-run`, you get the **newest observation of every
+result across all runs** (a merged "current picture"); `-run N` is exactly one
+run, `-history` is every observation.
+
+| Flag | Meaning |
+|---|---|
+| `-kind` | comma list: `port`, `url`, `probe`, `subdomain`, `domain`, `ip`, `resolve`, `gau`, `params`, `sensitive`, `robots`, … |
+| `-host` | host substring |
+| `-port` | exact port |
+| `-status` | HTTP statuses/ranges, e.g. `200,301,400-499` |
+| `-q` | substring in the key or data (banner, title, tech) |
+| `-run` / `-history` | one run / all observations |
+| `-limit` | max rows |
+| `-json` / `-keys` / `-count` | JSON lines / bare keys (pipe-friendly) / just the number |
+
+```bash
+srt results -kind port -host 10.0.0.5
+srt results -kind url -status 200,403 -keys | httpx -title
+srt results -kind probe -q wordpress
+srt results -run 3 -count
+```
+
+### runs
+
+`srt runs` lists saved runs (id, start time, record count, the command line);
+`-n` limits how many, `-json` for machine output.
+
+### export
+
+Write results out as files. The default **tree** gives each host a directory:
+
+```
+out/
+  summary.json            counts per kind, host count, which run
+  hosts.txt               every host seen
+  by-kind/<kind>.txt      all keys of a kind, across hosts
+  10.0.0.5/ports.txt      "22  SSH-2.0-OpenSSH_8.9"
+  a.example/probe.txt     "200  https://a.example  Home | PHP"
+  a.example/urls.txt      "status  length  url"
+  a.example/urls-200.txt  bare URLs per status (also urls-403.txt, …)
+  dev.a.example/subdomain.txt
+```
+
+```bash
+srt export -o ./acme-out                    # tree of everything
+srt export -o ./acme-out -run 3 -kind url   # one run, one kind
+srt export -format csv  -o results.csv      # or json; "-" for stdout
+```
+
+It takes the same filters as `results`.
+
+### db
+
+`srt db path` (where the database is), `srt db stats` (runs, records, size,
+per-kind counts), `srt db import [-kind K] [-name N] <file>` (portscan/fuzz/
+probe JSON is recognized automatically; plain lines need `-kind`), and
+`srt db rm <run-id>`.
 
 ---
 

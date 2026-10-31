@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -148,12 +149,36 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	if err != nil {
 		sr.Status = "error"
 		sr.Detail = err.Error()
-	} else if activeCheckpoint != nil {
-		activeCheckpoint.mark(key)
+	} else {
+		if activeCheckpoint != nil {
+			activeCheckpoint.mark(key)
+		}
+		ingestStepOutput(name, output)
 	}
 	return sr
 }
 
 func skipStep(kind, name, target, reason string) stepResult {
 	return stepResult{Kind: kind, Name: name, Target: target, Status: "skipped", Detail: reason}
+}
+
+// stepKinds maps pipeline steps that write plain line files to the record
+// kind they're stored under. portscan/fuzz/probe record structured results
+// themselves as they run (see sink.add), so they're not listed.
+var stepKinds = map[string]string{
+	"ipexpand": "ip", "resolve": "resolve", "domains": "domain", "subdomains": "subdomain",
+	"gau": "gau", "sensitive": "sensitive", "params": "params", "robots": "robots", "snyk": "snyk",
+}
+
+// ingestStepOutput stores a finished step's line output in the active run.
+func ingestStepOutput(step, output string) {
+	kind, ok := stepKinds[step]
+	if sink == nil || !ok || output == "" {
+		return
+	}
+	for _, l := range mustLines(output) {
+		if strings.TrimSpace(l) != "" {
+			sink.add(textRecord(kind, l))
+		}
+	}
 }

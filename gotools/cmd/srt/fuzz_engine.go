@@ -309,6 +309,7 @@ func (e *fuzzEngine) softFiltered(base, word string, meta respMeta) bool {
 
 // emit writes a matched result to stdout (and the output file if configured).
 func (e *fuzzEngine) emit(target string, meta respMeta) {
+	sink.add(fuzzRecord(target, meta))
 	var snippets, plain []string
 	if e.hlRe != nil {
 		snippets, plain = e.buildHighlights(meta.body)

@@ -33,6 +33,7 @@ func runPipeline(args []string) error {
 	noWebHandoff := fs.Bool("no-web-handoff", false, "don't automatically run the WEB stage against web services the HOST stage discovers")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
 	resume := fs.Bool("resume", false, "continue an interrupted run in -o: skip steps already completed and resume portscan/fuzz mid-way (without it, a fresh run starts over)")
+	noDB := fs.Bool("no-db", false, "don't record this run's results in the project database (.srt/srt.db, see `srt results`)")
 	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,6 +77,18 @@ func runPipeline(args []string) error {
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
+	}
+
+	if sink == nil && !*noDB {
+		name := "pipeline"
+		if cfg.Name != "" {
+			name += " " + cfg.Name
+		}
+		if _, err := startSink(name, append([]string{"pipeline"}, args...)); err != nil {
+			warn("results database unavailable, continuing without saving: %v", err)
+		} else {
+			defer sink.close()
+		}
 	}
 
 	activeCheckpoint = loadCheckpoint(filepath.Join(outDir, "checkpoint.json"), *resume)

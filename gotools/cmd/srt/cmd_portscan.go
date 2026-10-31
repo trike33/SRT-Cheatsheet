@@ -215,6 +215,7 @@ func runPortscan(args []string) error {
 
 	var outMu sync.Mutex
 	for r := range results {
+		sink.add(portRecord(r))
 		outMu.Lock()
 		if *jsonOut {
 			b, _ := json.Marshal(r)
