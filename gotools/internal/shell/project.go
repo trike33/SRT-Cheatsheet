@@ -69,17 +69,34 @@ func (m *shellModel) switchProject(target string) error {
 	return nil
 }
 
-// completeDirArg completes the directory being typed as the 2nd word of
-// cd/project: a unique match completes fully (with a trailing /), several
-// matches extend to their longest common prefix.
-func (m *shellModel) completeDirArg() {
-	line := string(m.input[:m.cursor])
-	sp := strings.IndexByte(line, ' ')
-	if sp < 0 {
+// completePathArg completes a file or directory path for whichever word the
+// cursor is in, bash-style: cd/project still restrict matches to directories
+// only (their sole argument is always a path to switch into), every other
+// command completes both files and directories, so wordlists, scope files
+// and other path arguments at any position get the same tab-completion a
+// shell gives them. A unique match completes fully (directories get a
+// trailing /), several matches extend to their longest common prefix.
+func (m *shellModel) completePathArg() {
+	line := m.input[:m.cursor]
+	wordStart := len(line)
+	for wordStart > 0 && line[wordStart-1] != ' ' && line[wordStart-1] != '\t' {
+		wordStart--
+	}
+	if wordStart == 0 {
+		// Cursor is still in the first word (the command name itself);
+		// completeCommandName owns that case.
 		return
 	}
-	cmd, arg := line[:sp], strings.TrimLeft(line[sp:], " ")
-	if (cmd != "cd" && cmd != "project") || strings.ContainsAny(arg, " \"'") {
+
+	cmdEnd := 0
+	for cmdEnd < len(m.input) && m.input[cmdEnd] != ' ' && m.input[cmdEnd] != '\t' {
+		cmdEnd++
+	}
+	cmdName := string(m.input[:cmdEnd])
+	dirsOnly := cmdName == "cd" || cmdName == "project"
+
+	arg := string(line[wordStart:])
+	if strings.ContainsAny(arg, " \"'") {
 		return
 	}
 
@@ -97,24 +114,29 @@ func (m *shellModel) completeDirArg() {
 		if !strings.HasPrefix(e.Name(), base) || (strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(base, ".")) {
 			continue
 		}
-		if e.IsDir() || isDirLink(filepath.Join(listDir, e.Name())) {
-			matches = append(matches, e.Name())
+		isDir := e.IsDir() || isDirLink(filepath.Join(listDir, e.Name()))
+		if dirsOnly && !isDir {
+			continue
 		}
+		name := e.Name()
+		if isDir {
+			name += "/"
+		}
+		matches = append(matches, name)
 	}
 	if len(matches) == 0 {
 		return
 	}
 	sort.Strings(matches)
 	comp := commonPrefix(matches)
-	if len(matches) == 1 {
-		comp += "/"
-	}
 	if comp == base {
 		return
 	}
 	newArg := dirPart + comp
-	m.input = append([]rune(cmd+" "+newArg), m.input[m.cursor:]...)
-	m.cursor = len([]rune(cmd + " " + newArg))
+	prefix := string(m.input[:wordStart])
+	rest := m.input[m.cursor:]
+	m.input = append([]rune(prefix+newArg), rest...)
+	m.cursor = len([]rune(prefix + newArg))
 }
 
 func isDirLink(p string) bool {

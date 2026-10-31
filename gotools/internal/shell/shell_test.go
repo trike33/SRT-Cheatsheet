@@ -389,16 +389,17 @@ func TestCdErrors(t *testing.T) {
 	}
 }
 
-func TestCompleteDirArg(t *testing.T) {
+func TestCompletePathArg(t *testing.T) {
 	root := t.TempDir()
 	for _, d := range []string{"project1", "project2", "other", ".hidden"} {
 		os.Mkdir(filepath.Join(root, d), 0o755)
 	}
 	os.WriteFile(filepath.Join(root, "projfile"), nil, 0o644)
+	os.WriteFile(filepath.Join(root, "projfile2"), nil, 0o644)
 
 	run := func(line string) string {
 		m := typeLine(newTestModel(), line)
-		m.completeDirArg()
+		m.completePathArg()
 		return string(m.input)
 	}
 	if got := run("cd " + root + "/oth"); got != "cd "+root+"/other/" {
@@ -408,13 +409,27 @@ func TestCompleteDirArg(t *testing.T) {
 		t.Errorf("common prefix: %q", got)
 	}
 	if got := run("cd " + root + "/projf"); got != "cd "+root+"/projf" {
-		t.Errorf("files must not complete: %q", got)
+		t.Errorf("files must not complete for cd/project: %q", got)
 	}
 	if got := run("cd " + root + "/."); got != "cd "+root+"/.hidden/" {
 		t.Errorf("hidden: %q", got)
 	}
-	if got := run("fuzz " + root + "/oth"); got != "fuzz "+root+"/oth" {
-		t.Errorf("only cd/project complete: %q", got)
+	if got := run("fuzz " + root + "/oth"); got != "fuzz "+root+"/other/" {
+		t.Errorf("non-cd/project commands also complete paths: %q", got)
+	}
+	if got := run("fuzz " + root + "/projfile"); got != "fuzz "+root+"/projfile" {
+		t.Errorf("files complete for non-cd/project commands: %q", got)
+	}
+	if got := run("fuzz -w " + root + "/oth"); got != "fuzz -w "+root+"/other/" {
+		t.Errorf("completion applies to a later word, not just the 2nd: %q", got)
+	}
+}
+
+func TestCompletePathArgCommandNameUntouched(t *testing.T) {
+	m := typeLine(newTestModel(), "fu")
+	m.completePathArg()
+	if string(m.input) != "fu" {
+		t.Errorf("cursor still in the command word, completeCommandName owns that: %q", m.input)
 	}
 }
 

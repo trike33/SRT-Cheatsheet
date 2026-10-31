@@ -128,6 +128,18 @@ Running log of what's shipped and what's queued, newest first.
   is always visible and never clears on the next keystroke, instead of a
   few seconds in the transient status-line notice that disappeared the
   moment you started typing the next command.
+- **Bash-style Tab completion over paths** — Tab in the shell completes
+  files and directories for whichever word the cursor is in, not just a
+  2nd-word `cd`/`project` argument: any command's path argument (a
+  wordlist, a scope file, an output path) completes the same way a real
+  shell's does. `cd`/`project` still restrict matches to directories only,
+  since their one argument is always a place to switch into; every other
+  command completes both. A unique match completes fully (directories get
+  a trailing `/`), several matches extend to their longest common prefix.
+- **`clear` redraws the startup banner** — the shell's `clear` command
+  still clears the terminal, then reprints the banner (version, build,
+  cwd) that was otherwise only ever shown once at startup and lost for
+  good the moment the screen was cleared.
 - **Global request-rate cap** — `srt -rate 50 <command>` (or `$SRT_RATE`)
   throttles the whole process to N requests/second, whatever the command or
   its concurrency: every HTTP request, TCP connect and DNS lookup takes a

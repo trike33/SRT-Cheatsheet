@@ -191,7 +191,7 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyTab:
 		m.completeCommandName()
-		m.completeDirArg()
+		m.completePathArg()
 		return m, nil
 
 	case tea.KeyBackspace:
@@ -374,7 +374,7 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "clear":
-		return m, tea.ClearScreen
+		return m, tea.Sequence(tea.ClearScreen, tea.Println(renderBanner()))
 	case "color":
 		m.applyColorCommand(cmdArgs)
 		return m, nil
