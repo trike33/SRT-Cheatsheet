@@ -4,6 +4,28 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Host↔web scope cross-link in `pipeline`
+- **`pipeline`'s WEB stage filters discovered domains/subdomains through
+  the HOST stage's IP scope** — closes the gap `playbook.md`'s manual flow
+  always had and `pipeline` didn't: a domain/subdomain that resolves
+  outside the engagement's IP range (a third-party CDN, a stale DNS record)
+  is dropped before it reaches `subdomains`/`gau`/`probe`, the same way
+  `srt domains -l ... | srt scopecheck -scope scopeips` does by hand.
+  The cross-link runs twice, matching the playbook's order: once on the
+  domains `domains` extracts from `web` targets (before `subdomains` runs),
+  and once on the subdomains that step discovers (before they're merged
+  into the list `gau`/`probe` operate on). `robots`/`fuzz` are unaffected —
+  they already only ever touch the explicit `web` targets, never the
+  discovered list.
+  The "host IP scope" is built from the same invocation's config `host`
+  list (both included and excluded-but-tracked entries — excluded just
+  means never actively probed, not out of scope), written once to
+  `<outputDir>/host_scope.txt`. With no `host` targets in the config (a
+  web-only run), the cross-link is skipped entirely and both stages stay as
+  independent as before this existed. A `scopecheck` failure (e.g. a
+  malformed host entry) fails open rather than silently dropping every
+  domain over a broken check.
+
 ### Content-based sensitive-info classification (`sensitive -content`)
 - **`sensitive -content`** — fetches every input URL and scans the response
   body against a small, high-precision set of secret/credential signatures
@@ -295,11 +317,12 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   against `pipeline`-discovered subdomains, opt-in given the traffic-volume
   implications (today only `gau`/`probe` auto-widen to them).
 - **`pipeline` integration** — as each of the above lands, extend
-  `pipeline_host.go`/`pipeline_web.go` to call it in the order
-  `methodology.md` lays out.
-- **Host↔web scope cross-link in `pipeline`** — `playbook.md` filters
-  domains discovered on the web side through `scopecheck` against the host
-  stage's IP scope; the pipeline's two stages are independent today.
+  `internal/pipeline/host.go`/`internal/pipeline/web.go` to call it in the
+  order `methodology.md` lays out. `sensitive -content` itself is done (see
+  Shipped) but the WEB stage's `sensitive` call there still doesn't pass
+  `-content` — fetching every URL in a merged `gau` dump is enough added
+  traffic that it should be an opt-in `options` field, not the default.
+- ~~Host↔web scope cross-link in `pipeline`~~ — done, see Shipped.
 
 ### Active testing & UX (from engagement notes, not started)
 

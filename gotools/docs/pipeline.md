@@ -10,9 +10,11 @@ see [No JSON config needed](#no-json-config-needed) if you only have a
 plain host list and/or a Burp scope file.
 
 It's still a subset of the full methodology — a few steps (Google dorking,
-context-aware wordlist generation, content-based sensitive-info
-classification, a native "easy wins" misconfiguration pass, ...) aren't
-implemented yet. See [The methodology this is meant to
+context-aware wordlist generation, a native "easy wins" misconfiguration
+pass, ...) aren't implemented yet, and one that is (`sensitive -content`'s
+content-based secret/credential classification) isn't wired into the WEB
+stage's `sensitive` call here yet — run it by hand over `web/02_all_urls.txt`
+for now. See [The methodology this is meant to
 drive](#the-methodology-this-is-meant-to-drive) below.
 
 ## Quick start
@@ -160,32 +162,43 @@ stage discovered and handed off (written to a `web/` subfolder of that
 `host`-stage run rather than a separate top-level one):
 
 1. `domains` — extract domains from any URL-shaped targets.
-2. `subdomains` — per domain: passive (crt.sh) always, active DNS brute
+2. `scopecheck` (**host↔web cross-link**) — when this invocation's config
+   has `host` targets too, the extracted domains are filtered through
+   `scopecheck` against the **host stage's own IP scope** (its `host` list,
+   included *and* excluded-but-tracked entries — an excluded host is still
+   part of the engagement's IP range), the same way `playbook.md`'s manual
+   flow keeps "only the ones that resolve back into scope." A domain that
+   resolves outside that range (a third-party CDN, a stale DNS record) is
+   dropped before it reaches `subdomains`/`gau`/`probe`. **Skipped** with no
+   `host` targets in the config — a web-only config/run behaves exactly as
+   before this existed, the two stages stay independent. A `scopecheck`
+   failure (e.g. a malformed scope entry) fails open: nothing is dropped.
+3. `subdomains` — per domain: passive (crt.sh) always, active DNS brute
    force too if `options.subdomainsWordlist` is set. **Skipped** if no
-   domain was extracted. Discovered subdomains widen the domain list step 3
-   (`probe`) and step 4 (`gau`) run against — `robots`/`fuzz` stay scoped to
-   the explicit `web` targets, so this never silently multiplies active
-   traffic (see [ROADMAP.md](ROADMAP.md) for making that opt-in-expandable).
-3. `probe` — recon-on-root (title/status/content-length/`Server`/tech-detect)
+   domain was extracted (or none survived step 2). Discovered subdomains
+   widen the domain list step 4 (`probe`) and step 5 (`gau`) run against —
+   `robots`/`fuzz` stay scoped to the explicit `web` targets, so this never
+   silently multiplies active traffic (see [ROADMAP.md](ROADMAP.md) for
+   making that opt-in-expandable).
+3b. `scopecheck` again — the newly discovered subdomains go through the same
+   host-scope filter before being merged into the domain list, matching
+   `playbook.md`'s "subdomains ... kept in scope, then probed." Same
+   skip/fail-open behavior as step 2.
+4. `probe` — recon-on-root (title/status/content-length/`Server`/tech-detect)
    for every domain and discovered subdomain. **Skipped** if none exist.
-4. `gau` — per domain **and** discovered subdomain, archived URLs from the
+5. `gau` — per domain **and** discovered subdomain, archived URLs from the
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.
-5. `sensitive` + `params` — classify the merged URL list. **Skipped** if step
-   4 produced no URLs.
-6. `robots` — per target, fetch `robots.txt` and probe its paths.
-7. `fuzz` — per target with a resolved wordlist (see the field table above).
+6. `sensitive` + `params` — classify the merged URL list. **Skipped** if step
+   5 produced no URLs.
+7. `robots` — per target, fetch `robots.txt` and probe its paths.
+8. `fuzz` — per target with a resolved wordlist (see the field table above).
    **Skipped** per-target if no wordlist resolves.
-8. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
+9. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
    **Skipped** otherwise.
 
 A skipped step is recorded in the manifest with a `detail` explaining why —
 it never aborts the run.
-
-`scopecheck` isn't part of either stage yet: in `playbook.md` it filters
-*domains discovered during the web stage* against the *host stage's* IP
-scope, which is a cross-stage link left for later (see ROADMAP.md) rather
-than folded into v1.
 
 ## Output layout
 
@@ -203,7 +216,11 @@ than folded into v1.
   web/
     00_targets.txt
     01_domains.txt
+    scopecheck_domains_in.txt     # host<->web cross-link; only when "host" targets exist
+    scopecheck_domains_out.txt    #   (in = pre-filter, out = kept-in-scope)
     01b_subdomains_<domain>.txt  # one per domain
+    scopecheck_subdomains_in.txt  # same cross-link, over discovered subdomains
+    scopecheck_subdomains_out.txt
     01c_probe_targets.txt
     01c_probe.json
     02_gau_<domain>.txt      # one per domain + discovered subdomain
@@ -252,11 +269,13 @@ skipped:
 
 Today's `host`/`web` stages implement most of the flow described in
 [methodology.md](methodology.md) — port scanning, reverse DNS, service
-classification, the web hand-off, subdomain enumeration, recon-on-root, and
-vulnx CVE lookups are all there. A few pieces aren't implemented yet:
-context-aware wordlist generation, Google dorking, content-based
-sensitive-info classification, and a native "easy wins" misconfiguration
-pass. As each lands it gets added to `pipeline_host.go`/`pipeline_web.go` in
+classification, the web hand-off, subdomain enumeration, recon-on-root,
+the host↔web IP-scope cross-link, and vulnx CVE lookups are all there. A
+few pieces aren't implemented yet: context-aware wordlist generation,
+Google dorking, and a native "easy wins" misconfiguration pass; wiring
+`sensitive`'s content-based classification (`-content`) into this stage is
+also still open (the command itself already does it). As each lands it
+gets added to `internal/pipeline/host.go`/`internal/pipeline/web.go` in
 the order `methodology.md` lays out. See [ROADMAP.md](ROADMAP.md) for what's
 queued.
 

@@ -304,7 +304,7 @@ func TestHostStageGroupsByPorts(t *testing.T) {
 			{Target: "invalid-not-an-ip-or-cidr", Ports: "65530-65531"},
 		},
 	}
-	steps := runHostStage(cfg, dir, true)
+	steps := runHostStage(cfg, dir, true, "")
 
 	var names []string
 	for _, s := range steps {
@@ -349,7 +349,7 @@ func TestHostStageSkipsExcludedHosts(t *testing.T) {
 			{Target: "127.0.0.2", Ports: "65530-65531", Excluded: true}, // excluded: tracked only
 		},
 	}
-	steps := runHostStage(cfg, dir, true)
+	steps := runHostStage(cfg, dir, true, "")
 
 	var names []string
 	for _, s := range steps {
@@ -378,7 +378,7 @@ func TestHostStageSkipsExcludedHosts(t *testing.T) {
 func TestHostStageAllExcludedNeverPortscans(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &pipelineConfig{Host: []targetEntry{{Target: "127.0.0.1", Excluded: true}}}
-	steps := runHostStage(cfg, dir, true)
+	steps := runHostStage(cfg, dir, true, "")
 	for _, s := range steps {
 		if s.Name == "portscan" || s.Name == "web-handoff" {
 			t.Errorf("an all-excluded run must never portscan or hand off to WEB: %+v", s)
@@ -401,7 +401,7 @@ func TestHostStageSkipsWebHandoffWhenDisabled(t *testing.T) {
 	// this just checks the flag plumbing doesn't panic and produces no
 	// unexpected error steps when handoff is turned off.
 	cfg := &pipelineConfig{Host: []targetEntry{{Target: "127.0.0.1", Ports: "65534"}}}
-	steps := runHostStage(cfg, dir, false)
+	steps := runHostStage(cfg, dir, false, "")
 	for _, s := range steps {
 		if s.Status == "error" {
 			t.Errorf("unexpected error step: %+v", s)

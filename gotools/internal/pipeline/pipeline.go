@@ -118,6 +118,11 @@ func Run(args []string) error {
 		ioutil.Warn("resuming: completed steps in %s will be skipped", outDir)
 	}
 
+	hostScopeFile, err := writeHostScopeFile(cfg, outDir)
+	if err != nil {
+		return err
+	}
+
 	m := manifest{Name: cfg.Name, StartedAt: time.Now(), Kinds: kinds}
 	for _, k := range kinds {
 		stageDir := filepath.Join(outDir, k)
@@ -127,9 +132,9 @@ func Run(args []string) error {
 		ioutil.Warn("=== %s stage ===", k)
 		switch k {
 		case "host":
-			m.Steps = append(m.Steps, runHostStage(cfg, stageDir, !*noWebHandoff)...)
+			m.Steps = append(m.Steps, runHostStage(cfg, stageDir, !*noWebHandoff, hostScopeFile)...)
 		case "web":
-			m.Steps = append(m.Steps, runWebStage(cfg, stageDir)...)
+			m.Steps = append(m.Steps, runWebStage(cfg, stageDir, hostScopeFile)...)
 		}
 	}
 	m.EndedAt = time.Now()
@@ -226,6 +231,32 @@ func assemblePipelineConfig(cfgPath, hostFile, webScope, name string) (*pipeline
 	return cfg, nil
 }
 
+// writeHostScopeFile builds the host<->web scope cross-link's IP scope file
+// from cfg.Host's targets (both included and excluded-but-tracked -- an
+// excluded host is still part of the engagement's IP range, just never
+// actively probed) and writes it to outDir. Returns "" when cfg.Host has no
+// targets, so runWebStage's cross-link stays a no-op for a web-only config
+// exactly as it did before this existed -- it keys off the config having a
+// host IP list at all, not off whether the "host" stage is actually
+// selected to run in this invocation (host scope is descriptive data, not
+// a sign that stage must execute now).
+func writeHostScopeFile(cfg *pipelineConfig, outDir string) (string, error) {
+	var targets []string
+	for _, e := range cfg.Host {
+		if e.Target != "" {
+			targets = append(targets, e.Target)
+		}
+	}
+	if len(targets) == 0 {
+		return "", nil
+	}
+	path := filepath.Join(outDir, "host_scope.txt")
+	if err := writeLinesFile(path, targets); err != nil {
+		return "", fmt.Errorf("writing host scope file: %w", err)
+	}
+	return path, nil
+}
+
 // writeLinesFile writes lines to a new file at path, reusing ioutil.WriteLines.
 func writeLinesFile(path string, lines []string) error {
 	f, err := os.Create(path)
@@ -273,7 +304,9 @@ func captureStdout(fn func() error) (string, error) {
 
 var pipelineStageOrder = map[string][]string{
 	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged, bannered -> vulnx)"},
-	"web":  {"domains", "subdomains", "probe", "gau", "sensitive", "params", "robots", "fuzz", "snyk (only targets with snykUrl/snykVersion)"},
+	"web": {"domains", "scopecheck (only when \"host\" targets give it an IP scope to check)", "subdomains",
+		"scopecheck (same)", "probe", "gau", "sensitive", "params", "robots", "fuzz",
+		"snyk (only targets with snykUrl/snykVersion)"},
 }
 
 func printDryRun(cfg *pipelineConfig, kinds []string, outDir string) {

@@ -23,7 +23,18 @@ import (
 // domains -> gau -> sensitive/params -> robots -> fuzz -> snyk (optional).
 // A target missing something a later step needs (e.g. no wordlist for fuzz)
 // is recorded as "skipped", never treated as a fatal error for the run.
-func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
+//
+// hostScopeFile, when non-empty, is a plain IP/CIDR file built from the same
+// invocation's "host" targets (see pipeline.go). playbook.md's manual flow
+// runs every domain and subdomain it discovers through `scopecheck` against
+// that host IP scope before probing it ("keep only the ones that resolve
+// back into scope") -- a domain that happens to resolve outside the
+// engagement's IP range (a third-party CDN, a stale DNS record) is dropped
+// from gau/probe/sensitive/params instead of silently getting the same
+// traffic as an in-scope one. Empty when there's no host IP scope to check
+// against (a web-only config/run), in which case every domain found is
+// used exactly as before -- the two stages stay independent.
+func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []stepResult {
 	var steps []stepResult
 	if len(cfg.Web) == 0 {
 		return steps
@@ -48,6 +59,7 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 		return domains.Run([]string{"-l", targetsFile, "-o", domainsFile})
 	}))
 	ds, _ := ioutil.InputLines(domainsFile)
+	ds, steps = filterDomainsInScope(ds, hostScopeFile, outDir, "domains", steps)
 
 	// --- 01b: subdomains (passive always; active too if options.subdomainsWordlist
 	// is set), per domain, merged. Widens the domain list gau (below) and probe
@@ -58,6 +70,7 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 		steps = append(steps, skipStep("web", "subdomains", "", "no domains extracted from targets"))
 	} else {
 		discovered := map[string]struct{}{}
+		var discoveredAll []string
 		for _, d := range ds {
 			d := d
 			subFile := filepath.Join(outDir, "01b_subdomains_"+safeName(d)+".txt")
@@ -75,9 +88,11 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 					continue
 				}
 				discovered[s] = struct{}{}
-				allDomains = append(allDomains, s)
+				discoveredAll = append(discoveredAll, s)
 			}
 		}
+		discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
+		allDomains = append(allDomains, discoveredAll...)
 	}
 	allDomains = ioutil.DedupStrings(allDomains)
 
@@ -258,6 +273,43 @@ func runWebStage(cfg *pipelineConfig, outDir string) []stepResult {
 	}
 
 	return steps
+}
+
+// filterDomainsInScope is the host<->web scope cross-link: when
+// hostScopeFile is set, it runs names through domains.RunScopeCheck against
+// that host IP scope and returns only the ones that resolve into it (plus
+// the steps slice with a "scopecheck" step result appended); with no scope
+// file, or nothing to check, names is returned unchanged and steps
+// untouched -- the two stages stay fully independent, same as before this
+// existed.
+//
+// A scopecheck failure (e.g. a malformed scope file) fails open: names is
+// returned unchanged rather than silently dropping every domain because the
+// check itself couldn't run.
+func filterDomainsInScope(names []string, hostScopeFile, outDir, label string, steps []stepResult) ([]string, []stepResult) {
+	if hostScopeFile == "" || len(names) == 0 {
+		return names, steps
+	}
+
+	inFile := filepath.Join(outDir, "scopecheck_"+label+"_in.txt")
+	outFile := filepath.Join(outDir, "scopecheck_"+label+"_out.txt")
+	if err := writeLinesFile(inFile, names); err != nil {
+		return names, append(steps, stepResult{Kind: "web", Name: "scopecheck", Target: label, Status: "error", Detail: err.Error()})
+	}
+
+	sr := runStep("web", "scopecheck", label, outFile, func() error {
+		return domains.RunScopeCheck([]string{"-l", inFile, "-scope", hostScopeFile, "-o", outFile})
+	})
+	steps = append(steps, sr)
+	if sr.Status != "ok" {
+		return names, steps // fail open: don't drop anything over a broken check
+	}
+
+	kept, err := ioutil.InputLines(outFile)
+	if err != nil {
+		return names, steps
+	}
+	return kept, steps
 }
 
 // resolveWordlist picks the wordlist for one fuzz call: the target's own

@@ -31,7 +31,10 @@ import (
 // A host entry with "excluded": true skips all of that (see runExcludedHosts
 // below): reverse DNS + a route trace only, same as the methodology's
 // excluded-but-tracked hosts, never a portscan or a WEB hand-off.
-func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepResult {
+//
+// hostScopeFile, when non-empty, is forwarded to the WEB stage it hands
+// services off to -- see runWebStage's own doc comment for what it does.
+func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScopeFile string) []stepResult {
 	var steps []stepResult
 	if len(cfg.Host) == 0 {
 		return steps
@@ -138,7 +141,7 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool) []stepRes
 			break
 		}
 		webCfg := &pipelineConfig{Name: cfg.Name, Web: dedupTargetEntries(webEntries), Options: cfg.Options}
-		steps = append(steps, runWebStage(webCfg, webDir)...)
+		steps = append(steps, runWebStage(webCfg, webDir, hostScopeFile)...)
 	}
 
 	return steps
