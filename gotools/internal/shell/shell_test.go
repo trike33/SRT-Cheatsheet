@@ -669,3 +669,30 @@ func TestScrollbackScrollsAndClamps(t *testing.T) {
 		t.Errorf("scroll below newest: %d", m.outScroll)
 	}
 }
+
+func TestCleanLineStripsControlSequencesKeepsColour(t *testing.T) {
+	got := cleanLine("\x1b[2J\x1b[Hpre\rprog 50%\x1b[31m red\x1b[0m\x1b]0;title\x07\t\n")
+	if got != "prog 50%\x1b[31m red\x1b[0m" {
+		t.Errorf("cleanLine = %q", got)
+	}
+}
+
+func TestOutputIsKeptCleanAndCounted(t *testing.T) {
+	m := newTestModel()
+	m.colorOn = false
+	m.appendCmdOut([]string{"", "", "a", "", "", "[!] slow host", "srt: boom", "srt: HALTED — limit", ""})
+	want := []string{"a", "", "[!] slow host", "srt: boom", "srt: HALTED — limit", ""}
+	if strings.Join(m.out, "|") != strings.Join(want, "|") {
+		t.Errorf("out = %q, want %q", m.out, want)
+	}
+	if m.errCount != 1 || m.warnCount != 2 {
+		t.Errorf("errors=%d warnings=%d, want 1 and 2", m.errCount, m.warnCount)
+	}
+	m.endBlock()
+	if len(m.out) != len(want) {
+		t.Error("endBlock must not add a second blank line")
+	}
+	if got := plainText(m.renderCounts()); got != "errors 1 · warnings 2" {
+		t.Errorf("renderCounts = %q", got)
+	}
+}

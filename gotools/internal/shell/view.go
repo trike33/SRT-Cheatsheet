@@ -86,7 +86,22 @@ func (m shellModel) renderProjectBox() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPurple)).Render("project: "+projectName(wd))+dim.Render("  scope  ")+scopes,
 		dim.Render(m.renderTraffic()),
+		m.renderCounts(),
 	)
+}
+
+// renderCounts is the header's error/warning tally for the session; each
+// number only lights up once it is non-zero.
+func (m shellModel) renderCounts() string {
+	dim := dimStyle(m.colorOn)
+	count := func(label string, n int, c tokClass) string {
+		s := fmt.Sprintf("%s %d", label, n)
+		if n == 0 {
+			return dim.Render(s)
+		}
+		return classStyle(c, m.colorOn).Render(s)
+	}
+	return count("errors", m.errCount, classUnknown) + dim.Render(" · ") + count("warnings", m.warnCount, classFlag)
 }
 
 // versionLine mirrors the version package's own format, so the banner and

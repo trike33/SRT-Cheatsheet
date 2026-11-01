@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type runState struct {
 	lines chan []string // batches of output lines; closed when the output ends
 	done  chan error    // the command's exit status, sent after lines closes
 	sigs  int           // Ctrl+C presses so far: first interrupts, then kills
+	errs  int           // error lines seen in its output
 
 	name      string
 	sess      *sessionRec
@@ -87,15 +89,101 @@ func (rs *runState) begin() tea.Cmd {
 	}
 }
 
+// escapeSeq matches terminal escape sequences; keepSGR leaves colours alone
+// and drops everything else (cursor movement, screen clears, titles, ...) that
+// would corrupt the fixed layout around the output area.
+var escapeSeq = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\x1b[=>78cDEHMZ]`)
+
+func keepSGR(seq string) string {
+	if strings.HasPrefix(seq, "\x1b[") && strings.HasSuffix(seq, "m") {
+		return seq
+	}
+	return ""
+}
+
 // cleanLine drops the newline, resolves carriage-return rewrites (progress
-// lines keep only their last state) and expands tabs, which the width math
-// of wrapping can't handle.
+// lines keep only their last state), expands tabs (which the width math of
+// wrapping can't handle) and strips control sequences other than colours.
 func cleanLine(s string) string {
 	s = strings.TrimRight(s, "\r\n")
 	if i := strings.LastIndex(s, "\r"); i >= 0 {
 		s = s[i+1:]
 	}
-	return strings.ReplaceAll(s, "\t", "    ")
+	s = escapeSeq.ReplaceAllStringFunc(s, keepSGR)
+	s = strings.ReplaceAll(s, "\t", "    ")
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 && r != 0x1b || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimRight(s, " ")
+}
+
+// plainText is s without colour codes, for classifying a line.
+func plainText(s string) string { return escapeSeq.ReplaceAllString(s, "") }
+
+type lineKind int
+
+const (
+	kindPlain lineKind = iota
+	kindWarning
+	kindError
+)
+
+// classifyLine recognises srt's own conventions: warnings print as "[!] msg"
+// (ioutil.Warn) and command failures as "srt: msg" (a limit halt, "srt:
+// HALTED", is a deliberate stop and only a warning).
+func classifyLine(line string) lineKind {
+	t := strings.TrimSpace(plainText(line))
+	switch {
+	case strings.HasPrefix(t, "[!]"):
+		return kindWarning
+	case strings.HasPrefix(t, "srt: HALTED"):
+		return kindWarning
+	case strings.HasPrefix(t, "srt: "):
+		return kindError
+	}
+	return kindPlain
+}
+
+// appendCmdOut adds a command's output lines: blank runs collapse to one,
+// there is never a leading blank, errors and warnings are counted for the
+// header and coloured.
+func (m *shellModel) appendCmdOut(lines []string) {
+	var keep []string
+	last := len(m.out) == 0 || m.out[len(m.out)-1] == ""
+	for _, l := range lines {
+		if l == "" {
+			if last {
+				continue
+			}
+			last = true
+			keep = append(keep, l)
+			continue
+		}
+		last = false
+		switch classifyLine(l) {
+		case kindError:
+			m.errCount++
+			if m.run != nil {
+				m.run.errs++
+			}
+			l = classStyle(classUnknown, m.colorOn).Render(l)
+		case kindWarning:
+			m.warnCount++
+			l = classStyle(classFlag, m.colorOn).Render(l)
+		}
+		keep = append(keep, l)
+	}
+	m.appendOut(keep...)
+}
+
+// endBlock closes a command's output with one blank line (never two).
+func (m *shellModel) endBlock() {
+	if len(m.out) > 0 && m.out[len(m.out)-1] != "" {
+		m.appendOut("")
+	}
 }
 
 // waitOutput delivers the next batch of output, or the final execDoneMsg.

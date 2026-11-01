@@ -94,6 +94,8 @@ type shellModel struct {
 	live      netx.Totals
 	liveAt    time.Time
 	liveRate  float64
+	errCount  int // error lines / failed commands this session, shown in the header
+	warnCount int // warning lines this session
 
 	lastErr  error
 	quitting bool
@@ -166,7 +168,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case outMsg:
-		m.appendOut(msg.lines...)
+		m.appendCmdOut(msg.lines)
 		if m.run == nil {
 			return m, nil
 		}
@@ -181,12 +183,14 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case execDoneMsg:
 		m.lastErr = nil
+		if c := execExitCode(msg.err); c > 0 && c != 130 && c != 3 && (m.run == nil || m.run.errs == 0) {
+			m.errCount++ // failed without an "srt:" line of its own (e.g. a bad flag)
+		}
 		m.run, m.live, m.liveAt, m.liveRate = nil, netx.Totals{}, time.Time{}, 0
 		if c := execExitCode(msg.err); c > 0 {
-			m.appendOut(dimStyle(m.colorOn).Render(fmt.Sprintf("[%s exited with status %d]", msg.cmd, c)), "")
-		} else {
-			m.appendOut("")
+			m.appendOut(dimStyle(m.colorOn).Render(fmt.Sprintf("[%s exited with status %d]", msg.cmd, c)))
 		}
+		m.endBlock()
 		recordSession(msg)
 		if t, ok := netx.ReadTrafficFile(m.trafficFile); ok {
 			m.traffic.Add(t)
