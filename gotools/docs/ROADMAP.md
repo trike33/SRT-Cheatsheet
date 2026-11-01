@@ -4,6 +4,20 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Fuzzer output formats: `-ndjson`, `-summary`
+- **`-ndjson <file>`** — streams every matched hit as a JSON line to that
+  file continuously, independent of the console display mode (table/
+  `-silent`/`-json`) and of `-o`. Before this, getting structured output
+  meant giving up the colored table (`-json` replaces it); now you can keep
+  the table on screen and have another tool `tail -f` structured data from
+  the file at the same time.
+- **`-summary`** — counts every response this run saw (matched or not) and
+  prints a per-status-code table at the end, independent of `-mc`/`-fc` --
+  the "-mc-less show-all" view: a quick look at what's actually out there
+  (how many 403s, how many soft-404 200s slipped past calibration, ...)
+  before deciding what to filter, instead of re-running with `-mc all` and
+  wading through every line.
+
 ### Host↔web scope cross-link in `pipeline`
 - **`pipeline`'s WEB stage filters discovered domains/subdomains through
   the HOST stage's IP scope** — closes the gap `playbook.md`'s manual flow
@@ -354,8 +368,7 @@ so they aren't lost:
 - ~~Per-host adaptive concurrency~~ — done, see Shipped (`-adaptive-conc`).
 - ~~Resume compaction~~ — done, see Shipped.
 - ~~Wordlist mutations~~ — done, see Shipped (`-mutate-case`, `%ext%`).
-- **Output formats** — ndjson streaming to a file, and a `-mc`-less "show all"
-  summary table grouped by status.
+- ~~Output formats~~ — done, see Shipped (`-ndjson`, `-summary`).
 - **Release automation** once workflow scope is available (tag → binaries).
 
 Suggestions welcome — open an issue.

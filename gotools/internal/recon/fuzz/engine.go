@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -179,6 +180,12 @@ func (e *fuzzEngine) process(hj hostJob) {
 	e.reqCount.Add(1)
 	hj.hb.reqs.Add(1)
 	e.recordResult(j.base, true)
+
+	if e.summaryOn {
+		e.statusMu.Lock()
+		e.statusCounts[meta.Status]++
+		e.statusMu.Unlock()
+	}
 
 	overloadish := meta.Status == 429 || meta.Status == 503
 	if e.sched.adaptiveConc {
@@ -360,14 +367,22 @@ func (e *fuzzEngine) emit(target string, meta RespMeta) {
 	e.outMu.Lock()
 	defer e.outMu.Unlock()
 
+	// -ndjson streams structured output to its own file regardless of the
+	// console display mode (table/silent/-json), so the colored table can
+	// stay on screen while another tool tails a structured file. Built once
+	// here since -json's console line is the exact same shape.
+	jsonLine, _ := json.Marshal(struct {
+		fuzzResult
+		Highlights []string `json:"highlights,omitempty"`
+	}{fuzzResult{target, meta.Status, meta.Size, meta.Words, meta.Lines}, plain})
+	if e.ndjsonFile != nil {
+		fmt.Fprintln(e.ndjsonFile, string(jsonLine))
+	}
+
 	switch {
 	case e.jsonOut:
-		b, _ := json.Marshal(struct {
-			fuzzResult
-			Highlights []string `json:"highlights,omitempty"`
-		}{fuzzResult{target, meta.Status, meta.Size, meta.Words, meta.Lines}, plain})
-		fmt.Println(string(b))
-		e.writeFile(string(b))
+		fmt.Println(string(jsonLine))
+		e.writeFile(string(jsonLine))
 	case e.silent:
 		fmt.Println(target)
 		e.writeFile(target)
@@ -492,6 +507,39 @@ func (e *fuzzEngine) summary() {
 	}
 	ioutil.Warn("done: %d requests, %d matches, %d out-of-scope skipped, %d errors%s",
 		e.reqCount.Load(), e.matchCount.Load(), e.skipCount.Load(), e.errCount.Load(), extra)
+
+	if e.summaryOn {
+		e.printStatusSummary()
+	}
+}
+
+// printStatusSummary prints a status-code count table over EVERY response
+// this run saw, independent of -mc/-fc -- the "-mc-less show-all" view: a
+// quick look at what's actually out there (how many 403s, how many soft-404
+// 200s slipped past calibration, ...) before deciding what to filter next
+// time, without having to rerun with -mc all and wade through every line.
+func (e *fuzzEngine) printStatusSummary() {
+	e.statusMu.Lock()
+	counts := make(map[int]int64, len(e.statusCounts))
+	for k, v := range e.statusCounts {
+		counts[k] = v
+	}
+	e.statusMu.Unlock()
+	if len(counts) == 0 {
+		return
+	}
+
+	codes := make([]int, 0, len(counts))
+	for c := range counts {
+		codes = append(codes, c)
+	}
+	sort.Ints(codes)
+
+	ioutil.Warn("status summary (every response, independent of -mc/-fc):")
+	for _, c := range codes {
+		line := fmt.Sprintf("  %-3d  %d", c, counts[c])
+		ioutil.Warn("%s", e.cm.Wrap(statusColor(c), line))
+	}
 }
 
 // ---- small helpers -------------------------------------------------------

@@ -223,6 +223,35 @@ srt fuzz -u https://host/FUZZ -w words-with-tokens.txt -ext-auto -mutate-case -a
 Progress (`reqs/matches/skipped/errors`) and the summary print to stderr, so
 redirected/piped stdout stays clean.
 
+### Watching the table while still getting structured output (`-ndjson`)
+
+`-json` turns the colored table off — the console and the structured output
+are the same stream. `-ndjson <file>` decouples them: every matched hit is
+also streamed as a JSON line to that file, continuously, whatever the
+console display mode is. Keep the colored table on screen for yourself while
+another tool tails structured data from the file:
+
+```bash
+srt fuzz -u https://host/FUZZ -w words.txt -ac -ndjson hits.ndjson &
+tail -f hits.ndjson | jq .
+```
+
+### Seeing what's out there before you filter it (`-summary`)
+
+`-mc`/`-fc` only ever show you what you already decided to show. `-summary`
+instead counts *every* response this run saw — matched or not — and prints
+a per-status-code table at the end, so you can decide what to filter next
+time instead of guessing or re-running with `-mc all`:
+
+```bash
+srt fuzz -u https://host/FUZZ -w big.txt -mc 200 -summary
+# stderr:
+# [!] status summary (every response, independent of -mc/-fc):
+# [!]   200  12
+# [!]   403  4
+# [!]   404  1984
+```
+
 ## Recipes
 
 ```bash

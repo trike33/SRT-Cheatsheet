@@ -76,7 +76,7 @@ func Run(args []string) error {
 			}},
 			{Title: "RECURSION", Names: []string{"recursion", "depth"}},
 			{Title: "MISCELLANEOUS", Names: []string{"hl", "resume"}},
-			{Title: "OUTPUT", Names: []string{"o", "json", "silent", "color"}},
+			{Title: "OUTPUT", Names: []string{"o", "json", "silent", "color", "ndjson", "summary"}},
 		})
 	}
 
@@ -138,6 +138,8 @@ func Run(args []string) error {
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of the table")
 	silent := fs.Bool("silent", false, "print only matched URLs (pipe into httpx/nuclei)")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
+	ndjsonPath := fs.String("ndjson", "", "also stream every matched hit as an ndjson line to this file, independent of -json/-o/-silent -- keep the colored table on screen while another tool tails structured output from this file")
+	summaryFlag := fs.Bool("summary", false, "print a per-status-code count table at the end, over EVERY response seen (not just what -mc/-fc let through) -- a quick look at what's out there before deciding what to filter")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -238,6 +240,8 @@ func Run(args []string) error {
 		autoThrottle: *autoThrottle,
 		adaptiveConc: *adaptiveConc,
 		mutateCase:   *mutateCase,
+		summaryOn:    *summaryFlag,
+		statusCounts: map[int]int64{},
 	}
 
 	// Resume state: load prior progress and open the file for appends.
@@ -255,6 +259,15 @@ func Run(args []string) error {
 		}
 		defer w.Close()
 		eng.outFile = w
+	}
+
+	if *ndjsonPath != "" {
+		w, err := os.Create(*ndjsonPath)
+		if err != nil {
+			return fmt.Errorf("-ndjson: %w", err)
+		}
+		defer w.Close()
+		eng.ndjsonFile = w
 	}
 
 	eng.run(bases)
@@ -331,6 +344,12 @@ type fuzzEngine struct {
 
 	outFile io.Writer
 	outMu   sync.Mutex
+
+	// additional output formats (-ndjson, -summary).
+	ndjsonFile   io.Writer
+	summaryOn    bool
+	statusMu     sync.Mutex
+	statusCounts map[int]int64 // every response's status, independent of -mc/-fc
 
 	stopF atomic.Bool // set when the global deadline fires
 

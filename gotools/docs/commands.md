@@ -566,22 +566,27 @@ matching.
 | `-hl` | — | highlight response bodies matching this regex (prints snippets) |
 | `-recursion` | off | recurse into discovered directories |
 | `-depth` | `0` | max recursion depth (0 = unlimited) |
-
-`-recursion` follows the classic redirect-to-trailing-slash signal, plus a
-direct `2xx` on an extensionless word once its `<word>/` form is confirmed to
-also resolve to a real page (for apps that list a directory inline, no
-redirect) — never probed for a word that has a dot in it.
 | `-resume` | — | state file: skip done work and persist progress for restart |
 | `-o` | — | write matched results to a file |
 | `-json` | off | emit JSON lines (adds `highlights` when `-hl` is set) |
 | `-silent` | off | print only matched URLs |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
+| `-ndjson` | — | also stream every matched hit as an ndjson line to this file, independent of `-json`/`-o`/`-silent` |
+| `-summary` | off | print a per-status-code count table at the end, over every response seen — independent of `-mc`/`-fc` |
+
+`-recursion` follows the classic redirect-to-trailing-slash signal, plus a
+direct `2xx` on an extensionless word once its `<word>/` form is confirmed to
+also resolve to a real page (for apps that list a directory inline, no
+redirect) — never probed for a word that has a dot in it.
 
 With `-hl`, each hit is followed by indented `↳` snippets showing the matched
 text in context (handy for spotting API keys, secrets, version strings, stack
 traces in discovered files). `-resume <file>` records every completed request
 and discovered directory, so re-running the same command continues where it
-left off instead of repeating work.
+left off instead of repeating work. `-ndjson` lets you keep the colored table
+on screen while another tool tails structured output from a file; `-summary`
+shows every status code seen regardless of `-mc`/`-fc`, for deciding what to
+filter next time instead of guessing.
 
 ---
 
