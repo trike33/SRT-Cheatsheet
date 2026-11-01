@@ -57,13 +57,13 @@ func (m shellModel) renderHeader() string {
 		Padding(0, 2)
 	left := box.Render(row)
 
-	// The project box takes the rest of the row, as tall as the banner; on a
+	// The project box takes the rest of the row, sized to its content (shorter than the banner); on a
 	// narrow terminal it drops below instead.
 	avail := m.width - lipgloss.Width(left) - 1
 	if avail < 50 {
 		return lipgloss.JoinVertical(lipgloss.Left, left, box.Width(max(m.width-2, 20)).Render(m.renderProjectBox()))
 	}
-	right := box.Width(avail - 2).Height(lipgloss.Height(left) - 2).MaxWidth(avail).Render(m.renderProjectBox())
+	right := box.Width(avail - 2).MaxWidth(avail).Render(m.renderProjectBox())
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 }
 
