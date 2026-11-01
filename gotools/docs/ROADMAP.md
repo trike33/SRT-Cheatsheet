@@ -4,6 +4,22 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### BeanShell detection by banner (`portscan.IsBeanShellBanner`)
+- **`pipeline`'s HOST stage now flags an exposed BeanShell interactive
+  server** regardless of what port it's listening on. BeanShell has no
+  fixed/assigned port, so it was the one entry in methodology.md's "flag
+  uncommon services for manual follow-up" step that `uncommonPorts`'
+  port-number list could never catch; `IsBeanShellBanner` instead matches
+  its real startup line ("BeanShell &lt;version&gt; - by Pat Niemeyer
+  (pat@pat.net)", the same signature nmap's service-probes database
+  fingerprints it by) against any open port's grabbed banner. A match is
+  recorded as its own `flag-beanshell` step — a distinct, more specific
+  label than the generic `flag-uncommon-service`, since an exposed
+  BeanShell with no auth is an immediate unauthenticated remote code
+  execution risk (anything sent to it runs as arbitrary Java/BeanShell), not
+  just "worth a manual look." `vulnx` still also runs against it, same as
+  any other bannered non-web port.
+
 ### Fuzzer output formats: `-ndjson`, `-summary`
 - **`-ndjson <file>`** — streams every matched hit as a JSON line to that
   file continuously, independent of the console display mode (table/
@@ -317,9 +333,9 @@ to reimplement what naabu/httpx/subfinder/katana/nuclei/dalfox would give
 us rather than shell out to them (vulnx is the one exception, now wired up
 — see Shipped above).
 
-- **HOST**: ~~excluded-but-tracked hosts~~ — done, see Shipped. A native
-  "easy wins" pass (default creds/common misconfigs); BeanShell detection
-  (no fixed port to match on, needs banner-based detection).
+- **HOST**: ~~excluded-but-tracked hosts~~ — done, see Shipped.
+  ~~BeanShell detection~~ — done, see Shipped (`portscan.IsBeanShellBanner`).
+  A native "easy wins" pass (default creds/common misconfigs) is still open.
 - **WEB**: Google dorking; context-aware wordlist generation for `fuzz`
   (extensions now are, via `-ext-auto`; candidate *words* derived from the detected tech stack/app context — `probe`'s
   tech-detect output is the natural input for this now, not just static

@@ -117,6 +117,17 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 					Kind: "host", Name: "flag-uncommon-service",
 					Target: fmt.Sprintf("%s:%d", r.Host, r.Port), Status: "ok", Detail: detail,
 				})
+			case portscan.IsBeanShellBanner(r.Banner):
+				// BeanShell has no fixed/assigned port (docs/methodology.md),
+				// so it can't be caught by the uncommonPorts list above --
+				// only the banner gives it away. An exposed one with no auth
+				// is an immediate unauthenticated RCE: anything sent to it
+				// runs as arbitrary Java/BeanShell.
+				steps = append(steps, stepResult{
+					Kind: "host", Name: "flag-beanshell",
+					Target: fmt.Sprintf("%s:%d", r.Host, r.Port), Status: "ok",
+					Detail: fmt.Sprintf("BeanShell interactive server exposed on port %d — unauthenticated remote code execution risk, follow up manually; banner: %s", r.Port, r.Banner),
+				})
 			}
 			if r.Banner != "" && !portscan.IsWebPort(r.Port) {
 				target := fmt.Sprintf("%s:%d", r.Host, r.Port)

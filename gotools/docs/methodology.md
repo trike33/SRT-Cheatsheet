@@ -81,11 +81,14 @@ scope (IPs, or a pipeline JSON config's "host" list)
         catch, reimplemented rather than shelling out to nuclei.
         *(Not implemented.)*
      3. Flag uncommon services for manual follow-up — e.g. an exposed
-        BeanShell, rsync daemon, or Java RMI registry. *(Implemented for
-        rsync/Java RMI and the rest of `portscan`'s `uncommon` port list —
-        `pipeline`'s HOST stage flags any open port from it. BeanShell has
-        no fixed port to match on, so it isn't caught yet; needs
-        banner-based detection instead.)*
+        BeanShell, rsync daemon, or Java RMI registry. *(Implemented:
+        rsync/Java RMI and the rest of `portscan`'s `uncommon` port list are
+        flagged by port number; BeanShell has no fixed port, so
+        `portscan.IsBeanShellBanner` instead matches its real startup
+        banner ("BeanShell &lt;version&gt; - by Pat Niemeyer (pat@pat.net)",
+        the same signature nmap's service-probes database uses) against any
+        open port's grabbed banner — `pipeline`'s HOST stage flags a match
+        as `flag-beanshell`, an unauthenticated-RCE risk.)*
 
 ## WEB
 

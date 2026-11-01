@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,21 @@ var uncommonPortSet = func() map[int]bool {
 // IsUncommonPort reports whether port is a specialty/legacy service worth
 // flagging for manual follow-up.
 func IsUncommonPort(port int) bool { return uncommonPortSet[port] }
+
+// beanShellBannerRe matches an exposed BeanShell interactive server's
+// startup line -- "BeanShell <version> - by Pat Niemeyer (pat@pat.net)" --
+// the same signature nmap's service-probes database fingerprints it by.
+// BeanShell has no fixed/assigned port (see uncommonPorts above), so a port
+// number can't catch it; the banner is the only signal.
+var beanShellBannerRe = regexp.MustCompile(`(?i)beanshell`)
+
+// IsBeanShellBanner reports whether a grabbed banner looks like an exposed
+// BeanShell interactive server/console. One of these reachable with no
+// auth is an immediate unauthenticated remote code execution risk --
+// anything typed at its prompt runs as arbitrary Java/BeanShell.
+func IsBeanShellBanner(banner string) bool {
+	return banner != "" && beanShellBannerRe.MatchString(banner)
+}
 
 // WebBaseURL builds the base URL a web-classified open port hands off to
 // the WEB stage, omitting the port when it's the scheme's default.

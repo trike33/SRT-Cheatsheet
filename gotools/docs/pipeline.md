@@ -137,9 +137,16 @@ spec only runs once:
      to WEB" step in methodology.md. Disable with `-no-web-handoff`.
    - **Uncommon/specialty port** (e.g. rsync, Java RMI) → recorded as a
      `flag-uncommon-service` step for manual follow-up.
+   - **BeanShell** (any port, since it has no fixed one — its grabbed
+     banner is matched instead) → recorded as a `flag-beanshell` step: an
+     exposed one with no auth is an unauthenticated remote code execution
+     risk, so this is flagged as its own distinct step rather than lumped
+     into `flag-uncommon-service`.
    - Any open port with a grabbed banner, that isn't a web service → a
      `vulnx search "<banner>"` step (github.com/projectdiscovery/vulnx).
-     **Skipped** if `vulnx` isn't installed, never fails the run.
+     **Skipped** if `vulnx` isn't installed, never fails the run. Runs
+     alongside `flag-uncommon-service`/`flag-beanshell` above, not instead
+     of them.
 
 A `host` entry with `"excluded": true` is excluded-but-tracked instead:
 steps 3-4 above don't run for it at all. In their place:

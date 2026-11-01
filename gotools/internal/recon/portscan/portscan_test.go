@@ -175,6 +175,24 @@ func TestIsUncommonPort(t *testing.T) {
 	}
 }
 
+func TestIsBeanShellBanner(t *testing.T) {
+	cases := []struct {
+		banner string
+		want   bool
+	}{
+		{"BeanShell 2.0b4 - by Pat Niemeyer (pat@pat.net)", true},
+		{"beanshell 2.0b6", true}, // case-insensitive
+		{"", false},
+		{"SSH-2.0-OpenSSH_8.9", false},
+		{"220 ProFTPD Server ready", false},
+	}
+	for _, c := range cases {
+		if got := IsBeanShellBanner(c.banner); got != c.want {
+			t.Errorf("IsBeanShellBanner(%q) = %v, want %v", c.banner, got, c.want)
+		}
+	}
+}
+
 func TestWebBaseURL(t *testing.T) {
 	cases := []struct {
 		host string
