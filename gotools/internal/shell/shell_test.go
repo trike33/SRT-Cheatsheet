@@ -549,3 +549,64 @@ func TestCtrlLClearsScreenKeepingInput(t *testing.T) {
 		t.Errorf("ctrl+l should clear the screen and keep the typed line (cmd=%v, input=%q)", cmd != nil, string(got.(shellModel).input))
 	}
 }
+
+const groupedUsage = `Usage of probe:
+
+INPUT:
+   -l string          target list: URLs or bare hosts (default: stdin)
+
+OUTPUT:
+   -o string          output file (default: stdout)
+   -json              emit JSON lines instead of a table
+`
+
+func TestParseFlagUsageGrouped(t *testing.T) {
+	got := parseFlagUsage(groupedUsage)
+	if len(got) != 3 || got[0].Name != "l" || got[0].Arg != "string" || got[2].Name != "json" || got[2].Arg != "" {
+		t.Fatalf("parseFlagUsage(grouped) = %+v", got)
+	}
+	if got[1].Desc != "output file (default: stdout)" {
+		t.Errorf("desc = %q", got[1].Desc)
+	}
+}
+
+func TestTabCompletesFlagsAndKeywordsPastFirstWord(t *testing.T) {
+	m := newShellModel("srt")
+	m.helpCache = map[string]*cmdHelp{"probe": {flags: parseFlagUsage(groupedUsage)}}
+	set := func(s string) { m.input, m.cursor = []rune(s), len([]rune(s)) }
+
+	set("probe -j")
+	if !m.completeArgWord() || string(m.input) != "probe -json " {
+		t.Errorf("flag completion: %q", string(m.input))
+	}
+	set("probe -l x.txt -o")
+	if !m.completeArgWord() || string(m.input) != "probe -l x.txt -o " {
+		t.Errorf("flag completion mid-line: %q", string(m.input))
+	}
+	set("help pr")
+	m.names = []string{"probe", "portscan"}
+	if !m.completeArgWord() || string(m.input) != "help probe " {
+		t.Errorf("help completion: %q", string(m.input))
+	}
+	set("color o")
+	m.completeArgWord() // "on"/"off" -> common prefix "o": unchanged
+	if string(m.input) != "color o" {
+		t.Errorf("ambiguous keyword changed input: %q", string(m.input))
+	}
+	set("probe ./x")
+	if m.completeArgWord() {
+		t.Error("plain path word must fall through to path completion")
+	}
+}
+
+func TestArgClassHighlightsFlags(t *testing.T) {
+	m := newShellModel("srt")
+	m.helpCache = map[string]*cmdHelp{"probe": {flags: parseFlagUsage(groupedUsage)}}
+	toks := tokenizeLineWithSpans([]rune("probe -json -bogus -3 -o=x"))
+	want := []tokClass{classCommand, classFlag, classUnknown, classPlain, classFlag}
+	for i := 1; i < len(toks); i++ {
+		if got := m.argClass(toks, i); got != want[i] {
+			t.Errorf("token %q: class %v, want %v", toks[i].text, got, want[i])
+		}
+	}
+}

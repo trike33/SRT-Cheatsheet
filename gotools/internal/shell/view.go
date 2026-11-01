@@ -168,7 +168,8 @@ func (m shellModel) renderHighlightedLine() string {
 	runes := m.input
 	classes := make([]tokClass, len(runes))
 
-	for i, tok := range tokenizeLineWithSpans(runes) {
+	toks := tokenizeLineWithSpans(runes)
+	for i, tok := range toks {
 		c := classPlain
 		switch {
 		case i == 0:
@@ -177,10 +178,8 @@ func (m shellModel) renderHighlightedLine() string {
 			} else {
 				c = classUnknown
 			}
-		case strings.HasPrefix(tok.text, "-"):
-			c = classFlag
-		case strings.HasPrefix(tok.text, `"`) || strings.HasPrefix(tok.text, "'"):
-			c = classString
+		default:
+			c = m.argClass(toks, i)
 		}
 		for j := tok.start; j < tok.end; j++ {
 			classes[j] = c

@@ -230,8 +230,12 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyTab:
-		m.completeCommandName()
-		m.completePathArg()
+		if m.completeCommandName() {
+			return m, nil
+		}
+		if !m.completeArgWord() {
+			m.completePathArg()
+		}
 		return m, nil
 
 	case tea.KeyBackspace:
@@ -347,16 +351,16 @@ func (m *shellModel) deleteWordBefore() {
 // place. An ambiguous or empty match is a no-op -- a safe default, since
 // anything fancier (printing a match list) means reasoning about redrawing
 // around an in-progress edit, not worth the risk for this.
-func (m *shellModel) completeCommandName() {
+func (m *shellModel) completeCommandName() bool {
 	// Only the first word (the command name) completes.
 	for i := 0; i < m.cursor; i++ {
 		if m.input[i] == ' ' {
-			return
+			return false
 		}
 	}
 	prefix := string(m.input[:m.cursor])
 	if prefix == "" {
-		return
+		return false
 	}
 
 	var match string
@@ -366,12 +370,12 @@ func (m *shellModel) completeCommandName() {
 			match = n
 			count++
 			if count > 1 {
-				return
+				return false
 			}
 		}
 	}
 	if count != 1 {
-		return
+		return false
 	}
 
 	rest := m.input[m.cursor:]
@@ -379,6 +383,7 @@ func (m *shellModel) completeCommandName() {
 	newLine = append(newLine, rest...)
 	m.input = newLine
 	m.cursor = len([]rune(match + " "))
+	return true
 }
 
 // runLine parses the current line and dispatches it. Real commands always

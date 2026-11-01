@@ -56,7 +56,15 @@ var shellHelp = map[string]string{
 	"save":     "save [on|off]\n\nWhether each command's results are recorded in the project database.",
 }
 
-// parseFlagUsage extracts flags from Go's flag.PrintDefaults output:
+// isFlagLine reports whether line is an indented "-name ..." flag header, in
+// either flag.PrintDefaults or cli.PrintGroupedUsage layout.
+func isFlagLine(line string) bool {
+	t := strings.TrimLeft(line, " ")
+	return len(t) > 1 && len(t) < len(line) && t[0] == '-' && t[1] != ' ' && t[1] != '\t'
+}
+
+// parseFlagUsage extracts flags from Go's flag.PrintDefaults output
+// (cli.PrintGroupedUsage's "-name type  description" rows work too):
 //
 //	-name type
 //	  \tusage text
@@ -67,10 +75,13 @@ func parseFlagUsage(text string) []flagDoc {
 	cur := -1
 	for _, line := range strings.Split(text, "\n") {
 		switch {
-		case strings.HasPrefix(line, "  -"):
-			header, inline := line[2:], ""
+		case isFlagLine(line):
+			header, inline := strings.TrimLeft(line, " "), ""
 			if i := strings.Index(header, "\t"); i >= 0 {
 				header, inline = header[:i], strings.TrimSpace(header[i+1:])
+			} else if i := strings.Index(header, "  "); i >= 0 {
+				// cli.PrintGroupedUsage: "-name type<2+ spaces>description".
+				header, inline = header[:i], strings.TrimSpace(header[i:])
 			}
 			parts := strings.Fields(header)
 			if len(parts) == 0 {
