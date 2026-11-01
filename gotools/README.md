@@ -40,7 +40,18 @@ needed (Linux/macOS):
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash
 ```
 
-Update the same way later: swap `install.sh` for `update.sh` in that command.
+Prefer to compile it yourself? `install.sh --local-build` clones the repo to
+`~/.local/src/SRT-Cheatsheet` (override with `SRT_SRC_DIR`), builds with your
+Go 1.24+ toolchain and installs to `$PREFIX/bin` (default `/usr/local`; use
+`PREFIX=$HOME/.local` to skip sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash -s -- --local-build
+```
+
+Update the same way later: swap `install.sh` for `update.sh` in that command (it takes `--local-build` too).
+Uninstall with `uninstall.sh` the same way (`--purge` also deletes the
+`--local-build` clone).
 Windows: grab `srt-windows-amd64.exe` from
 [Releases](https://github.com/trike33/SRT-Cheatsheet/releases/latest) directly.
 
