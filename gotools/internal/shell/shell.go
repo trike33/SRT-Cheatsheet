@@ -74,10 +74,8 @@ type shellModel struct {
 	width   int
 	height  int
 
-	helpCache  map[string]*cmdHelp // per-command usage, nil value = still loading
-	helpOpen   bool                // right-hand help pane visible
-	helpName   string
-	helpScroll int
+	helpCache   map[string]*cmdHelp // per-command usage, nil value = still loading
+	pendingHelp string              // `help <cmd>` waiting for that command's usage text to load
 
 	traffic     netx.Totals // session total across every command run
 	trafficFile string      // per-command handoff file the child writes to
@@ -150,6 +148,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpCache = map[string]*cmdHelp{}
 		}
 		m.helpCache[msg.name] = msg.help
+		if m.pendingHelp == msg.name {
+			m.pendingHelp = ""
+			m.printHelp(msg.name)
+		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -160,11 +162,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonWheelDown:
 			d = 3
 		}
-		if m.helpOpen && msg.X >= m.mainWidth() {
-			m.scrollHelp(d)
-		} else {
-			m.scrollOut(-d)
-		}
+		m.scrollOut(-d)
 		return m, nil
 
 	case outMsg:
@@ -264,25 +262,14 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.ClearScreen
 
 	case tea.KeyEsc:
-		if m.helpOpen {
-			return m, m.closeHelp()
-		}
 		return m, nil
 
 	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlUp, tea.KeyCtrlDown:
-		if m.helpOpen {
-			delta := map[tea.KeyType]int{
-				tea.KeyPgUp: -m.bodyHeight() + 1, tea.KeyPgDown: m.bodyHeight() - 1,
-				tea.KeyCtrlUp: -1, tea.KeyCtrlDown: 1,
-			}[msg.Type]
-			m.scrollHelp(delta)
-		} else {
-			page := m.outHeight() - 1
-			m.scrollOut(map[tea.KeyType]int{
-				tea.KeyPgUp: page, tea.KeyPgDown: -page,
-				tea.KeyCtrlUp: 1, tea.KeyCtrlDown: -1,
-			}[msg.Type])
-		}
+		page := m.outHeight() - 1
+		m.scrollOut(map[tea.KeyType]int{
+			tea.KeyPgUp: page, tea.KeyPgDown: -page,
+			tea.KeyCtrlUp: 1, tea.KeyCtrlDown: -1,
+		}[msg.Type])
 		return m, nil
 
 	case tea.KeyTab:

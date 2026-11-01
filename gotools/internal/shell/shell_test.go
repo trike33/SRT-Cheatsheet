@@ -513,34 +513,22 @@ func TestFlagHint(t *testing.T) {
 	}
 }
 
-func TestHelpPaneOpensAndCloses(t *testing.T) {
+func TestHelpPrintsIntoOutputArea(t *testing.T) {
 	m := typeLine(newTestModel(), "help fuzz")
 	nm, cmd := m.runLine()
 	m = nm.(shellModel)
-	if !m.helpOpen || m.helpName != "fuzz" || cmd == nil {
-		t.Fatalf("pane not opened: open=%v name=%q", m.helpOpen, m.helpName)
+	if cmd == nil || m.pendingHelp != "fuzz" {
+		t.Fatalf("help should load usage text: pending=%q", m.pendingHelp)
 	}
-	m.helpCache["fuzz"] = &cmdHelp{text: strings.Repeat("line\n", 100)}
-	m.height = 30
-	m.scrollHelp(10)
-	if m.helpScroll != 10 {
-		t.Errorf("scroll = %d", m.helpScroll)
+	nm, _ = m.Update(helpLoadedMsg{"fuzz", &cmdHelp{text: "Usage of fuzz:\n\nINPUT:\n   -u string  target\n"}})
+	m = nm.(shellModel)
+	if !strings.Contains(strings.Join(m.out, "\n"), "-u string") || m.pendingHelp != "" {
+		t.Errorf("help not printed: %q", m.out)
 	}
-	nm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if nm.(shellModel).helpOpen {
-		t.Error("Esc should close the pane")
-	}
-}
-
-func TestRunningACommandClosesHelpPane(t *testing.T) {
-	m := newTestModel()
-	m.helpOpen, m.helpName = true, "fuzz"
-	nm, cmd := typeLine(m, "version").runLine()
-	if nm.(shellModel).helpOpen {
-		t.Error("launching a command must close the help pane first")
-	}
-	if cmd == nil {
-		t.Error("expected the command to be launched")
+	// Already cached: printed straight away, nothing to load.
+	m.out = nil
+	if cmd := m.openHelp("fuzz"); cmd != nil || len(m.out) == 0 {
+		t.Errorf("cached help should print immediately (cmd=%v, out=%q)", cmd != nil, m.out)
 	}
 }
 

@@ -268,17 +268,13 @@ func (m shellModel) outHeight() int {
 
 // chromeHeight is the height of everything but the output area.
 func (m shellModel) chromeHeight() int {
-	h := lipgloss.Height(m.renderBottom())
-	if !m.helpOpen {
-		h += lipgloss.Height(m.renderHeader())
-	}
-	return h
+	return lipgloss.Height(m.renderBottom()) + lipgloss.Height(m.renderHeader())
 }
 
 // scrollOut moves the output view by delta rows (positive = toward older
 // output), clamped to the available scrollback.
 func (m *shellModel) scrollOut(delta int) {
-	maxScroll := max(m.totalRows(m.mainWidth())-m.outHeight(), 0)
+	maxScroll := max(m.totalRows(m.width)-m.outHeight(), 0)
 	m.outScroll = min(max(m.outScroll+delta, 0), maxScroll)
 }
 

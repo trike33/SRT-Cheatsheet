@@ -108,12 +108,6 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 		}
 	}
 
-	// The output area is the main column's full width, so the help pane makes
-	// way for it.
-	if m.helpOpen {
-		m.closeHelp()
-	}
-
 	rs := newRun(m.cmdFor(cmdName, runArgs))
 	rs.name, rs.sess, rs.stateFile, rs.dir = cmdName, sess, stateFile, cwd
 	m.run = rs

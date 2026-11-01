@@ -305,35 +305,27 @@ func (m shellModel) View() string {
 		height = 24
 	}
 
+	header := m.renderHeader()
 	bottom := m.renderBottom()
-	head, headH := "", 0
-	if !m.helpOpen {
-		header := m.renderHeader()
-		head, headH = header+"\n", lipgloss.Height(header)
-	}
-	outH := max(height-headH-lipgloss.Height(bottom), 3)
-	main := head + m.renderOutput(m.mainWidth(), outH) + "\n" + bottom
-
-	if !m.helpOpen {
-		return main
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, main, " ", m.renderHelpPane())
+	outH := max(height-lipgloss.Height(header)-lipgloss.Height(bottom), 3)
+	return header + "\n" + m.renderOutput(m.width, outH) + "\n" + bottom
 }
 
-// renderBottom is the part pinned to the bottom of the screen: the prompt
-// box, the flag hint while typing one, and the status line.
+// renderBottom is the part pinned to the bottom of the screen: the flag hint
+// while typing one, the prompt box, and the status line.
 func (m shellModel) renderBottom() string {
-	boxWidth := max(m.mainWidth()-4, 20)
+	boxWidth := max(m.width-4, 20)
 	var content string
 	if m.run != nil {
 		content = dimStyle(m.colorOn).Render("running " + m.run.name + " — Ctrl+C stops it · PgUp/PgDn scroll")
 	} else {
 		content = promptStyle(m.colorOn).Render("srt> ") + m.renderHighlightedLine()
 	}
-	bottom := inputBoxStyle(m.colorOn, boxWidth).MaxWidth(m.mainWidth()).Render(content) + "\n"
+	bottom := ""
 	if hint := m.flagHint(); len(hint) > 0 && m.run == nil {
-		bottom += strings.Join(hint, "\n") + "\n"
+		bottom = strings.Join(hint, "\n") + "\n"
 	}
+	bottom += inputBoxStyle(m.colorOn, boxWidth).MaxWidth(m.width).Render(content) + "\n"
 	return bottom + m.renderStatus()
 }
 
@@ -375,11 +367,8 @@ func (m shellModel) renderStatus() string {
 		left = classStyle(classUnknown, m.colorOn).Render("! " + m.lastErr.Error())
 	}
 	right := `"help" for commands · "exit" or Ctrl+D to quit`
-	if m.helpOpen {
-		right = "" // the pane's own title says how to close it
-	}
 
-	w := m.mainWidth()
+	w := m.width
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 1 {
 		gap = 1

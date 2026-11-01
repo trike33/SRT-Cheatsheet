@@ -17,8 +17,8 @@ import (
 // Dynamic help: the shell learns each command's flags by running
 // `srt <cmd> -h` once (a subprocess, for the same os.Exit reason every other
 // command runs as one) and parsing Go's flag usage output. That gives an
-// inline one-line hint while typing a flag, and the full text for a right-hand
-// pane opened by `help <cmd>`.
+// inline one-line hint while typing a flag, and the full text printed into the
+// output area by `help <cmd>`.
 
 type flagDoc struct {
 	Name string // without the leading dashes
@@ -42,7 +42,7 @@ const helpPaneKey = ""
 // shellHelp documents the shell's own pseudo-commands, which have no
 // subprocess to ask.
 var shellHelp = map[string]string{
-	"help":     "help [command]\n\nWith a command, open its flag reference in a pane beside the prompt (Esc closes it).\nWithout one, list every command.",
+	"help":     "help [command]\n\nWith a command, print its flag reference in the output area above the prompt.\nWithout one, list every command.",
 	"exit":     "exit\n\nLeave the shell (also quit, or Ctrl+D on an empty line).",
 	"quit":     "quit\n\nLeave the shell (same as exit).",
 	"clear":    "clear\n\nClear the screen and redraw the banner.",
@@ -149,7 +149,8 @@ func (m *shellModel) ensureHint() tea.Cmd {
 	return m.ensureHelp(toks[0].text)
 }
 
-// openHelp shows name's help in the side pane.
+// openHelp prints name's help into the output area (once it has loaded), so
+// the prompt stays free for typing the command while reading it.
 func (m *shellModel) openHelp(name string) tea.Cmd {
 	if _, ok := cli.Lookup(name); !ok && name != helpPaneKey {
 		if _, ok := shellHelp[name]; !ok {
@@ -157,20 +158,42 @@ func (m *shellModel) openHelp(name string) tea.Cmd {
 			return nil
 		}
 	}
-	m.helpOpen, m.helpName, m.helpScroll = true, name, 0
+	if hp := m.helpCache[name]; hp != nil {
+		m.printHelp(name)
+		return nil
+	}
+	m.pendingHelp = name
 	return m.ensureHelp(name)
 }
 
-func (m *shellModel) closeHelp() tea.Cmd {
-	m.helpOpen = false
-	return nil
+// printHelp appends a loaded command's help to the output area, flag lines
+// highlighted.
+func (m *shellModel) printHelp(name string) {
+	hp := m.helpCache[name]
+	if hp == nil {
+		return
+	}
+	flag := lipgloss.NewStyle()
+	if m.colorOn {
+		flag = flag.Foreground(lipgloss.Color(colorYellow))
+	}
+	var lines []string
+	for _, raw := range strings.Split(hp.text, "\n") {
+		l := strings.ReplaceAll(raw, "\t", "    ")
+		if isFlagLine(raw) {
+			l = flag.Render(l)
+		}
+		lines = append(lines, l)
+	}
+	m.appendOut(lines...)
+	m.endBlock()
 }
 
 // --- inline flag hint ---
 
 const maxHintLines = 5
 
-// flagHint returns the lines to show under the input box: the description of
+// flagHint returns the lines to show above the input box: the description of
 // the flag being typed (or of the flag whose value is being typed).
 func (m shellModel) flagHint() []string {
 	toks := tokenizeLineWithSpans(m.input)
@@ -236,7 +259,7 @@ func (m shellModel) hintLines(fs []flagDoc) []string {
 	if len(fs) == 0 {
 		return nil
 	}
-	w := m.mainWidth() - 4
+	w := m.width - 4
 	flagStyle := lipgloss.NewStyle().Bold(true)
 	if m.colorOn {
 		flagStyle = flagStyle.Foreground(lipgloss.Color(colorYellow))
@@ -277,99 +300,4 @@ func (m shellModel) hintLines(fs []flagDoc) []string {
 		out = append(out, line(f, false)...)
 	}
 	return out
-}
-
-// --- side pane ---
-
-// mainWidth is the width of the prompt column: the whole terminal, or the
-// left share of it while the help pane is open.
-func (m shellModel) mainWidth() int {
-	if !m.helpOpen {
-		return m.width
-	}
-	return max(m.width*45/100, 36)
-}
-
-func (m shellModel) paneWidth() int { return max(m.width-m.mainWidth()-1, 20) }
-
-func (m shellModel) paneHeight() int {
-	h := m.height
-	if h == 0 {
-		h = 24
-	}
-	return max(h, 8)
-}
-
-// helpLines is the pane's text wrapped to its inner width, flag headers
-// highlighted.
-func (m shellModel) helpLines() []string {
-	h, loaded := m.helpCache[m.helpName]
-	if h == nil {
-		if loaded {
-			return []string{"loading…"}
-		}
-		return []string{"(no help)"}
-	}
-	w := m.paneWidth() - 4
-	flag := lipgloss.NewStyle()
-	if m.colorOn {
-		flag = flag.Foreground(lipgloss.Color(colorYellow))
-	}
-	var out []string
-	for _, raw := range strings.Split(h.text, "\n") {
-		isFlag := isFlagLine(raw)
-		// Go indents usage text with spaces+tab; render that as a plain indent
-		// and keep it on wrapped continuation lines.
-		body := strings.TrimLeft(raw, " \t")
-		indent := strings.Repeat(" ", len(raw)-len(body))
-		if strings.HasPrefix(raw, "    \t") || strings.HasPrefix(raw, "\t") {
-			indent = "      "
-		}
-		wrapped := strings.Split(lipgloss.NewStyle().Width(max(w-len(indent), 8)).Render(body), "\n")
-		for i, l := range wrapped {
-			l = indent + strings.TrimRight(l, " ")
-			if i == 0 && isFlag {
-				l = flag.Render(l)
-			}
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-func (m shellModel) bodyHeight() int { return m.paneHeight() - 3 } // border (2) + title
-
-func (m *shellModel) scrollHelp(delta int) {
-	maxScroll := max(len(m.helpLines())-m.bodyHeight(), 0)
-	m.helpScroll = min(max(m.helpScroll+delta, 0), maxScroll)
-}
-
-func (m shellModel) renderHelpPane() string {
-	lines := m.helpLines()
-	body := m.bodyHeight()
-	scroll := min(max(m.helpScroll, 0), max(len(lines)-body, 0))
-	end := min(scroll+body, len(lines))
-	visible := append([]string(nil), lines[scroll:end]...)
-	for len(visible) < body {
-		visible = append(visible, "")
-	}
-
-	name := m.helpName
-	if name == helpPaneKey {
-		name = "commands"
-	}
-	pct := 100
-	if len(lines) > body {
-		pct = scroll * 100 / (len(lines) - body)
-	}
-	title := lipgloss.NewStyle().Bold(true).Render("help: "+name) +
-		dimStyle(m.colorOn).Render(fmt.Sprintf("  Esc close · PgUp/PgDn scroll · %d%%", pct))
-
-	box := lipgloss.NewStyle().Padding(0, 1).Width(m.paneWidth() - 2).MaxWidth(m.paneWidth())
-	if m.colorOn {
-		box = box.Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(colorCyan))
-	} else {
-		box = box.Border(lipgloss.NormalBorder())
-	}
-	return box.Render(lipgloss.NewStyle().MaxWidth(m.paneWidth()-4).Render(title) + "\n" + strings.Join(visible, "\n"))
 }
