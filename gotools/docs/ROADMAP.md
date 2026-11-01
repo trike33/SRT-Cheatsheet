@@ -4,6 +4,21 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Content-based sensitive-info classification (`sensitive -content`)
+- **`sensitive -content`** — fetches every input URL and scans the response
+  body against a small, high-precision set of secret/credential signatures
+  (AWS/Google/Slack/GitHub/Stripe tokens, private key blocks, JWTs,
+  basic-auth and database connection strings in a URL, generic
+  `key=`/`secret=`/`password=` assignments — `internal/payloads.SecretPatterns`)
+  instead of filtering by extension. Closes the "not just by extension" half
+  of the WEB methodology gap: a leaked key in a `.js` bundle or a plain
+  `config` endpoint is invisible to extension matching but not to this.
+  `-c`/`-timeout`/`-insecure`/`-max-size` control the fetch; a fetch error or
+  non-2xx is skipped, not fatal, since a dead link from an old Wayback crawl
+  is routine on a large `gau` dump. `-json` emits structured hits
+  (`url`, `pattern`, `match`, `context`); the default mode (no `-content`)
+  is unchanged.
+
 ### Fuzzer: preflight baseline, parent-seeded calibration, smarter recursion, adaptive concurrency, mutations
 - **Preflight baseline probe** — every `fuzz` run, with or without `-ac`,
   fires two guaranteed-nonexistent paths at each target host's root before
@@ -275,8 +290,8 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   wordlists); a re-validation step for URLs pulled from `gau`/dorking;
   parameter fuzzing/guessing beyond `params`' URL-based classification,
   plus reading parameters from a webset/API spec when one exists;
-  content-based sensitive-info classification (creds/keys found inside a
-  file, not just by extension); optionally also running `robots`/`fuzz`
+  ~~content-based sensitive-info classification~~ — done, see Shipped
+  (`sensitive -content`); optionally also running `robots`/`fuzz`
   against `pipeline`-discovered subdomains, opt-in given the traffic-volume
   implications (today only `gau`/`probe` auto-widen to them).
 - **`pipeline` integration** — as each of the above lands, extend

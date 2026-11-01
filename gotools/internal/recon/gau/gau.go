@@ -176,11 +176,18 @@ func RunSensitive(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"l"}},
-			{Title: "OUTPUT", Names: []string{"o"}},
+			{Title: "CONTENT SCAN", Names: []string{"content", "c", "timeout", "insecure", "max-size"}},
+			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
 	in := fs.String("l", "", "URL list file (default: stdin)")
 	out := fs.String("o", "", "output file (default: stdout)")
+	content := fs.Bool("content", false, "fetch every URL and scan its body for secrets/credentials (API keys, private keys, tokens, connection strings, ...) instead of filtering by extension -- the extension list only catches a file by its name, this catches a leaked key regardless of it")
+	conc := fs.Int("c", 20, "with -content: concurrent fetches")
+	timeout := fs.Duration("timeout", 15*time.Second, "with -content: per-request timeout")
+	insecure := fs.Bool("insecure", true, "with -content: skip TLS verification")
+	maxSize := fs.Int64("max-size", 2<<20, "with -content: max bytes read per response")
+	jsonOut := fs.Bool("json", false, "with -content: emit JSON lines instead of a table")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -189,12 +196,32 @@ func RunSensitive(args []string) error {
 	if err != nil {
 		return err
 	}
+
 	w, err := ioutil.Output(*out)
 	if err != nil {
 		return err
 	}
 	defer w.Close()
-	return ioutil.WriteLines(w, filterSensitive(urls))
+
+	if !*content {
+		return ioutil.WriteLines(w, filterSensitive(urls))
+	}
+
+	client := netx.NewClient(*timeout, *insecure)
+	hits, fetched, failed := scanContent(urls, client, *conc, *maxSize)
+	ioutil.Warn("content scan: fetched %d/%d URL(s) (%d failed), %d secret(s) found", fetched, len(urls), failed, len(hits))
+
+	if *jsonOut {
+		for _, h := range hits {
+			b, _ := json.Marshal(h)
+			fmt.Fprintln(w, string(b))
+		}
+		return nil
+	}
+	for _, h := range hits {
+		fmt.Fprintf(w, "[%s] %s\n    match:   %s\n    context: %s\n", h.Pattern, h.URL, h.Match, h.Context)
+	}
+	return nil
 }
 
 func RunParams(args []string) error {

@@ -300,6 +300,37 @@ Filter a URL list down to ones ending in a sensitive extension (`.sql`, `.env`,
 cat all_urls.txt | srt sensitive
 ```
 
+**Content-based classification (`-content`).** Extension matching only
+catches a file by its *name* -- a leaked AWS key sitting in a `.js` bundle or
+a plain `config` endpoint never ends in `.env`, so it's invisible to the
+default mode. `-content` instead fetches every URL and scans the body
+against a small, high-precision set of secret/credential signatures (AWS/
+Google/Slack/GitHub/Stripe tokens, private key blocks, JWTs, basic-auth and
+database connection strings in a URL, generic `key=`/`secret=`/`password=`
+assignments) -- regardless of what the URL looks like:
+
+```bash
+cat all_urls.txt | srt sensitive -content -c 30 -json -o secrets.jsonl
+# stderr: [!] content scan: fetched 842/900 URL(s) (58 failed), 3 secret(s) found
+# [AWS Secret Access Key] https://host/old/config.js
+#     match:   AWS_SECRET_ACCESS_KEY=...
+#     context: ...AWS_SECRET_ACCESS_KEY=... (truncated) ...
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-content` | off | scan body content instead of filtering by extension |
+| `-c` | `20` | concurrent fetches |
+| `-timeout` | `15s` | per-request timeout |
+| `-insecure` | `true` | skip TLS verification |
+| `-max-size` | `2097152` (2 MiB) | max bytes read per response |
+| `-json` | off | emit JSON lines (`url`, `pattern`, `match`, `context`) instead of a table |
+
+A fetch error or non-2xx response is skipped, not fatal -- a dead link from
+an old Wayback crawl is routine on a large `gau` dump. Since this sends a
+request per URL rather than just inspecting a string, it's opt-in and
+traffic-shaped by `-c`/`-timeout` the same way `fuzz`'s traffic controls are.
+
 ---
 
 ## params
