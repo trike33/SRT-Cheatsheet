@@ -37,6 +37,43 @@ func TestScanBodyFindsKnownPatterns(t *testing.T) {
 	}
 }
 
+// TestScanBodyCatchesKeyNameMutations covers the gap a plain "word directly
+// before =/:" regex misses: a JSON/camelCase/snake_case key that merely
+// contains the trigger word rather than being exactly it, e.g.
+// {"secretKey":"..."} or SECRET_KEY=... instead of just secret=....
+func TestScanBodyCatchesKeyNameMutations(t *testing.T) {
+	cases := map[string]string{
+		`{ "secretKey": "abcdef1234567890" }`:   "Generic Secret/Password",
+		`{ "secret_key": "abcdef1234567890" }`:  "Generic Secret/Password",
+		`{ "clientSecret":"abcdef1234567890" }`: "Generic Secret/Password",
+		`SECRET_KEY=abcdef1234567890`:           "Generic Secret/Password",
+		`{ "apiKey": "abcdef1234567890" }`:      "Generic API Key",
+		`my_api_key=abcdef1234567890`:           "Generic API Key",
+	}
+	for body, want := range cases {
+		hits := scanBody("https://x.test/f", []byte(body))
+		found := false
+		for _, h := range hits {
+			if h.Pattern == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: expected a %s hit, got %v", body, want, hits)
+		}
+	}
+}
+
+// TestScanBodyNoFalsePositiveOnKeyMutationsWithoutAssignment makes sure the
+// looser key-name matching doesn't start firing on ordinary prose that
+// merely contains the trigger word with no assignment shape next to it.
+func TestScanBodyNoFalsePositiveOnKeyMutationsWithoutAssignment(t *testing.T) {
+	hits := scanBody("https://x.test/f", []byte("the secret of a good cup of coffee: grind fresh beans"))
+	if len(hits) != 0 {
+		t.Errorf("expected no hits on prose containing \"secret\", got %v", hits)
+	}
+}
+
 func TestScanBodyNoFalsePositiveOnPlainText(t *testing.T) {
 	hits := scanBody("https://x.test/f", []byte("just an ordinary welcome page with nothing secret in it at all"))
 	if len(hits) != 0 {

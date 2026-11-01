@@ -79,7 +79,7 @@ type SecretPattern struct {
 // heuristic, to keep false positives low on arbitrary crawled text.
 var SecretPatterns = []SecretPattern{
 	{"AWS Access Key ID", regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
-	{"AWS Secret Access Key", regexp.MustCompile(`(?i)aws_secret_access_key\s*[=:]\s*['"]?[A-Za-z0-9/+=]{40}['"]?`)},
+	{"AWS Secret Access Key", regexp.MustCompile(`(?i)aws[_-]?secret[_-]?access[_-]?key\s*['"]?\s*[=:]\s*['"]?[A-Za-z0-9/+=]{40}['"]?`)},
 	{"Google API Key", regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`)},
 	{"Slack Token", regexp.MustCompile(`xox[baprs]-[0-9A-Za-z-]{10,48}`)},
 	{"Slack Webhook", regexp.MustCompile(`https://hooks\.slack\.com/services/T[0-9A-Za-z]{8,}/B[0-9A-Za-z]{8,}/[0-9A-Za-z]{20,}`)},
@@ -89,6 +89,13 @@ var SecretPatterns = []SecretPattern{
 	{"JSON Web Token", regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
 	{"Basic Auth in URL", regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]{2,10}://[^/\s:@'"]{3,40}:[^/\s:@'"]{3,40}@[^/\s'"]+`)},
 	{"Database Connection String", regexp.MustCompile(`(?i)(mongodb(\+srv)?|mysql|postgres(ql)?|redis)://[^:\s'"]+:[^@\s'"]+@[^/\s'"]+`)},
-	{"Generic API Key", regexp.MustCompile(`(?i)(api[_-]?key|apikey)\s*[=:]\s*['"][0-9a-zA-Z\-_]{16,64}['"]`)},
-	{"Generic Secret/Password", regexp.MustCompile(`(?i)(secret|passwd|password|token)\s*[=:]\s*['"][^'"\s]{8,64}['"]`)},
+	// The two generic patterns wrap their trigger word in [\w-]* on both
+	// sides and make the value's quoting optional, so a key name is matched
+	// wherever the word appears inside it -- camelCase ("secretKey",
+	// "clientSecret"), snake_case ("secret_key", "my_api_key"), a quoted
+	// JSON key ("secretKey": "..."), or an unquoted .env-style assignment
+	// (SECRET_KEY=...) -- not only the exact bare word immediately before
+	// "=" or ":" that the original, stricter patterns required.
+	{"Generic API Key", regexp.MustCompile(`(?i)['"]?[\w-]*(?:api[_-]?key|apikey)[\w-]*['"]?\s*[=:]\s*['"]?[0-9a-zA-Z\-_]{12,64}['"]?`)},
+	{"Generic Secret/Password", regexp.MustCompile(`(?i)['"]?[\w-]*(?:secret|passwd|password|token)[\w-]*['"]?\s*[=:]\s*['"]?[^\s'",;]{6,128}['"]?`)},
 }
