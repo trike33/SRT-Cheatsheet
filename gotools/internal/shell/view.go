@@ -63,8 +63,10 @@ func (m shellModel) renderHeader() string {
 	if avail < 50 {
 		return lipgloss.JoinVertical(lipgloss.Left, left, box.Width(max(m.width-2, 20)).Render(m.renderProjectBox()))
 	}
-	right := box.Width(avail - 2).MaxWidth(avail).Render(m.renderProjectBox())
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	// Natural width, pushed to the right edge; the gap stays empty.
+	right := box.MaxWidth(avail).Render(m.renderProjectBox())
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", max(gap, 1)), right)
 }
 
 // renderProjectBox is the header's second box: the current project, which
