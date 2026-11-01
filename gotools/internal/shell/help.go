@@ -157,18 +157,13 @@ func (m *shellModel) openHelp(name string) tea.Cmd {
 			return nil
 		}
 	}
-	wasOpen := m.helpOpen
 	m.helpOpen, m.helpName, m.helpScroll = true, name, 0
-	cmds := []tea.Cmd{m.ensureHelp(name)}
-	if !wasOpen {
-		cmds = append(cmds, tea.EnableMouseCellMotion)
-	}
-	return tea.Batch(cmds...)
+	return m.ensureHelp(name)
 }
 
 func (m *shellModel) closeHelp() tea.Cmd {
 	m.helpOpen = false
-	return tea.DisableMouse
+	return nil
 }
 
 // --- inline flag hint ---
@@ -298,11 +293,11 @@ func (m shellModel) mainWidth() int {
 func (m shellModel) paneWidth() int { return max(m.width-m.mainWidth()-1, 20) }
 
 func (m shellModel) paneHeight() int {
-	h := m.height - 1
-	if m.height == 0 {
+	h := m.height
+	if h == 0 {
 		h = 24
 	}
-	return max(min(h, 28), 8)
+	return max(h, 8)
 }
 
 // helpLines is the pane's text wrapped to its inner width, flag headers
@@ -322,7 +317,7 @@ func (m shellModel) helpLines() []string {
 	}
 	var out []string
 	for _, raw := range strings.Split(h.text, "\n") {
-		isFlag := strings.HasPrefix(raw, "  -")
+		isFlag := isFlagLine(raw)
 		// Go indents usage text with spaces+tab; render that as a plain indent
 		// and keep it on wrapped continuation lines.
 		body := strings.TrimLeft(raw, " \t")

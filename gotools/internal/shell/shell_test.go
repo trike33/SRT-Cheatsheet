@@ -2,6 +2,7 @@ package shell
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -608,5 +609,63 @@ func TestArgClassHighlightsFlags(t *testing.T) {
 		if got := m.argClass(toks, i); got != want[i] {
 			t.Errorf("token %q: class %v, want %v", toks[i].text, got, want[i])
 		}
+	}
+}
+
+func TestCommandOutputIsCapturedIntoScrollback(t *testing.T) {
+	m := newTestModel()
+	m.self, m.width, m.height = "/bin/echo", 100, 30
+	m.names = append(m.names, "hello")
+	nm, cmd := m.launch("hello", []string{"world"}, false)
+	m = nm.(shellModel)
+	if m.run == nil {
+		t.Fatal("run state not set while the command is running")
+	}
+	for msg := cmd(); ; {
+		if b, ok := msg.(tea.BatchMsg); ok {
+			msg = b[0]() // begin(): first output batch
+			continue
+		}
+		var next tea.Model
+		next, cmd = m.Update(msg)
+		m = next.(shellModel)
+		if m.run == nil {
+			break
+		}
+		msg = cmd()
+	}
+	if len(m.out) == 0 || m.out[0] != "hello world" {
+		t.Errorf("scrollback = %q", m.out)
+	}
+	if got := strings.Count(m.View(), "\n") + 1; got != m.height {
+		t.Errorf("view is %d rows, want exactly the terminal height %d", got, m.height)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if !strings.Contains(lines[len(lines)-1], "help") && !strings.Contains(lines[len(lines)-2], "srt>") {
+		t.Errorf("prompt is not pinned to the bottom:\n%s", m.View())
+	}
+}
+
+func TestScrollbackScrollsAndClamps(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	for i := 0; i < 100; i++ {
+		m.appendOut(fmt.Sprintf("line %d", i))
+	}
+	if !strings.Contains(m.renderOutput(80, 10), "line 99") {
+		t.Error("following output should show the newest line")
+	}
+	m.scrollOut(15)
+	out := m.renderOutput(80, 10)
+	if strings.Contains(out, "line 99") || !strings.Contains(out, "line 84") {
+		t.Errorf("scrolled view wrong:\n%s", out)
+	}
+	m.scrollOut(10000)
+	if m.outScroll > 100 {
+		t.Errorf("scroll not clamped: %d", m.outScroll)
+	}
+	m.scrollOut(-10000)
+	if m.outScroll != 0 {
+		t.Errorf("scroll below newest: %d", m.outScroll)
 	}
 }

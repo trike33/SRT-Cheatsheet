@@ -12,8 +12,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 )
 
 // Resumable sessions. Long-running commands (portscan, fuzz, pipeline) can be
@@ -110,34 +108,16 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 		}
 	}
 
-	// A command takes over the screen, so close the help pane (and its mouse
-	// capture) first; otherwise its output would be drawn around the pane.
-	var closePane tea.Cmd
+	// The output area is the main column's full width, so the help pane makes
+	// way for it.
 	if m.helpOpen {
-		closePane = m.closeHelp()
+		m.closeHelp()
 	}
 
-	c := m.cmdFor(cmdName, runArgs)
-	base, snap := m.traffic, m
-	pinned := &pinnedExec{
-		cmd:         c,
-		trafficFile: m.trafficFile,
-		header: func(live netx.Totals, rate float64) string {
-			hm := snap
-			hm.traffic = base
-			hm.traffic.Add(live)
-			hm.lastRun = fmt.Sprintf("running: %s — %s · %.0f req/s", cmdName, live, rate)
-			hm.width = max(hm.width, 80)
-			return hm.renderHeader()
-		},
-	}
-	run := tea.Exec(pinned, func(err error) tea.Msg {
-		return execDoneMsg{cmd: cmdName, err: err, sess: sess, stateFile: stateFile, dir: cwd}
-	})
-	if closePane != nil {
-		return m, tea.Sequence(closePane, run)
-	}
-	return m, run
+	rs := newRun(m.cmdFor(cmdName, runArgs))
+	rs.name, rs.sess, rs.stateFile, rs.dir = cmdName, sess, stateFile, cwd
+	m.run = rs
+	return m, tea.Batch(rs.begin(), tick())
 }
 
 // recordSession updates the on-disk session list from a finished command:

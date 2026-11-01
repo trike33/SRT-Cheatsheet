@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
@@ -48,7 +49,7 @@ func Run(args []string) error {
 	}
 
 	m := newShellModel(self)
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return err
 	}
 	return nil
@@ -86,6 +87,13 @@ type shellModel struct {
 	prevDir     string      // previous project, for `cd -`
 	notice      string      // transient info line (not an error) -- cleared on the next keystroke
 	lastRun     string      // last finished command's traffic summary -- persists in its own box
+
+	out       []string  // scrollback shown between the header and the prompt
+	outScroll int       // rows scrolled up from the newest output (0 = following)
+	run       *runState // the command currently running, if any
+	live      netx.Totals
+	liveAt    time.Time
+	liveRate  float64
 
 	lastErr  error
 	quitting bool
@@ -143,18 +151,42 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.helpOpen {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.scrollHelp(-3)
-			case tea.MouseButtonWheelDown:
-				m.scrollHelp(3)
-			}
+		d := 0
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			d = -3
+		case tea.MouseButtonWheelDown:
+			d = 3
+		}
+		if m.helpOpen && msg.X >= m.mainWidth() {
+			m.scrollHelp(d)
+		} else {
+			m.scrollOut(-d)
 		}
 		return m, nil
 
+	case outMsg:
+		m.appendOut(msg.lines...)
+		if m.run == nil {
+			return m, nil
+		}
+		return m, waitOutput(m.run)
+
+	case tickMsg:
+		if m.run == nil {
+			return m, nil
+		}
+		m.tickTraffic()
+		return m, tick()
+
 	case execDoneMsg:
 		m.lastErr = nil
+		m.run, m.live, m.liveAt, m.liveRate = nil, netx.Totals{}, time.Time{}, 0
+		if c := execExitCode(msg.err); c > 0 {
+			m.appendOut(dimStyle(m.colorOn).Render(fmt.Sprintf("[%s exited with status %d]", msg.cmd, c)), "")
+		} else {
+			m.appendOut("")
+		}
 		recordSession(msg)
 		if t, ok := netx.ReadTrafficFile(m.trafficFile); ok {
 			m.traffic.Add(t)
@@ -197,6 +229,19 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.lastErr = nil
 	m.notice = ""
 
+	if m.run != nil {
+		// A running command owns the prompt: only stop and scroll keys work.
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.run.interrupt()
+			m.notice = "stopping " + m.run.name + " (Ctrl+C again to kill)"
+			return m, nil
+		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlUp, tea.KeyCtrlDown, tea.KeyEsc:
+		default:
+			return m, nil
+		}
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		m.quitting = true
@@ -211,6 +256,7 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.runLine()
 
 	case tea.KeyCtrlL: // same as typing `clear`, without touching the line being edited
+		m.out, m.outScroll = nil, 0
 		return m, tea.ClearScreen
 
 	case tea.KeyEsc:
@@ -226,6 +272,12 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				tea.KeyCtrlUp: -1, tea.KeyCtrlDown: 1,
 			}[msg.Type]
 			m.scrollHelp(delta)
+		} else {
+			page := m.outHeight() - 1
+			m.scrollOut(map[tea.KeyType]int{
+				tea.KeyPgUp: page, tea.KeyPgDown: -page,
+				tea.KeyCtrlUp: 1, tea.KeyCtrlDown: -1,
+			}[msg.Type])
 		}
 		return m, nil
 
@@ -390,8 +442,7 @@ func (m *shellModel) completeCommandName() bool {
 // run as a subprocess of srt itself (never in-process): every command's
 // flag.FlagSet uses flag.ExitOnError, so a bad flag -- or -h -- calls
 // os.Exit, which in-process would kill this whole shell session instead of
-// just that one command. tea.ExecProcess suspends the TUI for the
-// subprocess's duration and hands it the real terminal, then resumes.
+// just that one command. Its output is captured into the scrollback (run.go).
 func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	line := strings.TrimSpace(string(m.input))
 	m.input = nil
@@ -403,6 +454,8 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	}
 	m.history = append(m.history, line)
 	m.histPos = len(m.history)
+	m.outScroll = 0
+	m.appendOut(promptStyle(m.colorOn).Render("srt> ") + line)
 
 	fields, err := shellSplitArgs(line)
 	if err != nil {
@@ -419,6 +472,7 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "clear":
+		m.out = nil
 		return m, tea.ClearScreen
 	case "color":
 		m.applyColorCommand(cmdArgs)

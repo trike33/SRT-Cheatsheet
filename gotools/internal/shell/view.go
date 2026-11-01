@@ -57,13 +57,14 @@ func (m shellModel) renderHeader() string {
 		Padding(0, 2)
 	left := box.Render(row)
 
-	// The project box takes the rest of the row; on a narrow terminal it
-	// drops below the version box instead.
+	// The project box takes the rest of the row, as tall as the banner; on a
+	// narrow terminal it drops below instead.
 	avail := m.width - lipgloss.Width(left) - 1
 	if avail < 50 {
 		return lipgloss.JoinVertical(lipgloss.Left, left, box.Width(max(m.width-2, 20)).Render(m.renderProjectBox()))
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Center, left, " ", box.Width(avail-2).Render(m.renderProjectBox()))
+	right := box.Width(avail - 2).Height(lipgloss.Height(left) - 2).MaxWidth(avail).Render(m.renderProjectBox())
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 }
 
 // renderProjectBox is the header's second box: the current project, which
@@ -75,14 +76,13 @@ func (m shellModel) renderProjectBox() string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(colorGray))
 	found := func(label, path string) string {
 		if path == "" {
-			return dim.Render(label + " (none detected)")
+			return dim.Render(label + " none")
 		}
 		return dim.Render(label+" ") + lipgloss.NewStyle().Foreground(lipgloss.Color(colorGreen)).Render(filepath.Base(path))
 	}
+	scopes := found("host:", host) + dim.Render("  ·  ") + found("web:", web)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPurple)).Render("project: "+projectName(wd)),
-		found("host scope:", host),
-		found("web scope: ", web),
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorPurple)).Render("project: "+projectName(wd))+dim.Render("  scope  ")+scopes,
 		dim.Render(m.renderTraffic()),
 	)
 }
@@ -90,7 +90,23 @@ func (m shellModel) renderProjectBox() string {
 // versionLine mirrors the version package's own format, so the banner and
 // `srt version` never disagree.
 func versionLine() string {
-	return version.Display()
+	v := version.Display()
+	// A pseudo-version ("v0.2.1-0.2026...-<rev>") plus its "(<rev>)" suffix
+	// says the revision twice; keep the base tag and a short revision.
+	tag, rest, _ := strings.Cut(v, " (")
+	rev := strings.TrimSuffix(rest, ")")
+	if i := strings.Index(tag, "-"); i > 0 {
+		tag = tag[:i]
+	}
+	if rev == "" {
+		return tag
+	}
+	rev, dirty := strings.CutSuffix(rev, "-dirty")
+	rev = rev[:min(len(rev), 7)]
+	if dirty {
+		rev += "-dirty"
+	}
+	return tag + " (" + rev + ")"
 }
 
 func buildLine() string {
@@ -267,26 +283,41 @@ func (m shellModel) View() string {
 	if m.quitting {
 		return ""
 	}
-
-	prompt := promptStyle(m.colorOn).Render("srt> ")
-	highlighted := m.renderHighlightedLine()
-
-	boxWidth := m.mainWidth() - 4
-	if boxWidth < 20 {
-		boxWidth = 20
+	height := m.height
+	if height == 0 {
+		height = 24
 	}
-	inputBox := inputBoxStyle(m.colorOn, boxWidth).Render(prompt + highlighted)
 
-	main := inputBox + "\n"
-	if hint := m.flagHint(); len(hint) > 0 {
-		main += strings.Join(hint, "\n") + "\n"
+	bottom := m.renderBottom()
+	head, headH := "", 0
+	if !m.helpOpen {
+		header := m.renderHeader()
+		head, headH = header+"\n", lipgloss.Height(header)
 	}
-	main += m.renderStatus()
+	outH := max(height-headH-lipgloss.Height(bottom), 3)
+	main := head + m.renderOutput(m.mainWidth(), outH) + "\n" + bottom
 
 	if !m.helpOpen {
-		return m.renderHeader() + "\n" + main
+		return main
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Bottom, main, " ", m.renderHelpPane())
+	return lipgloss.JoinHorizontal(lipgloss.Top, main, " ", m.renderHelpPane())
+}
+
+// renderBottom is the part pinned to the bottom of the screen: the prompt
+// box, the flag hint while typing one, and the status line.
+func (m shellModel) renderBottom() string {
+	boxWidth := max(m.mainWidth()-4, 20)
+	var content string
+	if m.run != nil {
+		content = dimStyle(m.colorOn).Render("running " + m.run.name + " — Ctrl+C stops it · PgUp/PgDn scroll")
+	} else {
+		content = promptStyle(m.colorOn).Render("srt> ") + m.renderHighlightedLine()
+	}
+	bottom := inputBoxStyle(m.colorOn, boxWidth).MaxWidth(m.mainWidth()).Render(content) + "\n"
+	if hint := m.flagHint(); len(hint) > 0 && m.run == nil {
+		bottom += strings.Join(hint, "\n") + "\n"
+	}
+	return bottom + m.renderStatus()
 }
 
 // renderTraffic is the header's traffic summary: the session total
@@ -302,7 +333,11 @@ func (m shellModel) renderTraffic() string {
 	if m.save {
 		save = "on"
 	}
-	session := fmt.Sprintf("session: %s · rate %s · save %s", m.traffic.String(), rate, save)
+	total := m.traffic
+	if m.run != nil {
+		total.Add(m.live)
+	}
+	session := fmt.Sprintf("session: %s · rate %s · save %s", total.String(), rate, save)
 	last := m.lastRun
 	if last == "" {
 		last = "last: (no command run yet)"
