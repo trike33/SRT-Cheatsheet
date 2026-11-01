@@ -185,7 +185,11 @@ func (m *shellModel) printHelp(name string) {
 		}
 		lines = append(lines, l)
 	}
-	m.appendOut(lines...)
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(max(m.width-2, 20))
+	if m.colorOn {
+		box = box.BorderForeground(lipgloss.Color(colorIndigo))
+	}
+	m.appendOut(strings.Split(box.Render(strings.Join(lines, "\n")), "\n")...)
 	m.endBlock()
 }
 

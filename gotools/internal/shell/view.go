@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -208,6 +209,8 @@ func (m shellModel) renderHighlightedLine() string {
 		case i == 0:
 			if commandKnown(m.names, tok.text) {
 				c = classCommand
+			} else if _, err := exec.LookPath(tok.text); err == nil {
+				c = classString // not an srt command, but runs as a raw command
 			} else {
 				c = classUnknown
 			}

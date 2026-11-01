@@ -22,3 +22,5 @@ func signalGroup(p *os.Process, kill bool) {
 	}
 	_ = syscall.Kill(-p.Pid, sig)
 }
+
+func rawShellCmd(line string) *exec.Cmd { return exec.Command("/bin/sh", "-c", line) }

@@ -167,3 +167,18 @@ func (m shellModel) resumeSession(args []string) (tea.Model, tea.Cmd) {
 	m.notice = "resuming " + strings.Join(pick.Args, " ")
 	return m.launch(pick.Args[0], pick.Args[1:], true)
 }
+
+// launchRaw runs a line that isn't an srt command through the system shell,
+// so pipes, redirects and ordinary tools (ls, curl, nmap, ...) work as at a
+// normal prompt. It gets no traffic accounting and no limits: those only
+// apply to srt's own commands.
+func (m shellModel) launchRaw(line string) (tea.Model, tea.Cmd) {
+	m.trafficFile = ""
+	cwd, _ := os.Getwd()
+	c := rawShellCmd(line)
+	c.Env = os.Environ()
+	rs := newRun(c)
+	rs.name, rs.dir = strings.Fields(line)[0], cwd
+	m.run = rs
+	return m, tea.Batch(rs.begin(), tick())
+}

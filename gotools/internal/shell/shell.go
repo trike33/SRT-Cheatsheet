@@ -87,6 +87,7 @@ type shellModel struct {
 	lastRun     string      // last finished command's traffic summary -- persists in its own box
 
 	out       []string  // scrollback shown between the header and the prompt
+	sel       selection // mouse selection in the output area
 	outScroll int       // rows scrolled up from the newest output (0 = following)
 	run       *runState // the command currently running, if any
 	live      netx.Totals
@@ -155,17 +156,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		d := 0
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			d = -3
-		case tea.MouseButtonWheelDown:
-			d = 3
-		}
-		m.scrollOut(-d)
-		return m, nil
+		return m.handleMouse(msg)
 
 	case outMsg:
+		m.sel = selection{}
 		m.appendCmdOut(msg.lines)
 		if m.run == nil {
 			return m, nil
@@ -215,6 +209,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		m.sel = selection{}
 		nm, cmd := m.handleKey(msg)
 		if sm, ok := nm.(shellModel); ok {
 			if hc := sm.ensureHint(); hc != nil {
@@ -517,8 +512,7 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	}
 
 	if _, ok := cli.Lookup(cmdName); !ok {
-		m.lastErr = fmt.Errorf("unknown command %q (type \"help\" to list commands)", cmdName)
-		return m, nil
+		return m.launchRaw(line)
 	}
 
 	return m.launch(cmdName, cmdArgs, false)

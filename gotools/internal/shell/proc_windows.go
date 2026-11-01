@@ -14,3 +14,5 @@ func setProcGroup(c *exec.Cmd) {}
 
 // Windows has no SIGINT for child processes; stopping means killing.
 func signalGroup(p *os.Process, kill bool) { _ = p.Kill() }
+
+func rawShellCmd(line string) *exec.Cmd { return exec.Command("cmd", "/C", line) }

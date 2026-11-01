@@ -3,6 +3,7 @@ package shell
 import (
 	"bufio"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 )
@@ -278,10 +280,8 @@ func (m *shellModel) scrollOut(delta int) {
 	m.outScroll = min(max(m.outScroll+delta, 0), maxScroll)
 }
 
-// renderOutput draws the output area: newest output at the bottom once it
-// fills the area, top-aligned until then. scroll rows are hidden at the
-// bottom.
-func (m shellModel) renderOutput(w, h int) string {
+// visibleRows returns the h rows of the output area, top to bottom.
+func (m shellModel) visibleRows(w, h int) []string {
 	var rows []string // collected newest-first
 	seen := 0
 	for i := len(m.out) - 1; i >= 0 && seen < m.outScroll+h; i-- {
@@ -299,5 +299,120 @@ func (m shellModel) renderOutput(w, h int) string {
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
+	return rows
+}
+
+// renderOutput draws the output area: newest output at the bottom once it
+// fills the area, top-aligned until then. scroll rows are hidden at the
+// bottom. A mouse selection is drawn in reverse video.
+func (m shellModel) renderOutput(w, h int) string {
+	rows := m.visibleRows(w, h)
+	if m.sel.active {
+		a, b := m.sel.ordered()
+		for y := a.y; y <= b.y && y < len(rows); y++ {
+			if y < 0 {
+				continue
+			}
+			plain := ansi.Strip(rows[y])
+			from, to := 0, lipgloss.Width(plain)
+			if y == a.y {
+				from = a.x
+			}
+			if y == b.y {
+				to = b.x + 1
+			}
+			to = min(to, lipgloss.Width(plain))
+			if from >= to {
+				continue
+			}
+			rows[y] = ansi.Cut(plain, 0, from) +
+				lipgloss.NewStyle().Reverse(true).Render(ansi.Cut(plain, from, to)) +
+				ansi.Cut(plain, to, lipgloss.Width(plain))
+		}
+	}
 	return strings.Join(rows, "\n")
+}
+
+// --- mouse: wheel scrolling and click-drag selection (copied via OSC 52) ---
+
+type cell struct{ x, y int }
+
+type selection struct {
+	active   bool // a selection exists (being dragged or finished)
+	dragging bool
+	from, to cell // output-area coordinates
+}
+
+func (s selection) ordered() (cell, cell) {
+	a, b := s.from, s.to
+	if b.y < a.y || (b.y == a.y && b.x < a.x) {
+		a, b = b, a
+	}
+	return a, b
+}
+
+func (m shellModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.sel = selection{}
+		m.scrollOut(3)
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.sel = selection{}
+		m.scrollOut(-3)
+		return m, nil
+	}
+	h := m.outHeight()
+	c := cell{msg.X, min(max(msg.Y-lipgloss.Height(m.renderHeader()), 0), h-1)}
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button != tea.MouseButtonLeft {
+			return m, nil
+		}
+		m.sel = selection{dragging: true, from: c, to: c}
+	case tea.MouseActionMotion:
+		if m.sel.dragging {
+			m.sel.to = c
+			m.sel.active = m.sel.from != c
+		}
+	case tea.MouseActionRelease:
+		if !m.sel.dragging {
+			return m, nil
+		}
+		m.sel.dragging = false
+		m.sel.to = c
+		m.sel.active = m.sel.from != c
+		if !m.sel.active {
+			return m, nil
+		}
+		text := m.selectedText()
+		return m, func() tea.Msg {
+			os.Stdout.WriteString(ansi.SetSystemClipboard(text))
+			return nil
+		}
+	}
+	return m, nil
+}
+
+func (m shellModel) selectedText() string {
+	rows := m.visibleRows(m.width, m.outHeight())
+	a, b := m.sel.ordered()
+	var lines []string
+	for y := max(a.y, 0); y <= b.y && y < len(rows); y++ {
+		plain := ansi.Strip(rows[y])
+		from, to := 0, lipgloss.Width(plain)
+		if y == a.y {
+			from = a.x
+		}
+		if y == b.y {
+			to = min(b.x+1, to)
+		}
+		if from < to {
+			plain = ansi.Cut(plain, from, to)
+		} else {
+			plain = ""
+		}
+		lines = append(lines, strings.TrimRight(plain, " "))
+	}
+	return strings.Join(lines, "\n")
 }

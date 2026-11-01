@@ -231,11 +231,11 @@ func TestRunLineExitQuits(t *testing.T) {
 	}
 }
 
-func TestRunLineUnknownCommand(t *testing.T) {
+func TestRunLineUnknownCommandRunsRaw(t *testing.T) {
 	got, cmd := typeLine(newTestModel(), "nosuchcmd -x").runLine()
 	gm := got.(shellModel)
-	if cmd != nil || gm.lastErr == nil {
-		t.Errorf("unknown command: cmd=%v lastErr=%v", cmd, gm.lastErr)
+	if cmd == nil || gm.run == nil || gm.lastErr != nil {
+		t.Errorf("unknown command should run raw: cmd=%v run=%v lastErr=%v", cmd, gm.run, gm.lastErr)
 	}
 	if len(gm.history) != 1 || gm.input != nil || gm.cursor != 0 {
 		t.Errorf("line should be recorded and input reset: %+v", gm)
