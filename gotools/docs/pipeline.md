@@ -45,6 +45,8 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-param-discover` | off | WEB stage: guess hidden GET parameters on the validated endpoints (batch+bisect against a baseline) (same as `options.paramDiscover`) |
 | `-param-discover-max` | `20` | with `-param-discover`: probe at most this many endpoints, first ones first (same as `options.paramDiscoverMax`) |
 | `-param-discover-top` | `500` | with `-param-discover`: try at most this many candidate names per endpoint (same as `options.paramDiscoverTop`) |
+| `-active-on-subdomains` | off | WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (same as `options.activeOnSubdomains`) |
+| `-active-on-subdomains-max` | `20` | with `-active-on-subdomains`: cap to this many live discovered subdomains, first-confirmed first (same as `options.activeOnSubdomainsMax`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -338,9 +340,9 @@ stage discovered and handed off (written to a `web/` subfolder of that
    favour of dnsx when that's installed). **Skipped** if no
    domain was extracted (or none survived step 2). Discovered subdomains
    widen the domain list step 4 (`probe`) and step 5 (`gau`) run against —
-   `robots`/`fuzz` stay scoped to the explicit `web` targets, so this never
-   silently multiplies active traffic (see [ROADMAP.md](ROADMAP.md) for
-   making that opt-in-expandable).
+   `robots`/`fuzz`/`katana` stay scoped to the explicit `web` targets by
+   default, so this never silently multiplies active traffic, unless
+   `options.activeOnSubdomains`/`-active-on-subdomains` is set (see step 4).
 3b. `tlsx` (github.com/projectdiscovery/tlsx), **on by default** —
    `options.tlsx`/`-no-tlsx` to disable: per explicit `web` target, a
    certificate SAN/CN extraction widening the same discovered-names pool
@@ -364,6 +366,15 @@ stage discovered and handed off (written to a `web/` subfolder of that
    behavior as step 2.
 4. `probe` — recon-on-root (title/status/content-length/`Server`/tech-detect)
    for every domain and discovered subdomain. **Skipped** if none exist.
+   With `options.activeOnSubdomains`/`-active-on-subdomains` (**off by
+   default**, gap 8) its results also decide which discovered subdomains
+   get a full active pass below: every one `probe` reached successfully
+   (not just resolved) is added to steps 6a/6/7 (`katana`/`robots`/`fuzz`)
+   as its own target, capped at `options.activeOnSubdomainsMax` (default
+   20, first-confirmed-live first, since each one gets a full fuzz
+   wordlist pass, not just one request). An `active-on-subdomains` step is
+   recorded either way, saying how many of the discovered subdomains were
+   added (and whether the cap applied).
 5. `gau` — per domain **and** discovered subdomain, archived URLs from the
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.

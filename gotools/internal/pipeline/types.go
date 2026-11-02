@@ -50,33 +50,35 @@ func (t *targetEntry) UnmarshalJSON(b []byte) error {
 // pipelineOptions carries pipeline-wide defaults. Any target entry field
 // with the same name overrides these for that one target.
 type pipelineOptions struct {
-	OutputDir          string `json:"outputDir,omitempty"`
-	Concurrency        int    `json:"concurrency,omitempty"`
-	Rate               int    `json:"rate,omitempty"`
-	RateGlobal         int    `json:"rateGlobal,omitempty"`
-	Timeout            string `json:"timeout,omitempty"`
-	Insecure           *bool  `json:"insecure,omitempty"`
-	Wordlist           string `json:"wordlist,omitempty"`
-	Scope              string `json:"scope,omitempty"`
-	Ports              string `json:"ports,omitempty"`
-	Proxy              string `json:"proxy,omitempty"`
-	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
-	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); default: the embedded SecLists top-20000 list
-	Crawl              *bool  `json:"crawl,omitempty"`              // WEB stage: crawl the explicit web targets with katana (default true; skipped if katana isn't installed)
-	CrawlDepth         int    `json:"crawlDepth,omitempty"`         // WEB stage: katana crawl depth (default 3)
-	Validate           *bool  `json:"validate,omitempty"`           // WEB stage: re-probe the merged endpoint list and keep only real ones, dropping soft-404s, before sensitive/params (default true)
-	ValidateMax        int    `json:"validateMax,omitempty"`        // WEB stage: check at most this many endpoints (default 10000; active-step hits come first, archived URLs last)
-	Fuzz               *bool  `json:"fuzz,omitempty"`               // WEB stage: directory/file brute force of the explicit web targets (default true; wordlist: per-target/options.wordlist, else the embedded SecLists common.txt)
-	SubdomainsActive   *bool  `json:"subdomainsActive,omitempty"`   // WEB stage: active DNS brute force of subdomains (default true; passive sources always run regardless)
-	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default true; rate-limited and bounded -- set false to avoid sending probes beyond recon)
-	Subfinder          *bool  `json:"subfinder,omitempty"`          // WEB stage: passive subdomain discovery via subfinder (default true -- queries third-party sources, no traffic to the target)
-	Permutations       *bool  `json:"permutations,omitempty"`       // WEB stage: alterx permutations of discovered names, resolved with dnsx (default false -- multiplies DNS queries)
-	ContentScan        *bool  `json:"contentScan,omitempty"`        // WEB stage: fetch every merged URL and scan its body for secrets (sensitive -content) instead of just classifying by extension (default false -- fetches every URL, not just inspects a string)
-	CDNCheck           *bool  `json:"cdnCheck,omitempty"`           // HOST stage: flag IPs behind a known CDN/WAF/cloud provider via cdncheck (default true -- a local dataset lookup, no traffic to the target at all)
-	TLSX               *bool  `json:"tlsx,omitempty"`               // WEB stage: widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (default true -- one TLS handshake per target, same order of traffic as probe)
-	ParamDiscover      *bool  `json:"paramDiscover,omitempty"`      // WEB stage: guess hidden GET parameters on the validated endpoint list via paramdiscover (default false -- a batch of extra requests per endpoint, capped by paramDiscoverMax/paramDiscoverTop)
-	ParamDiscoverMax   int    `json:"paramDiscoverMax,omitempty"`   // WEB stage: probe at most this many validated endpoints (default 20)
-	ParamDiscoverTop   int    `json:"paramDiscoverTop,omitempty"`   // WEB stage: try at most this many candidate names per endpoint (default 500, same "0/unset falls back to the default" convention as validateMax/crawlDepth)
+	OutputDir             string `json:"outputDir,omitempty"`
+	Concurrency           int    `json:"concurrency,omitempty"`
+	Rate                  int    `json:"rate,omitempty"`
+	RateGlobal            int    `json:"rateGlobal,omitempty"`
+	Timeout               string `json:"timeout,omitempty"`
+	Insecure              *bool  `json:"insecure,omitempty"`
+	Wordlist              string `json:"wordlist,omitempty"`
+	Scope                 string `json:"scope,omitempty"`
+	Ports                 string `json:"ports,omitempty"`
+	Proxy                 string `json:"proxy,omitempty"`
+	AutoExtensions        *bool  `json:"autoExtensions,omitempty"`        // fuzz -ext-auto for targets without explicit "extensions" (default true)
+	SubdomainsWordlist    string `json:"subdomainsWordlist,omitempty"`    // subdomain-label wordlist (e.g. www, api, dev); default: the embedded SecLists top-20000 list
+	Crawl                 *bool  `json:"crawl,omitempty"`                 // WEB stage: crawl the explicit web targets with katana (default true; skipped if katana isn't installed)
+	CrawlDepth            int    `json:"crawlDepth,omitempty"`            // WEB stage: katana crawl depth (default 3)
+	Validate              *bool  `json:"validate,omitempty"`              // WEB stage: re-probe the merged endpoint list and keep only real ones, dropping soft-404s, before sensitive/params (default true)
+	ValidateMax           int    `json:"validateMax,omitempty"`           // WEB stage: check at most this many endpoints (default 10000; active-step hits come first, archived URLs last)
+	Fuzz                  *bool  `json:"fuzz,omitempty"`                  // WEB stage: directory/file brute force of the explicit web targets (default true; wordlist: per-target/options.wordlist, else the embedded SecLists common.txt)
+	SubdomainsActive      *bool  `json:"subdomainsActive,omitempty"`      // WEB stage: active DNS brute force of subdomains (default true; passive sources always run regardless)
+	EasyWins              *bool  `json:"easyWins,omitempty"`              // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default true; rate-limited and bounded -- set false to avoid sending probes beyond recon)
+	Subfinder             *bool  `json:"subfinder,omitempty"`             // WEB stage: passive subdomain discovery via subfinder (default true -- queries third-party sources, no traffic to the target)
+	Permutations          *bool  `json:"permutations,omitempty"`          // WEB stage: alterx permutations of discovered names, resolved with dnsx (default false -- multiplies DNS queries)
+	ContentScan           *bool  `json:"contentScan,omitempty"`           // WEB stage: fetch every merged URL and scan its body for secrets (sensitive -content) instead of just classifying by extension (default false -- fetches every URL, not just inspects a string)
+	CDNCheck              *bool  `json:"cdnCheck,omitempty"`              // HOST stage: flag IPs behind a known CDN/WAF/cloud provider via cdncheck (default true -- a local dataset lookup, no traffic to the target at all)
+	TLSX                  *bool  `json:"tlsx,omitempty"`                  // WEB stage: widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (default true -- one TLS handshake per target, same order of traffic as probe)
+	ParamDiscover         *bool  `json:"paramDiscover,omitempty"`         // WEB stage: guess hidden GET parameters on the validated endpoint list via paramdiscover (default false -- a batch of extra requests per endpoint, capped by paramDiscoverMax/paramDiscoverTop)
+	ParamDiscoverMax      int    `json:"paramDiscoverMax,omitempty"`      // WEB stage: probe at most this many validated endpoints (default 20)
+	ParamDiscoverTop      int    `json:"paramDiscoverTop,omitempty"`      // WEB stage: try at most this many candidate names per endpoint (default 500, same "0/unset falls back to the default" convention as validateMax/crawlDepth)
+	ActiveOnSubdomains    *bool  `json:"activeOnSubdomains,omitempty"`    // WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (default false -- each one gets its own full active pass, capped by activeOnSubdomainsMax)
+	ActiveOnSubdomainsMax int    `json:"activeOnSubdomainsMax,omitempty"` // WEB stage: with activeOnSubdomains, cap to this many live discovered subdomains, first-confirmed first (default 20)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -167,6 +169,13 @@ func (o pipelineOptions) paramDiscoverOrDefault(def bool) bool {
 		return def
 	}
 	return *o.ParamDiscover
+}
+
+func (o pipelineOptions) activeOnSubdomainsOrDefault(def bool) bool {
+	if o.ActiveOnSubdomains == nil {
+		return def
+	}
+	return *o.ActiveOnSubdomains
 }
 
 func (o pipelineOptions) contentScanOrDefault(def bool) bool {

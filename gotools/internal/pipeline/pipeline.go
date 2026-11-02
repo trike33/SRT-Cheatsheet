@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -67,6 +67,8 @@ func Run(args []string) error {
 	paramDiscover := fs.Bool("param-discover", false, "WEB stage: guess hidden GET parameters on the validated endpoint list (batch+bisect against a baseline, Arjun-style) (off by default -- a batch of extra requests per endpoint; same as options.paramDiscover in a JSON config)")
 	paramDiscoverMax := fs.Int("param-discover-max", 0, "with -param-discover: probe at most this many validated endpoints, first ones first (default 20; same as options.paramDiscoverMax)")
 	paramDiscoverTop := fs.Int("param-discover-top", 0, "with -param-discover: try at most this many candidate parameter names per endpoint (default 500; same as options.paramDiscoverTop)")
+	activeOnSubdomains := fs.Bool("active-on-subdomains", false, "WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (off by default -- each one gets its own full active pass; same as options.activeOnSubdomains in a JSON config)")
+	activeOnSubdomainsMax := fs.Int("active-on-subdomains-max", 0, "with -active-on-subdomains: cap to this many live discovered subdomains, first-confirmed first (default 20; same as options.activeOnSubdomainsMax)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -137,6 +139,13 @@ func Run(args []string) error {
 	}
 	if *paramDiscoverTop > 0 {
 		cfg.Options.ParamDiscoverTop = *paramDiscoverTop
+	}
+	if *activeOnSubdomains {
+		enabled := true
+		cfg.Options.ActiveOnSubdomains = &enabled
+	}
+	if *activeOnSubdomainsMax > 0 {
+		cfg.Options.ActiveOnSubdomainsMax = *activeOnSubdomainsMax
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)

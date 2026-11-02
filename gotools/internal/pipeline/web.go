@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -154,11 +155,11 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	allDomains = ioutil.DedupStrings(allDomains)
 
 	// --- 01c: probe (recon on root) for every domain + discovered subdomain ---
+	probeFile := filepath.Join(outDir, "01c_probe.json")
 	if len(allDomains) == 0 {
 		steps = append(steps, skipStep("web", "probe", "", "no domains to probe"))
 	} else {
 		probeTargetsFile := filepath.Join(outDir, "01c_probe_targets.txt")
-		probeFile := filepath.Join(outDir, "01c_probe.json")
 		if err := writeLinesFile(probeTargetsFile, allDomains); err != nil {
 			steps = append(steps, stepResult{Kind: "web", Name: "probe", Status: "error", Detail: err.Error()})
 		} else {
@@ -170,6 +171,35 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 				return probe.Run(probeArgs)
 			}))
 		}
+	}
+
+	// --- 01f: options.activeOnSubdomains/-active-on-subdomains (off by
+	// default, gap 8) -- robots/fuzz below only cover the explicit web
+	// targets; every domain discovered by subdomain enumeration/tlsx/dnsx
+	// only ever reaches passive gau and a single probe request, so "recon
+	// on every subdomain" never gets to endpoint discovery. With this on,
+	// every discovered subdomain probe just confirmed live is added to
+	// robots/fuzz too -- capped at activeOnSubdomainsMax (default 20,
+	// first-confirmed first) since each one gets its own full fuzz
+	// wordlist pass, not just one request like probe/gau.
+	var activeSubBases []string
+	if cfg.Options.activeOnSubdomainsOrDefault(false) && len(discoveredAll) > 0 {
+		want := map[string]bool{}
+		for _, d := range discoveredAll {
+			want[d] = true
+		}
+		live := liveProbedBaseURLs(probeFile, want)
+		maxN := cfg.Options.ActiveOnSubdomainsMax
+		if maxN <= 0 {
+			maxN = 20
+		}
+		detail := fmt.Sprintf("%d of %d discovered subdomain(s) confirmed live by probe, added to robots/fuzz", len(live), len(discoveredAll))
+		if len(live) > maxN {
+			detail = fmt.Sprintf("%d of %d discovered subdomain(s) confirmed live by probe, capped to the first %d for robots/fuzz (options.activeOnSubdomainsMax)", len(live), len(discoveredAll), maxN)
+			live = live[:maxN]
+		}
+		activeSubBases = live
+		steps = append(steps, stepResult{Kind: "web", Name: "active-on-subdomains", Status: "ok", Detail: detail})
 	}
 
 	// --- 02: gau, per domain AND discovered subdomain, merged into one file ---
@@ -209,6 +239,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 			robotsBases = append(robotsBases, baseURL(e.Target))
 		}
 	}
+	robotsBases = append(robotsBases, activeSubBases...)
 	if len(robotsBases) > 0 {
 		robotsArgs := []string{
 			"-timeout", cfg.Options.timeoutDuration(15 * time.Second).String(),
@@ -234,7 +265,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	// for endpoints, reads robots/sitemap, and extracts form fields. Its
 	// endpoints join the merged list below; its forms are written to
 	// 05c_forms.txt (parameter names the site declares itself).
-	crawled, forms, crawlSteps := crawlTargets(cfg, outDir)
+	crawled, forms, crawlSteps := crawlTargets(cfg, outDir, activeSubBases)
 	steps = append(steps, crawlSteps...)
 	if len(forms) > 0 {
 		if err := writeForms(filepath.Join(outDir, "05c_forms.txt"), forms); err != nil {
@@ -242,8 +273,16 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}
 	}
 
-	// --- 06: fuzz, per target that resolves to a wordlist ---
-	for _, e := range cfg.Web {
+	// --- 06: fuzz, per target that resolves to a wordlist -- the explicit
+	// web targets, plus (options.activeOnSubdomains) every probe-confirmed
+	// live discovered subdomain, as a bare entry with no per-target
+	// override (wordlist/scope/extensions all fall back to the pipeline
+	// defaults, same as a bare string entry in cfg.Web would).
+	fuzzTargets := append([]targetEntry{}, cfg.Web...)
+	for _, b := range activeSubBases {
+		fuzzTargets = append(fuzzTargets, targetEntry{Target: b})
+	}
+	for _, e := range fuzzTargets {
 		if e.Target == "" {
 			continue
 		}
@@ -304,7 +343,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	// params over that merged list -- so they see what the active steps
 	// found, not just what Wayback remembers.
 	var fuzzFiles []string
-	for _, e := range cfg.Web {
+	for _, e := range fuzzTargets {
 		if e.Target != "" {
 			fuzzFiles = append(fuzzFiles, filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json"))
 		}
@@ -717,6 +756,34 @@ func safeName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// liveProbedBaseURLs reads probe's -json output and returns the base URL
+// (scheme://host) of every result whose Target is in want and which probe
+// reached successfully (Err == ""). Used by options.activeOnSubdomains/gap
+// 8 to turn "discovered subdomain" into "confirmed live base URL" before
+// handing it to robots/fuzz/katana, so an unreachable or wildcard-DNS
+// subdomain doesn't get a full active pass for nothing.
+func liveProbedBaseURLs(probeFile string, want map[string]bool) []string {
+	f, err := os.Open(probeFile)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
+	var out []string
+	for sc.Scan() {
+		var r probe.Result
+		if json.Unmarshal(sc.Bytes(), &r) != nil {
+			continue
+		}
+		if r.Err != "" || r.URL == "" || !want[r.Target] {
+			continue
+		}
+		out = append(out, r.URL)
+	}
+	return ioutil.DedupStrings(out)
 }
 
 // mustLines reads a file's lines, treating a read error as "no lines" since

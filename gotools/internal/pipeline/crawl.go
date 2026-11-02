@@ -67,24 +67,20 @@ func parseKatana(file string) (endpoints []string, forms []crawlForm) {
 // configured for a target, crawled URLs outside it are dropped. Skips
 // cleanly when katana isn't installed. Pulled out of runWebStage so it's
 // testable with a fake katana on PATH.
-func crawlTargets(cfg *pipelineConfig, outDir string) (urls []string, forms []crawlForm, steps []stepResult) {
+// crawlTargets katana-crawls every explicit web target, plus extraBases (if
+// any -- see options.activeOnSubdomains/gap 8: probe-confirmed-live
+// discovered subdomains, scoped only by the pipeline-wide options.scope
+// since they have no per-target override of their own).
+func crawlTargets(cfg *pipelineConfig, outDir string, extraBases []string) (urls []string, forms []crawlForm, steps []stepResult) {
 	if !cfg.Options.crawlOrDefault(true) {
 		return nil, nil, nil
 	}
-	for _, e := range cfg.Web {
-		if e.Target == "" {
-			continue
-		}
-		target := baseURL(e.Target)
+	crawlOne := func(target, scopeFile string) {
 		file := filepath.Join(outDir, "05b_katana_"+safeName(target)+".jsonl")
 		steps = append(steps, runExternal("web", "katana", target, "katana",
 			katanaArgs(target, cfg.Options.CrawlDepth, cfg.Options.Rate, cfg.Options.Concurrency, cfg.Options.Proxy), file))
 
 		eps, fms := parseKatana(file)
-		scopeFile := e.Scope
-		if scopeFile == "" {
-			scopeFile = cfg.Options.Scope
-		}
 		if scopeFile != "" {
 			if m, err := scope.LoadScopeMatcher(scopeFile); err == nil {
 				keep := func(u string) bool { return m.InScope(u) }
@@ -105,6 +101,19 @@ func crawlTargets(cfg *pipelineConfig, outDir string) (urls []string, forms []cr
 			urls = append(urls, f.Action)
 		}
 		forms = append(forms, fms...)
+	}
+	for _, e := range cfg.Web {
+		if e.Target == "" {
+			continue
+		}
+		scopeFile := e.Scope
+		if scopeFile == "" {
+			scopeFile = cfg.Options.Scope
+		}
+		crawlOne(baseURL(e.Target), scopeFile)
+	}
+	for _, b := range extraBases {
+		crawlOne(b, cfg.Options.Scope)
 	}
 	return ioutil.DedupStrings(urls), forms, steps
 }

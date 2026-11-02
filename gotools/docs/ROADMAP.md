@@ -4,6 +4,36 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Active steps (`robots`/`fuzz`/`katana`) can reach probe-confirmed-live discovered subdomains (gap 8)
+- **`options.activeOnSubdomains`/`-active-on-subdomains`** (off by default)
+  — `robots`/`fuzz`/`katana` previously only ever ran against the explicit
+  `web` targets; every domain `subdomains`/`tlsx`/`dnsx`/`alterx`
+  discovered only ever reached `gau` (passive) and one `probe` request
+  (recon-on-root), so "recon on every subdomain" never got to endpoint
+  discovery (gau alone finds nothing for a subdomain with no Wayback
+  history). With this on, step 4 (`probe`)'s own results decide which
+  discovered subdomains get the same full active pass as an explicit
+  target: every one `probe` actually reached (not just resolved — a
+  wildcard-DNS or dead subdomain never gets a wordlist thrown at it for
+  nothing) is added to `robots`/`fuzz`/`katana` as its own target, capped
+  at `options.activeOnSubdomainsMax` (default 20, first-confirmed-live
+  first) since each one gets a full fuzz wordlist pass and crawl, not just
+  one request like `probe`/`gau`. An `active-on-subdomains` step is always
+  recorded, saying how many were added (and whether the cap applied), even
+  when it's off (0 of N). See [pipeline.md's step
+  4](pipeline.md#web-stage--outputdirweb) for the user-facing version.
+- Implementation: `internal/pipeline/web.go`'s `liveProbedBaseURLs` parses
+  step 4's own `-json` probe output (`internal/recon/probe.Result`) and
+  returns the base URL of every result whose `Target` is a discovered
+  subdomain and whose `Err` is empty — no new probing, it's free given
+  probe already ran. `crawlTargets` (`internal/pipeline/crawl.go`) now
+  takes an `extraBases []string` alongside `cfg.Web`, scoped only by
+  `options.scope` since a discovered subdomain has no per-target override
+  of its own; the `robots`/`fuzz` call sites append the same list
+  (`fuzz`'s target loop now ranges over `cfg.Web` plus a synthetic
+  `targetEntry` per extra base, so wordlist/extensions/scope resolution is
+  identical to a bare `web` entry).
+
 ### Commands default their input to the project database when nothing else is given
 - **`probe`, `portscan`, `resolve`, `traceroute`, `subdomains`, `gau`,
   `sensitive`, `params`, `robots` and `validate` now fall back to
@@ -690,10 +720,12 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
 7. **No guessed/context wordlists.** Only extensions are auto-detected
    (`-ext-auto`); words derived from the target's tech stack, titles, JS
    identifiers or the engagement name are not generated.
-8. **Active steps only cover explicit targets.** `robots`/`fuzz` never run
-   against discovered live subdomains (deliberate, to bound traffic, but
-   then "recon on every subdomain" never reaches endpoint discovery). Needs
-   an opt-in that feeds `probe`-confirmed live hosts forward.
+8. ~~**Active steps only cover explicit targets.**~~ *(done — see Shipped:
+   `options.activeOnSubdomains`/`-active-on-subdomains`)* *(original
+   note:)* `robots`/`fuzz` never run against discovered live subdomains
+   (deliberate, to bound traffic, but then "recon on every subdomain"
+   never reaches endpoint discovery). Needs an opt-in that feeds
+   `probe`-confirmed live hosts forward.
 9. ~~**Parameters are only classified, not discovered.**~~ *(mostly done —
    see Shipped: `paramdiscover`'s batch+bisect guessing, wired in opt-in;
    katana's form extraction covers HTML forms/inputs)* *(original note:)*

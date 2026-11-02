@@ -51,7 +51,7 @@ func TestCrawlTargetsEndToEndWithFakeKatana(t *testing.T) {
 	withFakeBinary(t, "katana", fakeKatana)
 	dir := t.TempDir()
 	cfg := &pipelineConfig{Web: []targetEntry{{Target: "https://a.test"}}}
-	urls, forms, steps := crawlTargets(cfg, dir)
+	urls, forms, steps := crawlTargets(cfg, dir, nil)
 	if len(steps) != 1 || steps[0].Name != "katana" || steps[0].Status != "ok" {
 		t.Fatalf("steps = %+v", steps)
 	}
@@ -67,13 +67,31 @@ func TestCrawlTargetsEndToEndWithFakeKatana(t *testing.T) {
 	}
 }
 
+func TestCrawlTargetsCrawlsExtraBasesToo(t *testing.T) {
+	withFakeBinary(t, "katana", fakeKatana)
+	dir := t.TempDir()
+	cfg := &pipelineConfig{Web: []targetEntry{{Target: "https://a.test"}}}
+	_, _, steps := crawlTargets(cfg, dir, []string{"https://sub.a.test"})
+	if len(steps) != 2 {
+		t.Fatalf("steps = %+v, want one for the explicit target and one for the extra base", steps)
+	}
+	for _, s := range steps {
+		if s.Name != "katana" || s.Status != "ok" {
+			t.Errorf("step = %+v", s)
+		}
+	}
+	if steps[0].Target == steps[1].Target {
+		t.Errorf("both steps crawled %q, want the explicit target and the extra base crawled separately", steps[0].Target)
+	}
+}
+
 func TestCrawlTargetsOffAndMissingTool(t *testing.T) {
 	off := false
-	if u, f, s := crawlTargets(&pipelineConfig{Web: []targetEntry{{Target: "a.test"}}, Options: pipelineOptions{Crawl: &off}}, t.TempDir()); u != nil || f != nil || s != nil {
+	if u, f, s := crawlTargets(&pipelineConfig{Web: []targetEntry{{Target: "a.test"}}, Options: pipelineOptions{Crawl: &off}}, t.TempDir(), nil); u != nil || f != nil || s != nil {
 		t.Errorf("options.crawl=false must be a no-op, got %v %v %v", u, f, s)
 	}
 	t.Setenv("PATH", t.TempDir()) // no katana anywhere
-	_, _, steps := crawlTargets(&pipelineConfig{Web: []targetEntry{{Target: "a.test"}}}, t.TempDir())
+	_, _, steps := crawlTargets(&pipelineConfig{Web: []targetEntry{{Target: "a.test"}}}, t.TempDir(), nil)
 	if len(steps) != 1 || steps[0].Status != "skipped" {
 		t.Errorf("missing katana must skip cleanly, got %+v", steps)
 	}
