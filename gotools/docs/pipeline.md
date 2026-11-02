@@ -34,6 +34,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default; same as `options.easyWins:false`). `-easy-wins` is accepted as a deprecated no-op. |
 | `-no-active-subdomains` | off | WEB stage: skip the active DNS brute force of subdomains (on by default, embedded SecLists top-20000 list; same as `options.subdomainsActive:false`) |
+| `-no-fuzz` | off | WEB stage: skip directory/file brute force (on by default; embedded SecLists common.txt unless a wordlist is set) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (same as `options.subfinder:false`) |
 | `-permutations` | off | WEB stage: alterx permutations of the discovered names, resolved with dnsx (same as `options.permutations`) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
@@ -94,6 +95,7 @@ exact Burp include/exclude rules, not just a flattened host list.
     "ports": "common,uncommon",
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+    "fuzz": true,
     "easyWins": true,
     "subfinder": true,
     "permutations": false,
@@ -130,6 +132,11 @@ exact Burp include/exclude rules, not just a flattened host list.
   [Steps](#steps) below for exactly what it runs) — set it to `false`
   (or pass `-no-easy-wins`) for an engagement whose rules forbid probing
   beyond recon.
+- `options.fuzz` (also `-no-fuzz` to disable; options-only) controls the
+  directory/file brute force. **On by default**, with the embedded SecLists
+  `common.txt` unless a `wordlist` is configured. It sends one request per
+  word (times the auto-detected extensions) to each explicit web target;
+  `options.rate`/`concurrency` bound it.
 - `options.subfinder` (also `-no-subfinder`; options-only) adds
   [subfinder](https://github.com/projectdiscovery/subfinder)'s passive
   sources to subdomain discovery. **On by default** — third-party lookups
@@ -181,7 +188,7 @@ pipeline to run.
 |---|---|---|
 | `target` | host, web | the IP/CIDR/domain/URL (required) |
 | `ports` | host | ports to scan (`portscan -p`), overrides `options.ports` (default `common,uncommon`) |
-| `wordlist` | web | wordlist for `fuzz -w`, overrides `options.wordlist`. No wordlist resolved → `fuzz` is **skipped** for that target, not an error. |
+| `wordlist` | web | wordlist for `fuzz -w`, overrides `options.wordlist`. No wordlist resolved → the embedded `common.txt` is used. |
 | `scope` | web | Burp scope JSON for `fuzz -scope`, overrides `options.scope` |
 | `extensions` | web | extra extensions for `fuzz -e` (repeatable). When omitted, `fuzz -ext-auto` discovers them per host from tech-detect + live checks (disable with `options.autoExtensions: false`) |
 | `snykUrl` + `snykVersion` | web | both set → also runs `snyk -url -version` for that target |
@@ -303,17 +310,24 @@ stage discovered and handed off (written to a `web/` subfolder of that
 5. `gau` — per domain **and** discovered subdomain, archived URLs from the
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.
-6. `sensitive` + `params` — classify the merged URL list. **Skipped** if step
-   5 produced no URLs. `sensitive` filters by extension by default; with
-   `options.contentScan`/`-content-scan` (off by default) it instead fetches
-   every URL and scans the body for secrets (`sensitive -content`), writing
-   `03_sensitive.json` instead of `03_sensitive.txt`.
-7. `robots` — per target, fetch `robots.txt` and probe its paths, plus the
+6. `robots` — per target, fetch `robots.txt` and probe its paths, plus the
    same-host URLs of the sitemap(s) it declares (or `/sitemap.xml`), capped
    at 100 per target.
-8. `fuzz` — per target with a resolved wordlist (see the field table above).
-   **Skipped** per-target if no wordlist resolves.
-9. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
+7. `fuzz` — directory/file brute force per target, **on by default**
+   (`options.fuzz:false`/`-no-fuzz` to disable). Wordlist: the target's
+   `wordlist`, else `options.wordlist`, else the SecLists `common.txt`
+   (~4.7k names) embedded in the binary.
+8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of gau's
+   archived URLs, every `robots`/sitemap URL that answered 2xx/3xx/401/403,
+   and every `fuzz` hit. It does not yet tell real pages from soft-404s (a
+   site that answers 200 for anything makes every robots/sitemap line look
+   valid) — see [ROADMAP.md](ROADMAP.md).
+9. `sensitive` + `params` — classify the merged endpoint list from step 8.
+   **Skipped** if it's empty. `sensitive` filters by extension by default;
+   with `options.contentScan`/`-content-scan` (off by default) it instead
+   fetches every URL and scans the body for secrets (`sensitive -content`),
+   writing `03_sensitive.json` instead of `03_sensitive.txt`.
+10. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
    **Skipped** otherwise.
 
 A skipped step is recorded in the manifest with a `detail` explaining why —
@@ -348,6 +362,7 @@ it never aborts the run.
     01c_probe.json
     02_gau_<domain>.txt      # one per domain + discovered subdomain
     02_all_urls.txt          # merged, deduped
+    06b_endpoints.txt        # merged gau + robots/sitemap + fuzz
     03_sensitive.txt         # 03_sensitive.json instead, with options.contentScan
     04_params.txt
     05_robots_<target>.txt

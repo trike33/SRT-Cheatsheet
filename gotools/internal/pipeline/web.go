@@ -1,9 +1,12 @@
 package pipeline
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -188,30 +191,6 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}
 	}
 
-	// --- 03/04: sensitive + params, both over the merged URL list ---
-	if len(allURLs) == 0 {
-		steps = append(steps, skipStep("web", "sensitive", "", "no URLs collected"))
-		steps = append(steps, skipStep("web", "params", "", "no URLs collected"))
-	} else {
-		sensitiveFile, sensitiveArgs := sensitiveArgsFor(cfg, allURLsFile, outDir)
-		steps = append(steps, runStep("web", "sensitive", "", sensitiveFile, func() error {
-			return gau.RunSensitive(sensitiveArgs)
-		}))
-
-		// params has no -o flag; it always prints via fmt.Println, so capture
-		// the real stdout for the duration of the call.
-		paramsFile := filepath.Join(outDir, "04_params.txt")
-		steps = append(steps, runStep("web", "params", "", paramsFile, func() error {
-			out, runErr := captureStdout(func() error {
-				return gau.RunParams([]string{"-l", allURLsFile})
-			})
-			if werr := os.WriteFile(paramsFile, []byte(out), 0o644); werr != nil {
-				return werr
-			}
-			return runErr
-		}))
-	}
-
 	// --- 05: robots, all targets in one run (also stdout-only, same capture
 	// trick). One invocation, not one per target, so robots can fetch the
 	// targets' robots.txt files concurrently instead of waiting out each dead
@@ -248,11 +227,19 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		if e.Target == "" {
 			continue
 		}
+		if !cfg.Options.fuzzOrDefault(true) {
+			steps = append(steps, skipStep("web", "fuzz", e.Target, "disabled (options.fuzz:false / -no-fuzz)"))
+			continue
+		}
 		wordlist := resolveWordlist(e, cfg.Options)
 		if wordlist == "" {
-			steps = append(steps, skipStep("web", "fuzz", e.Target,
-				`no wordlist configured (set this target's "wordlist" or options.wordlist)`))
-			continue
+			// No wordlist configured: fall back to the common.txt embedded
+			// in the binary rather than skipping the step.
+			var werr error
+			if wordlist, werr = wordlists.DirectoriesFile(outDir); werr != nil {
+				steps = append(steps, skipStep("web", "fuzz", e.Target, "embedded wordlist: "+werr.Error()))
+				continue
+			}
 		}
 
 		fuzzFile := filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json")
@@ -289,6 +276,53 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		args = append(args, resumeStateArgs(fuzzFile)...)
 		steps = append(steps, runStep("web", "fuzz", e.Target, fuzzFile, func() error {
 			return fuzz.Run(args)
+		}))
+	}
+
+	// --- 06b: merge every endpoint source into one list (gau's archived
+	// URLs + robots/sitemap hits + fuzz hits), then 03/04: sensitive +
+	// params over that merged list -- so they see what the active steps
+	// found, not just what Wayback remembers.
+	var fuzzFiles []string
+	for _, e := range cfg.Web {
+		if e.Target != "" {
+			fuzzFiles = append(fuzzFiles, filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json"))
+		}
+	}
+	endpoints := collectEndpoints(allURLs, filepath.Join(outDir, "05_robots.txt"), fuzzFiles)
+	endpointsFile := filepath.Join(outDir, "06b_endpoints.txt")
+	if len(endpoints) > 0 {
+		if err := writeLinesFile(endpointsFile, endpoints); err != nil {
+			steps = append(steps, stepResult{Kind: "web", Name: "merge-endpoints", Status: "error", Detail: err.Error()})
+			endpoints = nil
+		} else {
+			steps = append(steps, stepResult{Kind: "web", Name: "merge-endpoints", Status: "ok",
+				Detail: fmt.Sprintf("%d endpoints (gau %d + robots/sitemap/fuzz)", len(endpoints), len(allURLs))})
+		}
+	}
+	allURLs, allURLsFile = endpoints, endpointsFile
+
+	// --- 03/04: sensitive + params over the merged endpoint list ---
+	if len(allURLs) == 0 {
+		steps = append(steps, skipStep("web", "sensitive", "", "no endpoints collected"))
+		steps = append(steps, skipStep("web", "params", "", "no endpoints collected"))
+	} else {
+		sensitiveFile, sensitiveArgs := sensitiveArgsFor(cfg, allURLsFile, outDir)
+		steps = append(steps, runStep("web", "sensitive", "", sensitiveFile, func() error {
+			return gau.RunSensitive(sensitiveArgs)
+		}))
+
+		// params has no -o flag; it always prints via fmt.Println, so capture
+		// the real stdout for the duration of the call.
+		paramsFile := filepath.Join(outDir, "04_params.txt")
+		steps = append(steps, runStep("web", "params", "", paramsFile, func() error {
+			out, runErr := captureStdout(func() error {
+				return gau.RunParams([]string{"-l", allURLsFile})
+			})
+			if werr := os.WriteFile(paramsFile, []byte(out), 0o644); werr != nil {
+				return werr
+			}
+			return runErr
 		}))
 	}
 
@@ -497,6 +531,44 @@ func sensitiveArgsFor(cfg *pipelineConfig, allURLsFile, outDir string) (outFile 
 	}
 	return outFile, args
 }
+
+// robotsHitRe matches a `robots` probe line: "<url> [status] [length]".
+var robotsHitRe = regexp.MustCompile(`^(https?://\S+) \[(\d{3})\] \[\d+\]\s*$`)
+
+// collectEndpoints merges every endpoint source into one deduplicated list:
+// gau's archived URLs, the URLs `robots` probed (robots.txt paths plus
+// sitemap URLs) that answered 2xx/3xx/401/403 (i.e. something exists there),
+// and every `fuzz` hit (fuzz already filters its own matches). Order: gau
+// first, then robots, then fuzz.
+//
+// This does NOT yet separate real pages from soft-404s -- a site answering
+// 200 for anything makes every robots/sitemap line look like a hit. Making
+// that validation soft-404 aware is the next step (see ROADMAP.md).
+func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string) []string {
+	out := append([]string(nil), gauURLs...)
+	for _, l := range mustLines(robotsFile) {
+		m := robotsHitRe.FindStringSubmatch(strings.TrimSpace(ansiRe.ReplaceAllString(l, "")))
+		if m == nil {
+			continue
+		}
+		if st, _ := strconv.Atoi(m[2]); st < 400 || st == 401 || st == 403 {
+			out = append(out, m[1])
+		}
+	}
+	for _, f := range fuzzFiles {
+		for _, l := range mustLines(f) {
+			var r struct {
+				URL string `json:"url"`
+			}
+			if json.Unmarshal([]byte(l), &r) == nil && r.URL != "" {
+				out = append(out, r.URL)
+			}
+		}
+	}
+	return ioutil.DedupStrings(out)
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // resolveWordlist picks the wordlist for one fuzz call: the target's own
 // override, else the pipeline-wide default, else "" (meaning: skip fuzz for

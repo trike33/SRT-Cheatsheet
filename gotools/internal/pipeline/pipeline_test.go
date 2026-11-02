@@ -535,3 +535,28 @@ func TestPipelinePassesExtAutoUnlessExplicit(t *testing.T) {
 		t.Error("explicit false should disable")
 	}
 }
+
+func TestCollectEndpointsMergesGauRobotsAndFuzz(t *testing.T) {
+	dir := t.TempDir()
+	robots := filepath.Join(dir, "05_robots.txt")
+	os.WriteFile(robots, []byte(strings.Join([]string{
+		"--- https://a.test ---",
+		"[Allow]",
+		"https://a.test/pub [200] [123]",
+		"[Disallow]",
+		"https://a.test/admin [403] [10]",
+		"https://a.test/gone [404] [10]",
+		"https://a.test/boom [ERR] connection refused",
+		"[Sitemap]",
+		"\x1b[32mhttps://a.test/news [200] [55]\x1b[0m",
+		"https://a.test/moved [301] [0]",
+	}, "\n")), 0o644)
+	fz := filepath.Join(dir, "06_fuzz_a.json")
+	os.WriteFile(fz, []byte(`{"url":"https://a.test/backup.zip","status":200,"length":9,"words":1,"lines":1}`+"\nnot json\n"+`{"url":"https://a.test/pub","status":200}`+"\n"), 0o644)
+
+	got := collectEndpoints([]string{"https://a.test/old?id=1", "https://a.test/pub"}, robots, []string{fz, filepath.Join(dir, "missing.json")})
+	want := []string{"https://a.test/old?id=1", "https://a.test/pub", "https://a.test/admin", "https://a.test/news", "https://a.test/moved", "https://a.test/backup.zip"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v\nwant %v (404/ERR dropped, duplicates collapsed, gau first)", got, want)
+	}
+}

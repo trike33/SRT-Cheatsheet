@@ -4,6 +4,14 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### WEB pipeline: endpoint merge, reordered sensitive/params, default directory wordlist
+- `robots`/sitemap hits and `fuzz` hits now merge with gau's URLs into
+  `06b_endpoints.txt`, and `sensitive`/`params` run over that list *after*
+  `robots`/`fuzz` instead of before them (they used to see only gau's URLs).
+- `fuzz` is on by default with SecLists' `common.txt` embedded in the
+  binary when no wordlist is configured (`options.fuzz:false`/`-no-fuzz` to
+  disable). Gaps 1, 2 and 6 below.
+
 ### Active subdomain brute force on by default, with an embedded wordlist
 - The WEB stage now brute-forces subdomains by default using SecLists'
   `subdomains-top1million-20000.txt`, **embedded in the binary**
@@ -518,10 +526,10 @@ What the pipeline does today, in order: domains -> subdomains (+subfinder/
 dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
 `params` (over gau URLs only) -> `robots` -> `fuzz` -> `snyk`. Gaps:
 
-1. **No endpoint merge.** `robots`/sitemap output (`05_robots.txt`) and
+1. ~~**No endpoint merge.**~~ *(done — `06b_endpoints.txt`)* `robots`/sitemap output (`05_robots.txt`) and
    `fuzz` results (`06_fuzz_*.json`) never join `02_all_urls.txt`; there is
    no single "endpoints/directories/files" list to carry forward.
-2. **Wrong order.** `sensitive`/`params` run *before* `robots`/`fuzz`, so
+2. ~~**Wrong order.**~~ *(done)* `sensitive`/`params` run *before* `robots`/`fuzz`, so
    they only ever see gau's archived URLs, never what the active steps found.
 3. **No re-probe of endpoints.** `probe` runs once on domains (recon on
    root). gau/robots/sitemap/fuzz URLs are never validated as a distinct
@@ -534,7 +542,7 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    reusable piece.
 5. **No crawler.** katana is still out (hung in the dev sandbox); nothing
    else follows links, extracts JS/form URLs or reads `<a>`/`<script>`.
-6. **Directory brute force is off unless you configure a wordlist.** `fuzz`
+6. ~~**Directory brute force is off unless you configure a wordlist.**~~ *(done — embedded `common.txt`, on by default)* `fuzz`
    is skipped per target when no `wordlist`/`options.wordlist` resolves —
    the same problem subdomains had before the embedded list. Needs an
    embedded generic list (raft/common-style) and a `-no-fuzz`-style switch.

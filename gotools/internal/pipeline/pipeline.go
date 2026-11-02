@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "permutations"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "permutations"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -57,6 +57,7 @@ func Run(args []string) error {
 	noEasyWins := fs.Bool("no-easy-wins", false, "HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default, rate-limited -- it sends real probes, not just passive recon; same as options.easyWins:false in a JSON config)")
 	noSubfinder := fs.Bool("no-subfinder", false, "WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default -- third-party lookups only, no traffic to the target; same as options.subfinder:false)")
 	noActiveSubdomains := fs.Bool("no-active-subdomains", false, "WEB stage: skip the active DNS brute force of subdomains (on by default, using the embedded SecLists top-20000 list or options.subdomainsWordlist; same as options.subdomainsActive:false)")
+	noFuzz := fs.Bool("no-fuzz", false, "WEB stage: skip directory/file brute force (fuzz) of the web targets (on by default, using the target's/options.wordlist or the embedded SecLists common.txt; same as options.fuzz:false)")
 	permutations := fs.Bool("permutations", false, "WEB stage: generate alterx permutations of the discovered names and resolve them with dnsx (off by default -- multiplies DNS queries; same as options.permutations in a JSON config)")
 	contentScan := fs.Bool("content-scan", false, "WEB stage: fetch every merged URL (gau's output) and scan its body for secrets/credentials (sensitive -content) instead of just classifying by extension (off by default -- fetches every URL in the list, not just a string; same as options.contentScan in a JSON config)")
 	noCDNCheck := fs.Bool("no-cdn-check", false, "HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default -- a local dataset lookup, no traffic to the target at all; same as options.cdnCheck:false in a JSON config)")
@@ -85,6 +86,10 @@ func Run(args []string) error {
 	if *noEasyWins {
 		disabled := false
 		cfg.Options.EasyWins = &disabled
+	}
+	if *noFuzz {
+		disabled := false
+		cfg.Options.Fuzz = &disabled
 	}
 	if *noActiveSubdomains {
 		disabled := false
@@ -342,7 +347,7 @@ var pipelineStageOrder = map[string][]string{
 	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged, bannered -> vulnx)"},
 	"web": {"domains", "scopecheck (only when \"host\" targets give it an IP scope to check)", "subdomains",
 		"subfinder / dnsx brute force + wildcard filter / alterx permutations (optional external tools)",
-		"scopecheck (same)", "probe", "gau", "sensitive", "params", "robots", "fuzz",
+		"scopecheck (same)", "probe", "gau", "robots (+ sitemap)", "fuzz", "merge endpoints (gau + robots/sitemap + fuzz)", "sensitive", "params",
 		"snyk (only targets with snykUrl/snykVersion)"},
 }
 

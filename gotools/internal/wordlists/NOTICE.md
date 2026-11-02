@@ -1,8 +1,10 @@
 # Third-party content
 
-`subdomains-top1million-20000.txt` is taken unmodified from
+`subdomains-top1million-20000.txt` (Discovery/DNS) and `common.txt`
+(Discovery/Web-Content) are taken unmodified from
 [danielmiessler/SecLists](https://github.com/danielmiessler/SecLists)
-(`Discovery/DNS/subdomains-top1million-20000.txt`), distributed under the
+(`Discovery/DNS/subdomains-top1million-20000.txt`,
+`Discovery/Web-Content/common.txt`), distributed under the
 MIT License, Copyright (c) Daniel Miessler.
 
 ## License text
