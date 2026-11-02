@@ -4,6 +4,39 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Skip the current pipeline step with a keyboard shortcut
+- **`pipeline` now listens for `s` on stdin and abandons the step currently
+  running**, moving straight to the next one, when stdin is a terminal.
+  Recorded in `manifest.json` as `"status": "skipped"`. See
+  [pipeline.md's "Skipping a step while it runs"](pipeline.md#skipping-a-step-while-it-runs).
+- Took the lighter of the two designs this bullet originally described
+  (below), by explicit choice over the per-step-cancellation-context
+  version: **abandon, not kill**. `runStep` now runs `fn` in a goroutine and
+  races it against the skip request; on skip it returns `"skipped"`
+  immediately without waiting, but the goroutine itself keeps running (and
+  sending whatever traffic it already started) until it finishes on its
+  own — there's still no cancellation context threaded through `fuzz`/
+  `portscan`/`validate`/`runExternal`, so a kept-running step's own log
+  lines can land in the *next* step's captured-warnings count instead of
+  its own (cosmetic only). Trade-off: far smaller change (one new
+  `internal/pipeline/skip.go`, no native command touched), at the cost of
+  a skip not stopping that step's traffic right away. A true per-step kill
+  (the heavier option this bullet also offered) is still open if the
+  background traffic/log-misattribution turns out to matter in practice.
+- Mechanism: `golang.org/x/term.MakeRaw` puts stdin in raw mode for the
+  run's duration (same dependency `shell` already uses, just not its
+  bubbletea-pane approach — a linear pipeline run has no screen to manage),
+  read byte-by-byte in a goroutine. Raw mode disables the terminal's own
+  Ctrl+C→SIGINT translation, so Ctrl+C is caught as a raw byte (0x03) and
+  handled by replicating `halt.InstallHandler`'s own SIGINT behavior
+  (`halt.Run()` then `os.Exit(130)`) — verified Ctrl+C still halts the
+  whole run exactly as before raw mode was introduced. Verified live under
+  a real pty (not just unit tests): a background process in raw mode
+  receiving a keypress correctly wakes a blocked `select`. A
+  non-interactive run (piped stdin, CI) never enters raw mode, so nothing
+  changes for it — `activeSkip` stays `nil` and `runStep` behaves exactly
+  as before this.
+
 ### `paramdiscover`: hidden GET parameter guessing (gap 9)
 - New native command **`srt paramdiscover`**, and a WEB-stage pipeline step
   (`06d`, off by default: `options.paramDiscover`/`-param-discover`).
@@ -661,18 +694,17 @@ so they aren't lost:
 - **Auto-detect and send payloads** — close the loop from recon
   (parameters, tech-detect) to actually firing payloads at likely-vulnerable
   targets.
-- **Skip the current pipeline step while it runs** (keyboard shortcut) —
-  today Ctrl+C halts the *whole* pipeline (first press asks it to stop and
-  save state, second kills it). A long step (a 20k-word subdomain brute
-  force, a big `fuzz`, a slow `katana`/`nuclei` call) should be skippable on
-  its own — e.g. a dedicated key in `shell` (and a signal such as SIGUSR1 for
-  plain `srt pipeline`) that cancels just the running step, records it as
-  `"skipped"` (reason: skipped by user) and carries on with the next one.
-  Needs a per-step cancellation context threaded through `runStep`/
-  `runExternal` (external tools already run under a context, so they're the
-  easy half; the native steps — `fuzz`, `portscan`, `validate` — would need
-  to honour it and save resumable state like they do for the global halt,
-  see `internal/halt`), and a key binding in the shell's output pane.
+- **Skip the current pipeline step with a *true* kill, not just an
+  abandon** — the keyboard-shortcut skip shipped above (see Shipped) stops
+  *waiting* on a step but doesn't stop *it*: the abandoned goroutine keeps
+  running (and sending traffic) until it finishes on its own, since there's
+  no cancellation context threaded through `runStep`/`runExternal`/the
+  native steps (`fuzz`, `portscan`, `validate` would each need to honour a
+  context and save resumable state the way they do for the global halt,
+  see `internal/halt`). Worth doing only if that lingering background
+  traffic/log-misattribution turns out to matter in practice; also open:
+  the same shortcut inside `shell`'s own output pane (a dedicated key
+  binding there, since raw-stdin reading isn't `shell`'s model).
 - **Subcommands read their input from the current project's `srt.db` by
   default** — today every command needs `-l <file>`, positional args or
   stdin, even though earlier runs already saved exactly what the next one

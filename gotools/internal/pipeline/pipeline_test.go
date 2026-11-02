@@ -222,6 +222,47 @@ func TestRunStepRecordsOkAndError(t *testing.T) {
 	}
 }
 
+func TestRunStepAbandonsOnSkipRequest(t *testing.T) {
+	sl := &skipListener{requests: make(chan struct{}, 1)}
+	old := activeSkip
+	activeSkip = sl
+	defer func() { activeSkip = old }()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+
+	sl.requests <- struct{}{} // pending before the step even starts, like a keypress mid-run
+
+	res := runStep("web", "slow", "t1", "", func() error {
+		close(started)
+		<-release
+		close(finished)
+		return nil
+	})
+
+	if res.Status != "skipped" {
+		t.Fatalf("Status = %q, want skipped", res.Status)
+	}
+	select {
+	case <-finished:
+		t.Fatal("runStep waited for fn to finish instead of abandoning it")
+	default:
+	}
+
+	<-started
+	close(release)
+	<-finished // the abandoned goroutine does eventually finish on its own
+}
+
+func TestSkipChanNilOnNilListener(t *testing.T) {
+	var sl *skipListener
+	if sl.skipChan() != nil {
+		t.Error("skipChan on a nil listener should be nil")
+	}
+	sl.stop() // must not panic
+}
+
 func TestSkipStep(t *testing.T) {
 	s := skipStep("web", "fuzz", "t1", "no wordlist")
 	if s.Status != "skipped" || s.Detail != "no wordlist" {

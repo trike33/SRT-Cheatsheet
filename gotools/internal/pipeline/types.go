@@ -240,7 +240,28 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	}
 	start := time.Now()
 	stopCapture := ioutil.CaptureWarnings()
-	err := fn()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-activeSkip.skipChan():
+		// The step keeps running in a goroutine we no longer wait on --
+		// any traffic/work it already started continues in the background
+		// until it finishes on its own; we just stop blocking on it. Its
+		// own Warn() output may land in a later step's captured warnings
+		// instead of this one's, since the capture target has moved on by
+		// then -- a cosmetic side effect of abandoning rather than killing it.
+		warnings := stopCapture()
+		reportStep(name, target, "skipped: user pressed '"+string(skipKey)+"' -- abandoned in the background", warnings)
+		return stepResult{
+			Kind: kind, Name: name, Target: target, Output: output,
+			Duration: time.Since(start).Round(time.Millisecond).String(),
+			Status:   "skipped",
+			Detail:   "skipped by user keypress while running; the step was abandoned, not killed, and may still be finishing in the background",
+		}
+	}
 	warnings := stopCapture()
 	sr := stepResult{
 		Kind:     kind,

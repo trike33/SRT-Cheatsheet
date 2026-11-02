@@ -52,6 +52,26 @@ combine (so a JSON config can still add per-target overrides a plain host
 file can't express, while `-host-file`/`-web-scope` quickly add more
 targets to it).
 
+## Skipping a step while it runs
+
+If stdin is a terminal, press **`s`** at any time during a run to abandon
+the step currently in progress and move straight to the next one — useful
+when a slow step (a big `fuzz`, `nuclei` easy-wins pass, `katana` crawl,
+...) isn't worth waiting on for this engagement. The step is recorded in
+`manifest.json` as `"status": "skipped"`, same as a step skipped for
+missing input.
+
+This abandons the step, it doesn't kill it: whatever request(s) it already
+started keep running in the background until they finish on their own —
+there's no per-step cancellation in `srt`, only process-wide. In practice
+that means a little extra traffic you didn't wait for, and occasionally one
+of that step's own log lines landing in the next step's warning count
+instead of its own. `Ctrl+C` is unaffected and still halts the entire
+pipeline immediately, same as always.
+
+Piped/non-interactive runs (CI, `-dry-run`, stdin redirected from a file)
+never touch stdin for this, so there's nothing to configure to disable it.
+
 ## No JSON config needed
 
 If all you have is a plain IP/CIDR list and/or a Burp scope export — no

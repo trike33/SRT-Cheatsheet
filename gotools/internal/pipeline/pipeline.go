@@ -187,6 +187,11 @@ func Run(args []string) error {
 		return err
 	}
 
+	if activeSkip = startSkipListener(); activeSkip != nil {
+		defer activeSkip.stop()
+		ioutil.Warn("press '%c' at any time to skip the step currently running and move on (it keeps running in the background; Ctrl+C still halts the whole pipeline)", skipKey)
+	}
+
 	m := manifest{Name: cfg.Name, StartedAt: time.Now(), Kinds: kinds}
 	for _, k := range kinds {
 		stageDir := filepath.Join(outDir, k)
