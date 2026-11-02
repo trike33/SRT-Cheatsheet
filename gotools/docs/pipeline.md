@@ -33,6 +33,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-o` | `options.outputDir`, else `srt-pipeline-out` | output directory |
 | `-dry-run` | off | print the planned targets/steps and exit — sends no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
+| `-easy-wins` | off | HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (same as `options.easyWins`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -87,7 +88,8 @@ exact Burp include/exclude rules, not just a flattened host list.
     "scope": "burp-scope.json",
     "ports": "common,uncommon",
     "proxy": "",
-    "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+    "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+    "easyWins": false
   }
 }
 ```
@@ -106,6 +108,13 @@ exact Burp include/exclude rules, not just a flattened host list.
   label wordlist (`www`, `api`, `dev`, ...) that turns on active DNS
   brute-force subdomain enumeration alongside the passive crt.sh lookup that
   always runs. Omit it to stay passive-only.
+- `options.easyWins` (also `-easy-wins`; options-only, no per-target
+  override) turns on the HOST stage's nuclei default-login/misconfig/
+  exposure pass over non-web open ports. **Off by default** — unlike every
+  other step here, this sends real exploitation-adjacent probes at the
+  service, not just passive recon, so it's opt-in rather than
+  auto-enabled the way `vulnx` is. See [Steps](#steps) below for exactly
+  what it runs and how its traffic is bounded.
 
 ### Per-target fields (object form)
 
@@ -150,6 +159,18 @@ spec only runs once:
      the banner itself. **Skipped** if `vulnx` isn't installed, never fails
      the run. Runs alongside `flag-uncommon-service`/`flag-beanshell` above,
      not instead of them.
+   - Every non-web open port, **only with `options.easyWins`/`-easy-wins`**
+     (off by default) → a `nuclei` step (github.com/projectdiscovery/nuclei):
+     `-tags default-login,exposure,misconfig -etags dos,fuzz,intrusive`,
+     deliberately rate-limited (`-rl 10 -c 3 -bs 1 -timeout 5 -mt 3m`) so an
+     automated, unattended pipeline step can't turn into an unbounded scan
+     of one target. This is methodology.md's "easy wins" pass (default
+     creds, common misconfigs) — unlike `vulnx`, it sends real probes at
+     the service rather than querying a third-party database, which is
+     exactly why it needs an explicit opt-in. **Skipped** if `nuclei` isn't
+     installed; also needs its templates fetched once (`nuclei -ut`) —
+     `-duc` only disables nuclei's own update-check network call on every
+     run, it doesn't bootstrap templates from nothing.
 
 A `host` entry with `"excluded": true` is excluded-but-tracked instead:
 steps 3-4 above don't run for it at all. In their place:
@@ -221,6 +242,7 @@ it never aborts the run.
     02_resolve_<n>.txt       # reverse DNS
     03_portscan_<n>.json
     vulnx_<host:port>.json   # one per flagged non-web port with a banner
+    easywins_<host:port>.json  # one per non-web open port, only with options.easyWins
     web/                      # web services the host stage discovered,
       ...                     #   same layout as the top-level web/ below
   web/

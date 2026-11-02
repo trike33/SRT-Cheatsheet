@@ -12,22 +12,30 @@ the tracked list.
 ## External-tool policy
 
 `srt` does not shell out to third-party recon tools (naabu, httpx,
-subfinder, katana, nuclei, dalfox, ...). Where the methodology below needs
-what one of those would normally provide, the plan is to implement it
-natively in Go — porting the useful logic from existing open-source
-discovery projects where that saves work, but not invoking their binaries
-or calling out to their APIs at runtime — so `srt` stays a single static
-binary for every other command. (Separately, `srt` itself picked up its
-first Go module dependency, `golang.org/x/term`, for the interactive
-`shell`'s line editor — unrelated to this policy, which is about not
-shelling out to *other recon tools*, not about the build staying
-stdlib-only forever.)
+subfinder, katana, dalfox, ...). Where the methodology below needs what one
+of those would normally provide, the plan is to implement it natively in
+Go — porting the useful logic from existing open-source discovery projects
+where that saves work, but not invoking their binaries or calling out to
+their APIs at runtime — so `srt` stays a single static binary for every
+other command. (Separately, `srt` itself picked up its first Go module
+dependency, `golang.org/x/term`, for the interactive `shell`'s line editor
+— unrelated to this policy, which is about not shelling out to *other
+recon tools*, not about the build staying stdlib-only forever.)
 
-**vulnx is the one exception.** CVE lookups from a grabbed service/software
-version are kept as an external call, via the `runExternal` hook already
-built in `gotools/internal/pipeline/external.go` (looks the binary up on
-`PATH`, skips cleanly if it's missing — never aborts a run over an optional
-tool).
+**vulnx and nuclei are the two exceptions**, both kept as external calls via
+the `runExternal` hook already built in `gotools/internal/pipeline/
+external.go` (looks the binary up on `PATH`, skips cleanly if it's missing
+— never aborts a run over an optional tool):
+
+- **vulnx** — CVE lookups from a grabbed service/software version.
+- **nuclei** — the HOST stage's "easy wins" pass (default creds, common
+  misconfigs). Reimplementing nuclei's own default-login/misconfig
+  template library natively wasn't worth it for this one step, so it's a
+  generic, directly-invoked `nuclei` call instead — but unlike vulnx, it
+  sends real probes at the service rather than querying a third-party
+  database, so it's **opt-in** (`options.easyWins`/`-easy-wins`, off by
+  default) and its traffic is kept deliberately bounded regardless (see
+  [pipeline.md](pipeline.md)'s classify-services step for the exact flags).
 
 ## HOST
 
@@ -80,10 +88,15 @@ scope (IPs, or a pipeline JSON config's "host" list)
         over the banner itself. `pipeline`'s HOST stage runs it for every
         non-web port with a banner, skipped cleanly if `vulnx` isn't
         installed.)*
-     2. Run a native "easy wins" pass: default credentials, common
-        misconfigurations — the useful subset of what a nuclei run would
-        catch, reimplemented rather than shelling out to nuclei.
-        *(Not implemented.)*
+     2. Run an "easy wins" pass: default credentials, common
+        misconfigurations. *(Implemented: a direct `nuclei` call --
+        `-tags default-login,exposure,misconfig -etags dos,fuzz,intrusive`,
+        rate-limited to `-rl 10 -c 3 -bs 1 -timeout 5 -mt 3m` so one
+        unattended pipeline step can't turn into an unbounded scan. Opt-in
+        via `options.easyWins`/`-easy-wins` (off by default) since, unlike
+        every other HOST step, it sends real probes at the service rather
+        than passive recon or a third-party lookup. Skipped cleanly if
+        `nuclei` isn't installed.)*
      3. Flag uncommon services for manual follow-up — e.g. an exposed
         BeanShell, rsync daemon, or Java RMI registry. *(Implemented:
         rsync/Java RMI and the rest of `portscan`'s `uncommon` port list are

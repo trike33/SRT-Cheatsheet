@@ -62,6 +62,7 @@ type pipelineOptions struct {
 	Proxy              string `json:"proxy,omitempty"`
 	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
+	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default false -- sends real probes, not just passive recon)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -82,6 +83,13 @@ func (o pipelineOptions) autoExtensionsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.AutoExtensions
+}
+
+func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
+	if o.EasyWins == nil {
+		return def
+	}
+	return *o.EasyWins
 }
 
 func (o pipelineOptions) insecureOrDefault(def bool) bool {

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,11 +14,14 @@ import (
 // This is the extension point for driving a third-party tool from the
 // pipeline. srt's policy (see docs/methodology.md) is to implement recon
 // steps natively rather than shell out to tools like naabu, httpx,
-// subfinder, katana, nuclei, or dalfox — the one sanctioned exception is
+// subfinder, katana, nuclei, or dalfox — the sanctioned exceptions are
 // vulnx (github.com/projectdiscovery/vulnx), used below for CVE lookups
-// from a grabbed service banner (pipeline_host.go's "scan" step). A future
-// external-tool step follows the same shape: runExternal with a binary name
-// and an argv.
+// from a grabbed service banner, and nuclei (github.com/projectdiscovery/
+// nuclei), used for the HOST stage's "easy wins" pass (default creds,
+// common misconfigs -- options.easyWins/-easy-wins, off by default since
+// it sends real exploitation-adjacent probes, not just passive recon).
+// A future external-tool step follows the same shape: runExternal with a
+// binary name and an argv.
 
 // runExternal looks up bin on PATH and, if found, runs it with args, writing
 // its stdout to outFile and logging its stderr via warn(). If bin isn't
@@ -119,4 +123,44 @@ func vulnxSearchArgs(banner string) []string {
 		return append(args, "-p", p)
 	}
 	return append(args, vulnxQuery(banner))
+}
+
+// nucleiEasyWinsArgs builds a deliberately conservative `nuclei` invocation
+// for the HOST stage's "easy wins" pass against one non-web open port
+// (methodology.md: "default credentials, common misconfigurations"). A
+// generic, otherwise-unrestricted nuclei run can fire thousands of
+// requests at a single target; every flag here exists to cap that for an
+// automated, unattended pipeline step, not to tune for thoroughness:
+//
+//   - -tags default-login,exposure,misconfig restricts it to that one
+//     methodology bullet -- never "cve" (vulnx already covers that from
+//     the banner right above this step, no need to duplicate the traffic).
+//   - -etags dos,fuzz,intrusive drops anything actively harmful or noisy
+//     regardless of which tag let it in.
+//   - -rl/-c/-bs/-timeout/-retries/-mt bound the worst case for one target
+//     to a low-rate, short burst, well under nuclei's own (much higher)
+//     defaults -- see docs/pipeline.md for the exact numbers and why.
+//   - -ni skips OAST/interactsh-based templates entirely, so this never
+//     depends on or calls out to a third-party interactsh server.
+//   - -duc skips nuclei's own template-update network check on every run;
+//     it does NOT fetch templates on its own first run -- see
+//     docs/pipeline.md for the one-time `nuclei -ut` this still needs.
+//   - -silent -j matches vulnxSearchArgs' own shape: structured JSON lines
+//     on stdout, which runExternal already redirects to this step's file.
+func nucleiEasyWinsArgs(host string, port int) []string {
+	return []string{
+		"-u", fmt.Sprintf("%s:%d", host, port),
+		"-tags", "default-login,exposure,misconfig",
+		"-etags", "dos,fuzz,intrusive",
+		"-rl", "10",
+		"-c", "3",
+		"-bs", "1",
+		"-timeout", "5",
+		"-retries", "1",
+		"-mt", "3m",
+		"-ni",
+		"-duc",
+		"-silent",
+		"-j",
+	}
 }

@@ -19,10 +19,13 @@ import (
 //	ipexpand -> resolve (reverse DNS, informational) -> portscan
 //	  -> classify each open port:
 //	       web service  -> handed off to the WEB stage (webHandoff)
-//	       other service -> flagged if it's an uncommon/specialty port;
-//	                        a grabbed banner gets looked up via vulnx
-//	                        (github.com/projectdiscovery/vulnx), skipped
-//	                        cleanly if it isn't installed
+//	       other service -> flagged if it's an uncommon/specialty port or
+//	                        BeanShell by banner; a grabbed banner gets
+//	                        looked up via vulnx (github.com/
+//	                        projectdiscovery/vulnx); with options.easyWins
+//	                        (off by default), also a conservative nuclei
+//	                        default-login/misconfig/exposure pass. Both
+//	                        external tools skip cleanly if not installed.
 //
 // Entries are grouped by their effective "ports" value (entry.Ports ->
 // options.Ports -> "common,uncommon") so each distinct port spec only scans
@@ -134,6 +137,19 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 				vulnxFile := filepath.Join(outDir, "vulnx_"+safeName(target)+".json")
 				steps = append(steps, runExternal("host", "vulnx", target, "vulnx",
 					vulnxSearchArgs(r.Banner), vulnxFile))
+			}
+			if cfg.Options.easyWinsOrDefault(false) && !portscan.IsWebPort(r.Port) {
+				// methodology.md's "easy wins" pass: default creds, common
+				// misconfigs. Off by default (options.easyWins/-easy-wins) --
+				// unlike vulnx above, this sends real probes against the
+				// service, not a lookup against a third-party API, so it's
+				// opt-in and kept deliberately rate-limited regardless (see
+				// nucleiEasyWinsArgs). Runs independent of whether a banner
+				// was grabbed: nuclei's own templates identify the service.
+				target := fmt.Sprintf("%s:%d", r.Host, r.Port)
+				easyWinsFile := filepath.Join(outDir, "easywins_"+safeName(target)+".json")
+				steps = append(steps, runExternal("host", "nuclei", target, "nuclei",
+					nucleiEasyWinsArgs(r.Host, r.Port), easyWinsFile))
 			}
 		}
 	}

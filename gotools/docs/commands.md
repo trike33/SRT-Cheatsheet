@@ -605,6 +605,7 @@ Full guide in [pipeline.md](pipeline.md).
 | `-o` | `options.outputDir` | output directory |
 | `-dry-run` | off | print planned steps, send no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
+| `-easy-wins` | off | HOST stage: conservative nuclei default-login/misconfig/exposure pass on non-web ports (sends real probes — opt-in) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` is required; combining them

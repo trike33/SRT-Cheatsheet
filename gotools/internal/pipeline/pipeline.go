@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -53,6 +53,7 @@ func Run(args []string) error {
 	resume := fs.Bool("resume", false, "continue an interrupted run in -o: skip steps already completed and resume portscan/fuzz mid-way (without it, a fresh run starts over)")
 	noDB := fs.Bool("no-db", false, "don't record this run's results in the project database (.srt/srt.db, see `srt results`)")
 	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
+	easyWins := fs.Bool("easy-wins", false, "HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (off by default -- sends real exploitation-adjacent probes, not just passive recon; same as options.easyWins in a JSON config)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -73,6 +74,10 @@ func Run(args []string) error {
 	cfg, err := assemblePipelineConfig(*cfgPath, *hostFile, *webScope, *name)
 	if err != nil {
 		return err
+	}
+	if *easyWins {
+		enabled := true
+		cfg.Options.EasyWins = &enabled
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)

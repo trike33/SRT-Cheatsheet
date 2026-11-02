@@ -4,6 +4,32 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### HOST "easy wins" pass: a conservative `nuclei` call (`-easy-wins`)
+- **`pipeline`'s HOST stage can now run nuclei's default-login/misconfig/
+  exposure templates against every non-web open port** — the last entry
+  in methodology.md's HOST "scan" step. By explicit decision this is a
+  direct `nuclei` call rather than a native reimplementation (the usual
+  policy): reimplementing nuclei's own default-credential/misconfiguration
+  template library wasn't worth it for one step, so `nuclei` joins `vulnx`
+  as a second named exception in methodology.md's External-tool policy.
+  **Off by default** (`options.easyWins` in a JSON config, or `-easy-wins`
+  on the CLI) — unlike `vulnx`'s lookup against a third-party database,
+  this sends real probes at the service, so it needs an explicit opt-in.
+  Traffic is bounded regardless of that opt-in: `-tags
+  default-login,exposure,misconfig` (never `cve` — `vulnx` already covers
+  that from the banner right above this step in the same loop), `-etags
+  dos,fuzz,intrusive` to drop anything actively harmful, and `-rl 10 -c 3
+  -bs 1 -timeout 5 -retries 1 -mt 3m` to keep one target's worst case to a
+  low-rate, short burst well under nuclei's own (much higher) defaults.
+  `-ni` skips OAST/interactsh templates so this never depends on a
+  third-party interactsh server; `-duc` skips nuclei's own per-run
+  update-check call but does **not** fetch nuclei-templates from nothing
+  — that's still a one-time `nuclei -ut` the operator runs themselves.
+  Skips cleanly (same `runExternal` shape as `vulnx`) if `nuclei` isn't
+  installed. The exact flags were verified against a built `nuclei`
+  v3.11.1 binary (`-h`/`-help`), not just its docs, same rigor as `vulnx`'s
+  `-p/--product` fix.
+
 ### BeanShell detection by banner (`portscan.IsBeanShellBanner`)
 - **`pipeline`'s HOST stage now flags an exposed BeanShell interactive
   server** regardless of what port it's listening on. BeanShell has no
@@ -339,7 +365,9 @@ us rather than shell out to them (vulnx is the one exception, now wired up
 
 - **HOST**: ~~excluded-but-tracked hosts~~ — done, see Shipped.
   ~~BeanShell detection~~ — done, see Shipped (`portscan.IsBeanShellBanner`).
-  A native "easy wins" pass (default creds/common misconfigs) is still open.
+  ~~"Easy wins" pass~~ — done, see Shipped (`-easy-wins`; a direct `nuclei`
+  call rather than a native reimplementation, by design — see
+  methodology.md's External-tool policy).
 - **WEB**: Google dorking; context-aware wordlist generation for `fuzz`
   (extensions now are, via `-ext-auto`; candidate *words* derived from the detected tech stack/app context — `probe`'s
   tech-detect output is the natural input for this now, not just static
