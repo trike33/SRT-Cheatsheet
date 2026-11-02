@@ -37,6 +37,7 @@ import (
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/pipeline"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dirlist"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dork"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/gau"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/ipexpand"

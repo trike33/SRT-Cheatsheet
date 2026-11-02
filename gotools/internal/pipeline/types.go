@@ -80,6 +80,9 @@ type pipelineOptions struct {
 	ActiveOnSubdomains    *bool  `json:"activeOnSubdomains,omitempty"`    // WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (default false -- each one gets its own full active pass, capped by activeOnSubdomainsMax)
 	ActiveOnSubdomainsMax int    `json:"activeOnSubdomainsMax,omitempty"` // WEB stage: with activeOnSubdomains, cap to this many live discovered subdomains, first-confirmed first (default 20)
 	ContextWords          *bool  `json:"contextWords,omitempty"`          // WEB stage: fuzz -words-auto -- add curated per-host words from the detected tech stack/page title, plus words from the engagement name, to every fuzz wordlist (default true -- reuses probe's own request via -ext-auto's cache when that's also on, capped at 40 extra words/host)
+	Dork                  *bool  `json:"dork,omitempty"`                  // WEB stage: Google dorking (gap 12) -- generate (and, with dorkAPIKey/dorkCX, actually run) a curated set of dork queries per explicit target's domain plus the engagement name (default false -- without credentials it sends no traffic and just writes search URLs to paste by hand, but it's still a new kind of step most runs don't want on unasked)
+	DorkAPIKey            string `json:"dorkAPIKey,omitempty"`            // WEB stage: Google Custom Search API key for options.dork's -search (falls back to $SRT_GOOGLE_API_KEY)
+	DorkCX                string `json:"dorkCX,omitempty"`                // WEB stage: Google Programmable Search Engine ID for options.dork's -search (falls back to $SRT_GOOGLE_CSE_ID)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -184,6 +187,13 @@ func (o pipelineOptions) contextWordsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.ContextWords
+}
+
+func (o pipelineOptions) dorkOrDefault(def bool) bool {
+	if o.Dork == nil {
+		return def
+	}
+	return *o.Dork
 }
 
 func (o pipelineOptions) contentScanOrDefault(def bool) bool {

@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words", "dork", "dork-api-key", "dork-cx"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -70,6 +70,9 @@ func Run(args []string) error {
 	activeOnSubdomains := fs.Bool("active-on-subdomains", false, "WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (off by default -- each one gets its own full active pass; same as options.activeOnSubdomains in a JSON config)")
 	activeOnSubdomainsMax := fs.Int("active-on-subdomains-max", 0, "with -active-on-subdomains: cap to this many live discovered subdomains, first-confirmed first (default 20; same as options.activeOnSubdomainsMax)")
 	noContextWords := fs.Bool("no-context-words", false, "WEB stage: don't add fuzz -words-auto's curated per-host tech-stack/title words, or engagement-name words, to the fuzz wordlist (on by default; same as options.contextWords:false)")
+	dorkFlag := fs.Bool("dork", false, "WEB stage: Google dorking -- generate (and, with -dork-api-key/-dork-cx or $SRT_GOOGLE_API_KEY/$SRT_GOOGLE_CSE_ID, actually run against the Custom Search API) a curated set of dork queries per explicit target's domain plus the engagement name (off by default; without credentials it sends no traffic at all; same as options.dork in a JSON config)")
+	dorkAPIKey := fs.String("dork-api-key", "", "with -dork: Google Custom Search API key (default: $SRT_GOOGLE_API_KEY; same as options.dorkAPIKey)")
+	dorkCX := fs.String("dork-cx", "", "with -dork: Google Programmable Search Engine ID (default: $SRT_GOOGLE_CSE_ID; same as options.dorkCX)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -151,6 +154,16 @@ func Run(args []string) error {
 	if *noContextWords {
 		disabled := false
 		cfg.Options.ContextWords = &disabled
+	}
+	if *dorkFlag {
+		enabled := true
+		cfg.Options.Dork = &enabled
+	}
+	if *dorkAPIKey != "" {
+		cfg.Options.DorkAPIKey = *dorkAPIKey
+	}
+	if *dorkCX != "" {
+		cfg.Options.DorkCX = *dorkCX
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)
@@ -389,7 +402,7 @@ var pipelineStageOrder = map[string][]string{
 	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged, bannered -> vulnx)"},
 	"web": {"domains", "scopecheck (only when \"host\" targets give it an IP scope to check)", "subdomains",
 		"subfinder / dnsx brute force + wildcard filter / alterx permutations (optional external tools)",
-		"scopecheck (same)", "probe", "gau", "robots (+ sitemap)", "katana crawl (+ forms)", "fuzz", "merge endpoints (gau + robots/sitemap + fuzz)", "validate (re-probe, drop soft-404s)", "sensitive", "params",
+		"scopecheck (same)", "probe", "gau", "dork (Google dorking, opt-in via options.dork)", "robots (+ sitemap)", "katana crawl (+ forms)", "fuzz", "merge endpoints (gau + dork + robots/sitemap + fuzz)", "validate (re-probe, drop soft-404s)", "sensitive", "params",
 		"snyk (only targets with snykUrl/snykVersion)"},
 }
 

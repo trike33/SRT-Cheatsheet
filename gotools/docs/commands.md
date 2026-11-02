@@ -17,7 +17,7 @@ ranges>"` narrows that further by HTTP status (e.g. `-where
 "status=200,301-399"`). A command's own `-h` says which kind(s) it defaults
 to; `srt results -kind` lists every kind actually saved so far. Commands
 with this fallback: `probe`, `portscan`, `resolve`, `traceroute`,
-`subdomains`, `gau`, `sensitive`, `params`, `robots`, `validate`.
+`subdomains`, `gau`, `dork`, `sensitive`, `params`, `robots`, `validate`.
 
 If a command is still working 5 seconds after it starts, it logs a
 `still running (Ns elapsed)...` line to stderr every 5 seconds until it's
@@ -27,7 +27,7 @@ show their own richer live counters instead of this generic line.
 Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [portscan](#portscan) · [traceroute](#traceroute) · [domains](#domains) · [scopecheck](#scopecheck) ·
 [subdomains](#subdomains) · [probe](#probe) · [burphosts](#burphosts) ·
-[burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
+[burpscope](#burpscope) · [gau](#gau) · [dork](#dork) · [sensitive](#sensitive) ·
 [params](#params) · [paramdiscover](#paramdiscover) · [dirlist](#dirlist) ·
 [robots](#robots) · [validate](#validate) · [snyk](#snyk) ·
 [relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
@@ -299,6 +299,63 @@ outbound internet to `web.archive.org`. (Port of `legacy/WEB/gau_recon.py`.)
 srt gau -d example.com -sub -o all_urls.txt
 srt gau -d example.com | srt params -class ssrf | httpx -silent
 ```
+
+---
+
+## dork
+
+Google dorking: generate a curated set of advanced search-operator queries
+for a target domain and/or engagement name, and — with a Google Custom
+Search API key — actually run them. Scraping google.com's own result pages
+isn't how this works (against Google's terms of service, rate-limited/
+CAPTCHA'd within a handful of requests, and not even reachable from this
+project's own sandbox); the Google Custom Search JSON API
+(`customsearch.googleapis.com`) is the one programmatic, ToS-compliant way
+to run these queries. Without a key, `dork` still prints every generated
+query as a ready-to-paste `google.com/search?q=...` URL — zero network
+traffic, useful on its own.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-d` | — | single target domain |
+| `-l` | stdin | file of target domains (or the project db's `domain` records — see `-from`) |
+| `-name` | — | engagement/org name, for name-scoped categories (paste sites, cloud buckets, source hosting) |
+| `-categories` | every supported category | comma list to restrict to, e.g. `-categories admin,listing` |
+| `-list-categories` | — | print every category name/description and exit |
+| `-search` | off | actually run each query against the Custom Search API (needs `-api-key`/`-cx` or `$SRT_GOOGLE_API_KEY`/`$SRT_GOOGLE_CSE_ID`) |
+| `-api-key`, `-cx` | — | Custom Search API key / Programmable Search Engine ID |
+| `-num` | `10` | results per query (API max 10/request) |
+| `-delay` | `1s` | with `-search`: delay between queries |
+| `-o` | stdout | output file |
+| `-json` | off | JSON lines instead of plain text/URLs |
+
+`-list-categories` output (domain-scoped categories need `-d`/`-l`;
+name-scoped ones need `-name`):
+
+```
+files         (domain) office/document files
+backup        (domain) backup/config/database file leaks
+admin         (domain) admin/login panels
+listing       (domain) open directory listings ("index of")
+errors        (domain) error messages / stack traces
+confidential  (domain) documents marked confidential/internal
+cloud         (name)   third-party cloud storage buckets mentioning the org
+pastes        (name)   paste-site leaks mentioning the org
+code          (name)   exposed secrets in public source hosting
+```
+
+```bash
+# query list only — paste into a browser, no API key needed
+srt dork -d example.com -name "Acme Corp"
+
+# actually run them (needs a Custom Search API key + Programmable Search Engine)
+export SRT_GOOGLE_API_KEY=... SRT_GOOGLE_CSE_ID=...
+srt dork -d example.com -search -o hits.txt
+```
+
+Getting an API key/engine ID: [developers.google.com/custom-search/v1/overview](https://developers.google.com/custom-search/v1/overview).
+Free tier: 100 queries/day — one `srt dork -search` over 6 domain categories
+(no `-name`) costs 6 of those.
 
 ---
 

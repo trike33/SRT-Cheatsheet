@@ -193,13 +193,19 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
      *(Context-aware *generation* beyond that — e.g. deriving candidates
      from a detected framework or CMS automatically — is not implemented.)*
    - **Passive**: archived URLs *(implemented: `srt gau`)*; Google dorking
-     *(not implemented)*.
+     *(implemented: `srt dork` -- generates a curated set of advanced
+     search-operator queries, and with a Google Custom Search API key
+     (`-search`) actually runs them against the Custom Search JSON API
+     (not google.com itself, which the API's terms require and which this
+     project's own sandbox can't even reach); without a key it still
+     prints every query as a ready-to-paste search URL, sending no
+     traffic at all. `pipeline`'s WEB stage wires it in opt-in via
+     `options.dork`.)*
 4. **Test them** → valid endpoints/files. *(Implemented: `srt validate`
    (and `pipeline`'s WEB stage `validate` step, on by default)
-   re-probes every endpoint `gau`/the crawler/`robots`/`fuzz` found and
-   drops dead ones and soft-404s by fingerprinting each host's real
-   not-found response. Google dorking itself still isn't implemented, so
-   nothing from it reaches this step yet.)*
+   re-probes every endpoint `gau`/the crawler/`robots`/`fuzz`/`dork`
+   (`-search` hits only) found and drops dead ones and soft-404s by
+   fingerprinting each host's real not-found response.)*
 5. From the valid endpoints/files list:
    - **Parameters**: fuzz them, guess common ones, or — when a webset/API
      spec is available — read them automatically from that definition.

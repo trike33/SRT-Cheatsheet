@@ -9,12 +9,15 @@ Targets come from a JSON config file (`-c`), a plain IP/CIDR list
 see [No JSON config needed](#no-json-config-needed) if you only have a
 plain host list and/or a Burp scope file.
 
-It's still a subset of the full methodology — a few steps (active crawling,
-Google dorking, context-aware wordlist generation, parameter
-fuzzing/guessing, DNS brute force for HOST, ...) aren't implemented yet.
-The "easy wins" pass (a direct, rate-limited `nuclei` call, on by default) and content-based
-secret scanning (`-content-scan`) are both wired in. See [The methodology
-this is meant to drive](#the-methodology-this-is-meant-to-drive) below.
+It's still a subset of the full methodology — a few pieces (DNS brute force
+for HOST, chaos/uncover subdomain/asset discovery, JS-declared parameter/
+wordlist extraction, ...) aren't implemented yet; see [The methodology this
+is meant to drive](#the-methodology-this-is-meant-to-drive) below for the
+full gap list. Active crawling (`katana`), Google dorking (`dork`),
+context-aware wordlist generation (`fuzz -words-auto`), parameter
+fuzzing/guessing (`paramdiscover`), the "easy wins" pass (a direct,
+rate-limited `nuclei` call, on by default) and content-based secret
+scanning (`-content-scan`) are all wired in.
 
 ## Quick start
 
@@ -48,6 +51,8 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-active-on-subdomains` | off | WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (same as `options.activeOnSubdomains`) |
 | `-active-on-subdomains-max` | `20` | with `-active-on-subdomains`: cap to this many live discovered subdomains, first-confirmed first (same as `options.activeOnSubdomainsMax`) |
 | `-no-context-words` | off | WEB stage: don't add `fuzz -words-auto`'s curated per-host words, or engagement-name words, to the fuzz wordlist (same as `options.contextWords:false`) |
+| `-dork` | off | WEB stage: Google dorking -- generate (and, with credentials, run) dork queries per target domain + engagement name (same as `options.dork`) |
+| `-dork-api-key`, `-dork-cx` | `$SRT_GOOGLE_API_KEY`/`$SRT_GOOGLE_CSE_ID` | with `-dork`: Google Custom Search API key / Programmable Search Engine ID (same as `options.dorkAPIKey`/`options.dorkCX`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -379,6 +384,22 @@ stage discovered and handed off (written to a `web/` subfolder of that
 5. `gau` — per domain **and** discovered subdomain, archived URLs from the
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.
+5b. `dork` (Google dorking, gap 12), **only with `options.dork`/`-dork`**
+   (off by default) — per explicit target's own domain (not every
+   discovered subdomain, to stay bounded against the Custom Search API's
+   free-tier quota), plus the engagement's `name` if the config has one:
+   generates a curated set of advanced search-operator queries (exposed
+   documents, admin/login panels, open directory listings, error pages,
+   confidential-marked documents, and -- name-scoped -- paste-site/cloud-
+   bucket/public-source leaks mentioning the org). Without
+   `options.dorkAPIKey`/`dorkCX` (or `$SRT_GOOGLE_API_KEY`/
+   `$SRT_GOOGLE_CSE_ID`) this sends **no traffic at all**: it just writes
+   `02b_dork_<domain>.txt`, a list of ready-to-paste `google.com` search
+   URLs, which never join the endpoint list below (they're search engine
+   links, not target URLs). With credentials it actually runs each query
+   against the Google Custom Search JSON API (never google.com itself --
+   see [commands.md](commands.md#dork)) and the real hit URLs it finds do
+   join the merged endpoint list, same as `gau`'s own URLs.
 6a. `katana` (github.com/projectdiscovery/katana), **on by default**
    (`options.crawl:false`/`-no-crawl`; `options.crawlDepth`, default 3) —
    crawls each explicit target: links, JavaScript endpoints, robots/sitemap,
@@ -403,7 +424,8 @@ stage discovered and handed off (written to a `web/` subfolder of that
    target's wordlist) — see [fuzz.md](fuzz.md#context-aware-words-words-auto).
 8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of every
    `robots`/sitemap URL that answered 2xx/3xx/401/403, every `fuzz` hit,
-   the crawler's endpoints and gau's archived URLs (active hits first).
+   the crawler's endpoints, gau's archived URLs, and `dork`'s hit URLs
+   (`-search` only -- active hits first).
 8b. `validate` (**on by default**, `options.validate:false`/`-no-validate`)
    — re-probes every endpoint (native, no redirects followed) and keeps only
    real ones: dead URLs, errors and **soft-404s** are dropped. Each host's
@@ -522,12 +544,15 @@ classification, the web hand-off, subdomain enumeration (passive and
 active), recon-on-root, the host↔web IP-scope cross-link, vulnx CVE
 lookups, the nuclei "easy wins" pass, cdncheck/tlsx enrichment, the katana
 crawl, sitemap-aware `robots`, directory brute force, soft-404-aware
-endpoint validation and content-based secret scanning are all there. A few
-pieces aren't implemented yet: Google dorking, context-aware wordlist
-generation, parameter fuzzing/guessing, and chaos/uncover. As each lands it
-gets added to `internal/pipeline/host.go`/`internal/pipeline/web.go` in
-the order `methodology.md` lays out. See [ROADMAP.md](ROADMAP.md) for what's
-queued.
+endpoint validation, content-based secret scanning, parameter
+fuzzing/guessing (`paramdiscover`), context-aware wordlist generation
+(`fuzz -words-auto` + engagement-name words), and Google dorking (`dork`)
+are all there. A few pieces aren't implemented yet: DNS brute force for
+HOST, chaos/uncover subdomain/asset discovery (both need per-engine API
+keys), and reading parameters from an OpenAPI/Swagger/GraphQL spec
+automatically. As each lands it gets added to
+`internal/pipeline/host.go`/`internal/pipeline/web.go` in the order
+`methodology.md` lays out. See [ROADMAP.md](ROADMAP.md) for what's queued.
 
 `srt` implements recon natively where it's worth it, and shells out to a
 short, named list of ProjectDiscovery tools where it isn't: vulnx, nuclei,

@@ -14,6 +14,7 @@ import (
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/dork"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/gau"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/paramdiscover"
@@ -229,6 +230,40 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}
 	}
 
+	// --- 02b: dork (gap 12, Google dorking) -- options.dork/-dork, off by
+	// default. Per explicit target's own domain (not every discovered
+	// subdomain -- a handful of categories per domain already adds up
+	// against the Custom Search API's 100 queries/day free tier), plus the
+	// engagement name if the config has one. Without
+	// options.dorkAPIKey/dorkCX (or SRT_GOOGLE_API_KEY/SRT_GOOGLE_CSE_ID)
+	// this sends no traffic at all -- it just writes ready-to-paste Google
+	// search URLs, which never join the endpoint list below (they're
+	// google.com links, not target URLs). With credentials, real hit URLs
+	// are written and do join it, same as gau's own URLs.
+	var dorkURLs []string
+	if cfg.Options.dorkOrDefault(false) {
+		apiKey, cx := dorkCredentials(cfg.Options)
+		searching := apiKey != "" && cx != ""
+		for _, d := range ds {
+			d := d
+			dorkFile := filepath.Join(outDir, "02b_dork_"+safeName(d)+".txt")
+			dorkArgs := []string{"-d", d, "-o", dorkFile}
+			if cfg.Name != "" {
+				dorkArgs = append(dorkArgs, "-name", cfg.Name)
+			}
+			if searching {
+				dorkArgs = append(dorkArgs, "-search", "-api-key", apiKey, "-cx", cx)
+			}
+			sr := runStep("web", "dork", d, dorkFile, func() error {
+				return dork.Run(dorkArgs)
+			})
+			steps = append(steps, sr)
+			if searching && sr.Status == "ok" {
+				dorkURLs = append(dorkURLs, mustLines(dorkFile)...)
+			}
+		}
+	}
+
 	// --- 05: robots, all targets in one run (also stdout-only, same capture
 	// trick). One invocation, not one per target, so robots can fetch the
 	// targets' robots.txt files concurrently instead of waiting out each dead
@@ -372,7 +407,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 			fuzzFiles = append(fuzzFiles, filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json"))
 		}
 	}
-	endpoints := collectEndpoints(allURLs, filepath.Join(outDir, "05_robots.txt"), fuzzFiles, crawled)
+	endpoints := collectEndpoints(append(allURLs, dorkURLs...), filepath.Join(outDir, "05_robots.txt"), fuzzFiles, crawled)
 	endpointsFile := filepath.Join(outDir, "06b_endpoints.txt")
 	if len(endpoints) > 0 {
 		if err := writeLinesFile(endpointsFile, endpoints); err != nil {
@@ -749,6 +784,23 @@ func resolveWordlist(e targetEntry, opts pipelineOptions) string {
 		return e.Wordlist
 	}
 	return opts.Wordlist
+}
+
+// dorkCredentials resolves options.dork's Google Custom Search API
+// credentials: the config fields win, falling back to the same env vars
+// `srt dork -search` itself would use (SRT_GOOGLE_API_KEY/
+// SRT_GOOGLE_CSE_ID) -- so a config file never needs to carry a secret
+// key in plain text just to turn -search on.
+func dorkCredentials(opts pipelineOptions) (apiKey, cx string) {
+	apiKey = opts.DorkAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv(dork.EnvAPIKey)
+	}
+	cx = opts.DorkCX
+	if cx == "" {
+		cx = os.Getenv(dork.EnvCX)
+	}
+	return apiKey, cx
 }
 
 // baseURL normalizes a target entry into a full base URL: a target that

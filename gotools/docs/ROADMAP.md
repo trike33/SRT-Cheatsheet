@@ -4,6 +4,57 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Google dorking (gap 12)
+- **New native command `srt dork`**, and a WEB-stage pipeline step (`02b`,
+  off by default: `options.dork`/`-dork`) — generates a curated set of
+  advanced search-operator queries per explicit target's domain plus the
+  engagement name, in 9 bounded categories (`-list-categories`): exposed
+  office/document files, backup/config/database file leaks, admin/login
+  panels, open directory listings, error messages/stack traces,
+  confidential-marked documents (all domain-scoped), plus — when a `name`
+  is given — third-party cloud storage buckets, paste-site leaks, and
+  exposed secrets in public source hosting mentioning the org (name-scoped).
+- **Deliberately does not scrape google.com's own result pages** — against
+  Google's terms of service, rate-limited/CAPTCHA'd within a handful of
+  requests, and (verified live) not even reachable from this project's own
+  sandbox network policy, unlike `www.googleapis.com` which is. The **Google
+  Custom Search JSON API** (`customsearch.googleapis.com`) is the one
+  programmatic, ToS-compliant way to run these queries, gated behind
+  `-search` plus an API key + Programmable Search Engine ID (`-api-key`/
+  `-cx`, or `$SRT_GOOGLE_API_KEY`/`$SRT_GOOGLE_CSE_ID` — same "env var or
+  flag, clean skip when absent" friction pattern as chaos/uncover below).
+  **Without credentials it sends no traffic at all**: every query is still
+  printed as a ready-to-paste `google.com/search?q=...` URL, which is
+  useful standalone and is exactly what `pipeline`'s `dork` step does by
+  default too.
+- Verified live, not just against docs: `www.googleapis.com` is reachable
+  from this sandbox while `www.google.com` itself is not (confirming the
+  API-not-scraping design was the only viable approach here, not just the
+  more cautious one); a real unauthenticated request against the Custom
+  Search endpoint returned the exact documented error JSON shape
+  (`{"error":{"code":400,"message":"API key not valid...","status":
+  "INVALID_ARGUMENT"}}`), which the error-path parsing and its test are
+  built against verbatim. **Not independently verified**: an authenticated
+  success response — no API key/Search Engine ID was available in this
+  environment to test one, so that parsing follows the API's long-stable
+  documented `items[].{title,link,snippet}` schema rather than a
+  live-checked example; flagged here per this project's "verify, don't
+  just trust docs" norm rather than silently presenting it as checked.
+- `pipeline` wiring: runs per explicit target's own domain only (not every
+  discovered subdomain — a handful of categories per domain already adds
+  up against the free tier's 100 queries/day), writes
+  `02b_dork_<domain>.txt`. Without `-search` that file holds search URLs
+  and is **not** merged into the endpoint list (they're google.com links,
+  not target URLs); with `-search`, the real hit URLs it finds do join the
+  merged list before `validate`, same as `gau`'s. Credentials resolve from
+  `options.dorkAPIKey`/`dorkCX` (JSON config) or the same env vars the
+  standalone command uses, so a config file committed to a repo never has
+  to carry a secret key in plain text.
+- See [commands.md](commands.md#dork), [pipeline.md's step
+  5b](pipeline.md#web-stage--outputdirweb), and
+  [methodology.md](methodology.md)'s WEB "gather endpoints/files" passive
+  entry.
+
 ### Context-aware wordlist words: tech stack, page title, engagement name (gap 7)
 - **`fuzz -words-auto`** (new flag, off by default standalone) — adds a
   small curated set of extra candidate words per host, the same way
@@ -785,7 +836,8 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
     uncover (Shodan/Censys/...) seeds hosts/IPs from a query and belongs at
     scope-building, with a config field for keys and a clean skip when
     absent.
-12. **Google dorking** is still unimplemented.
+12. ~~**Google dorking**~~ *(done — see Shipped: `srt dork` +
+    `options.dork`)*.
 
 Suggested build order: (1)+(2) merge and reorder, (4) soft-404-aware
 validation, (3) re-probe, then (10) rerun sensitive/params on the valid
