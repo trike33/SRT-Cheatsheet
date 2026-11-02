@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/robots"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/snyk"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/subdomains"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/wordlists"
 )
 
 // runWebStage drives domain/URL discovery and content/version checks against
@@ -96,8 +98,12 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 			d := d
 			subFile := filepath.Join(outDir, "01b_subdomains_"+safeName(d)+".txt")
 			subArgs := []string{"-d", d, "-o", subFile}
-			if cfg.Options.SubdomainsWordlist != "" {
-				subArgs = append(subArgs, "-w", cfg.Options.SubdomainsWordlist)
+			// Active brute force is on by default. When dnsx is installed it
+			// does that job (same wordlist, plus wildcard filtering -- see
+			// dnsDiscoverDomains), so the native brute force steps aside
+			// rather than sending the same queries twice.
+			if wl := subdomainWordlist(cfg, outDir); wl != "" && !dnsxAvailable() {
+				subArgs = append(subArgs, "-w", wl)
 			} else {
 				subArgs = append(subArgs, "-active=false")
 			}
@@ -338,13 +344,40 @@ func tlsxWidenDomains(cfg *pipelineConfig, outDir string) (names []string, steps
 	return names, steps
 }
 
+// subdomainWordlist returns the path of the label wordlist active subdomain
+// brute force should use, or "" when active brute force is disabled
+// (options.subdomainsActive:false/-no-active-subdomains). The user's own
+// options.subdomainsWordlist wins; otherwise the SecLists top-20000 list
+// embedded in the binary is written into outDir.
+func subdomainWordlist(cfg *pipelineConfig, outDir string) string {
+	if !cfg.Options.subdomainsActiveOrDefault(true) {
+		return ""
+	}
+	if cfg.Options.SubdomainsWordlist != "" {
+		return cfg.Options.SubdomainsWordlist
+	}
+	p, err := wordlists.SubdomainsFile(outDir)
+	if err != nil {
+		ioutil.Warn("embedded subdomain wordlist: %v (active brute force skipped)", err)
+		return ""
+	}
+	return p
+}
+
+// dnsxAvailable reports whether dnsx is on PATH (and so owns brute force).
+func dnsxAvailable() bool {
+	_, err := exec.LookPath("dnsx")
+	return err == nil
+}
+
 // dnsDiscoverDomains widens subdomain discovery with ProjectDiscovery's DNS
 // tools, per domain in ds:
 //
 //   - subfinder (options.subfinder, on by default): passive third-party
 //     sources only, no traffic to the target.
-//   - dnsx brute force (when options.subdomainsWordlist is set, same trigger
-//     as the native active brute force): resolves wordlist.domain, then a
+//   - dnsx brute force (on by default, options.subdomainsActive/
+//     -no-active-subdomains; wordlist: options.subdomainsWordlist, else the
+//     embedded SecLists top-20000 list): resolves wordlist.domain, then a
 //     second dnsx pass with -wd drops names a wildcard record answered for,
 //     which the native brute force can't tell apart from real hosts.
 //   - alterx permutations (options.permutations, off by default): mutates
@@ -367,9 +400,9 @@ func dnsDiscoverDomains(cfg *pipelineConfig, ds, known []string, outDir string) 
 			steps = append(steps, runExternal("web", "subfinder", d, "subfinder", subfinderArgs(d), f))
 			found = append(found, mustLines(f)...)
 		}
-		if cfg.Options.SubdomainsWordlist != "" {
+		if wl := subdomainWordlist(cfg, outDir); wl != "" {
 			brute := filepath.Join(outDir, "01e_dnsx_brute_"+safe+".txt")
-			steps = append(steps, runExternal("web", "dnsx-brute", d, "dnsx", dnsxBruteArgs(d, cfg.Options.SubdomainsWordlist), brute))
+			steps = append(steps, runExternal("web", "dnsx-brute", d, "dnsx", dnsxBruteArgs(d, wl), brute))
 			if len(mustLines(brute)) > 0 {
 				found = append(found, wild(d, brute, filepath.Join(outDir, "01e_dnsx_brute_"+safe+".filtered.txt"))...)
 			}

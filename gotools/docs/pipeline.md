@@ -33,6 +33,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-dry-run` | off | print the planned targets/steps and exit — sends no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default; same as `options.easyWins:false`). `-easy-wins` is accepted as a deprecated no-op. |
+| `-no-active-subdomains` | off | WEB stage: skip the active DNS brute force of subdomains (on by default, embedded SecLists top-20000 list; same as `options.subdomainsActive:false`) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (same as `options.subfinder:false`) |
 | `-permutations` | off | WEB stage: alterx permutations of the discovered names, resolved with dnsx (same as `options.permutations`) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
@@ -113,10 +114,14 @@ exact Burp include/exclude rules, not just a flattened host list.
   domain to run `domains`/`subdomains`/`gau`/`sensitive`/`params` against, so
   those steps are skipped for it (see [Steps](#steps) below); `robots` and
   `fuzz` still run against it directly.
-- `options.subdomainsWordlist` is options-only (no per-target override): a
-  label wordlist (`www`, `api`, `dev`, ...) that turns on active DNS
-  brute-force subdomain enumeration alongside the passive crt.sh lookup that
-  always runs. Omit it to stay passive-only.
+- Active DNS brute-force subdomain enumeration is **on by default**
+  (alongside the passive sources, which always run), using the SecLists
+  `subdomains-top1million-20000.txt` list embedded in the binary — nothing
+  to install. `options.subdomainsWordlist` (options-only, no per-target
+  override) swaps in your own label wordlist; `options.subdomainsActive:false`
+  / `-no-active-subdomains` makes the run passive-only. It's ~20,000 DNS
+  queries per domain, against the target's own nameservers via your
+  resolver — turn it off for engagements that forbid active DNS probing.
 - `options.easyWins` (also `-no-easy-wins` to disable; options-only, no
   per-target override) controls the HOST stage's nuclei default-login/
   misconfig/exposure pass over non-web open ports. **On by default.**
@@ -134,8 +139,9 @@ exact Burp include/exclude rules, not just a flattened host list.
   (capped at 2000 permutations per domain), resolves them with
   [dnsx](https://github.com/projectdiscovery/dnsx) and drops wildcard
   answers. **Off by default** — every permutation is a DNS query.
-  `options.subdomainsWordlist` also turns on a dnsx brute force (with
-  wildcard filtering) alongside the native one.
+  When dnsx is installed it also performs the default brute force (with
+  wildcard filtering) and the native brute force steps aside, so the same
+  queries aren't sent twice; without dnsx the native one runs.
 - `options.contentScan` (also `-content-scan`; options-only, no per-target
   override) switches the WEB stage's `sensitive` step from extension-based
   filtering to fetching every URL in the merged `gau` list and scanning its
@@ -263,7 +269,9 @@ stage discovered and handed off (written to a `web/` subfolder of that
    before this existed, the two stages stay independent. A `scopecheck`
    failure (e.g. a malformed scope entry) fails open: nothing is dropped.
 3. `subdomains` — per domain: passive (crt.sh) always, active DNS brute
-   force too if `options.subdomainsWordlist` is set. **Skipped** if no
+   force too unless disabled (`-no-active-subdomains`; embedded top-20000
+   wordlist unless `options.subdomainsWordlist` is set; skipped here in
+   favour of dnsx when that's installed). **Skipped** if no
    domain was extracted (or none survived step 2). Discovered subdomains
    widen the domain list step 4 (`probe`) and step 5 (`gau`) run against —
    `robots`/`fuzz` stay scoped to the explicit `web` targets, so this never
@@ -279,8 +287,8 @@ stage discovered and handed off (written to a `web/` subfolder of that
    isn't installed.
 3b2. `subfinder` / `dnsx` / `alterx` (ProjectDiscovery), per domain, each
    skipped cleanly if not installed: **subfinder** (on by default,
-   `-no-subfinder`) adds passive sources; with `options.subdomainsWordlist`
-   set, **dnsx** brute-forces `<word>.<domain>` and a second `dnsx -wd` pass
+   `-no-subfinder`) adds passive sources; **dnsx** (unless active brute
+   force is disabled) brute-forces `<word>.<domain>` and a second `dnsx -wd` pass
    drops wildcard answers (the native brute force can't tell those from real
    hosts); with `options.permutations`/`-permutations` (off by default),
    **alterx** permutes the names found so far and dnsx resolves and

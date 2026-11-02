@@ -204,7 +204,8 @@ func TestDNSDiscoverDomainsPermutationsOptIn(t *testing.T) {
 	withFakeBinary(t, "dnsx", fakeDnsxFilter())
 
 	// default: no alterx step
-	_, steps := dnsDiscoverDomains(&pipelineConfig{}, []string{"a.test"}, nil, t.TempDir())
+	off := false
+	_, steps := dnsDiscoverDomains(&pipelineConfig{Options: pipelineOptions{SubdomainsActive: &off}}, []string{"a.test"}, nil, t.TempDir())
 	for _, s := range steps {
 		if s.Name == "alterx" {
 			t.Fatalf("permutations must be off by default, got %+v", s)
@@ -212,7 +213,7 @@ func TestDNSDiscoverDomainsPermutationsOptIn(t *testing.T) {
 	}
 
 	on := true
-	cfg := &pipelineConfig{Options: pipelineOptions{Permutations: &on}}
+	cfg := &pipelineConfig{Options: pipelineOptions{Permutations: &on, SubdomainsActive: &off}}
 	names, steps := dnsDiscoverDomains(cfg, []string{"a.test"}, []string{"seed.a.test", "other.example"}, t.TempDir())
 	var got []string
 	for _, s := range steps {
@@ -229,9 +230,37 @@ func TestDNSDiscoverDomainsPermutationsOptIn(t *testing.T) {
 func TestDNSDiscoverDomainsSubfinderOffByOption(t *testing.T) {
 	withFakeBinary(t, "subfinder", "echo should-not-appear.a.test\n")
 	off := false
-	cfg := &pipelineConfig{Options: pipelineOptions{Subfinder: &off}}
+	cfg := &pipelineConfig{Options: pipelineOptions{Subfinder: &off, SubdomainsActive: &off}}
 	names, steps := dnsDiscoverDomains(cfg, []string{"a.test"}, nil, t.TempDir())
 	if len(names) != 0 || len(steps) != 0 {
 		t.Errorf("options.subfinder=false: got names %v steps %v", names, steps)
+	}
+}
+
+func TestSubdomainWordlistDefaultsAndOverrides(t *testing.T) {
+	dir := t.TempDir()
+	got := subdomainWordlist(&pipelineConfig{}, dir)
+	if got == "" || len(mustLines(got)) < 19000 {
+		t.Fatalf("default should be the embedded top-20000 list, got %q (%d lines)", got, len(mustLines(got)))
+	}
+	if got := subdomainWordlist(&pipelineConfig{Options: pipelineOptions{SubdomainsWordlist: "/my/list.txt"}}, dir); got != "/my/list.txt" {
+		t.Errorf("user wordlist must win, got %q", got)
+	}
+	off := false
+	if got := subdomainWordlist(&pipelineConfig{Options: pipelineOptions{SubdomainsActive: &off}}, dir); got != "" {
+		t.Errorf("subdomainsActive=false must disable brute force, got %q", got)
+	}
+}
+
+func TestDNSDiscoverDomainsBruteForceOnByDefault(t *testing.T) {
+	withFakeBinary(t, "subfinder", "echo passive.a.test\n")
+	withFakeBinary(t, "dnsx", fakeDnsxFilter())
+	_, steps := dnsDiscoverDomains(&pipelineConfig{}, []string{"a.test"}, nil, t.TempDir())
+	var got []string
+	for _, s := range steps {
+		got = append(got, s.Name)
+	}
+	if want := []string{"subfinder", "dnsx-brute", "dnsx-wildcard"}; !slices.Equal(got, want) {
+		t.Errorf("steps = %v, want %v", got, want)
 	}
 }

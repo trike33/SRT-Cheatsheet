@@ -61,7 +61,8 @@ type pipelineOptions struct {
 	Ports              string `json:"ports,omitempty"`
 	Proxy              string `json:"proxy,omitempty"`
 	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
-	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
+	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); default: the embedded SecLists top-20000 list
+	SubdomainsActive   *bool  `json:"subdomainsActive,omitempty"`   // WEB stage: active DNS brute force of subdomains (default true; passive sources always run regardless)
 	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default true; rate-limited and bounded -- set false to avoid sending probes beyond recon)
 	Subfinder          *bool  `json:"subfinder,omitempty"`          // WEB stage: passive subdomain discovery via subfinder (default true -- queries third-party sources, no traffic to the target)
 	Permutations       *bool  `json:"permutations,omitempty"`       // WEB stage: alterx permutations of discovered names, resolved with dnsx (default false -- multiplies DNS queries)
@@ -95,6 +96,13 @@ func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.EasyWins
+}
+
+func (o pipelineOptions) subdomainsActiveOrDefault(def bool) bool {
+	if o.SubdomainsActive == nil {
+		return def
+	}
+	return *o.SubdomainsActive
 }
 
 func (o pipelineOptions) subfinderOrDefault(def bool) bool {

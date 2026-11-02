@@ -56,7 +56,7 @@ then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx`):
   default** (`options.subfinder`/`-no-subfinder`); third-party lookups
   only, no traffic to the target.
 - **dnsx** — DNS brute force (`-d`/`-w`) with a second `-wd` pass that
-  drops wildcard answers, run when `options.subdomainsWordlist` is set;
+  drops wildcard answers, run by default (embedded SecLists top-20000 list, or `options.subdomainsWordlist`);
   also resolves alterx's permutations.
 - **alterx** — permutations of the discovered names, **opt-in**
   (`options.permutations`/`-permutations`) since each one is a DNS query.
@@ -175,7 +175,7 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
    subdomain found: tech-detect, title, status code, content-length, follow
    redirects (a native httpx-lite). *(Implemented: `srt subdomains` —
    passive via crt.sh certificate transparency logs, active DNS brute force
-   when a label wordlist is given — and `srt probe` for recon-on-root
+   (on by default with an embedded wordlist; `-w` to override) — and `srt probe` for recon-on-root
    (title/status/content-length/`Server`/a small tech-detect signature set).
    `pipeline`'s WEB stage runs both automatically ahead of endpoint
    gathering.)*

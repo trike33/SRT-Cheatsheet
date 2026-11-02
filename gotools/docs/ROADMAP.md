@@ -4,6 +4,16 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Active subdomain brute force on by default, with an embedded wordlist
+- The WEB stage now brute-forces subdomains by default using SecLists'
+  `subdomains-top1million-20000.txt`, **embedded in the binary**
+  (`internal/wordlists`, MIT, see its NOTICE.md) so there's no path to
+  configure or install. `options.subdomainsWordlist` overrides it;
+  `options.subdomainsActive:false`/`-no-active-subdomains` makes the run
+  passive-only. When dnsx is installed it performs the brute force (plus
+  wildcard filtering) and the native one steps aside, so queries aren't
+  duplicated.
+
 ### Easy wins on by default; subfinder/dnsx/alterx DNS discovery
 - **The nuclei "easy wins" pass is now on by default** (`options.easyWins:false`
   or `-no-easy-wins` to disable; `-easy-wins` stays as a deprecated no-op).
@@ -12,7 +22,7 @@ Running log of what's shipped and what's queued, newest first.
 - **WEB-stage subdomain discovery now chains ProjectDiscovery's DNS tools**,
   each skipped cleanly if not installed: **subfinder** (passive, on by
   default, `-no-subfinder`); **dnsx** brute force when
-  `options.subdomainsWordlist` is set, followed by a `-wd` wildcard-filter
+  `options.subdomainsWordlist` is set (now the default, see above), followed by a `-wd` wildcard-filter
   pass; **alterx** permutations resolved by dnsx (opt-in,
   `-permutations`, capped at 2000 per domain). This is the methodology's
   HOST "DNS brute force" gap, delivered through the host↔web cross-link:
@@ -430,7 +440,7 @@ Running log of what's shipped and what's queued, newest first.
   conservative signature set, not a wappalyzer-equivalent). Covers
   "recon on root."
 - **Wired into `pipeline`'s WEB stage** — `subdomains` (passive always,
-  active if `options.subdomainsWordlist` is set) and `probe` run right
+  active by default, see Shipped) and `probe` run right
   after `domains`, widening the domain list `gau` also runs against.
   `robots`/`fuzz` stay scoped to the explicit `web` targets, so discovering
   N subdomains doesn't silently multiply active traffic — that stays opt-in.
