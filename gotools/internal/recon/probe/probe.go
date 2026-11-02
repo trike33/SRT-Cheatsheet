@@ -119,12 +119,13 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c"}},
 			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
-	in := fs.String("l", "", "target list: URLs or bare hosts (default: stdin)")
+	in := fs.String("l", "", "target list: URLs or bare hosts (default: stdin, else the project db's domain/subdomain records -- see -from)")
+	fb := store.BindInputFallback(fs, "probe", "domain", "subdomain")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-request timeout")
 	insecure := fs.Bool("insecure", true, "skip TLS verification")
 	conc := fs.Int("c", 40, "concurrent probes")
@@ -135,12 +136,12 @@ func Run(args []string) error {
 	}
 	defer ioutil.StartHeartbeat("probe")()
 
-	targets, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	targets, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
 	if len(targets) == 0 {
-		return ioutil.ErrMissing("no targets: pass -l <file> or pipe targets on stdin")
+		return ioutil.ErrMissing("no targets: pass -l <file>, pipe targets on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	client := netx.NewClient(*timeout, *insecure)

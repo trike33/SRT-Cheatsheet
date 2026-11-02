@@ -26,6 +26,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func init() {
@@ -260,13 +261,14 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "SOFT-404 DETECTION", Names: []string{"probes", "tol", "learn"}},
 			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c", "max"}},
 			{Title: "OUTPUT", Names: []string{"o", "silent", "json", "rejected", "color"}},
 		})
 	}
-	in := fs.String("l", "", "URL list (default: stdin / args)")
+	in := fs.String("l", "", "URL list (default: stdin / args, else the project db's url/probe/gau/robots records -- see -from)")
+	fb := store.BindInputFallback(fs, "validate", "url", "probe", "gau", "robots")
 	probes := fs.Int("probes", 3, "random not-found paths requested per host/directory/extension class")
 	tol := fs.Float64("tol", 5, "size tolerance around a not-found response, in percent")
 	learn := fs.Int("learn", 10, "reject groups of this many near-identical 'valid' responses on one host (0 = off)")
@@ -285,7 +287,7 @@ func Run(args []string) error {
 	cm := colorout.ParseMode(*colorFlag)
 	defer ioutil.StartHeartbeat("validate")()
 
-	urls, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	urls, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -295,7 +297,7 @@ func Run(args []string) error {
 		urls = urls[:*maxURLs]
 	}
 	if len(urls) == 0 {
-		return ioutil.ErrMissing("no URLs: pass -l <file> or pipe URLs on stdin")
+		return ioutil.ErrMissing("no URLs: pass -l <file>, pipe URLs on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	v := New(netx.NewClientOpts(*timeout, *insecure, "", false), *tol, *probes)

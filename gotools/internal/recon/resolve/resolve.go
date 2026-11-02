@@ -14,6 +14,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func init() {
@@ -37,12 +38,13 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("resolve", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l", "reverse"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where", "reverse"}},
 			{Title: "PERFORMANCE", Names: []string{"c", "timeout"}},
 			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
-	in := fs.String("l", "", "input file: hostnames, or IPs with -reverse (default: stdin)")
+	in := fs.String("l", "", "input file: hostnames, or IPs with -reverse (default: stdin, else the project db -- see -from)")
+	fb := store.BindInputFallback(fs, "resolve", "domain", "subdomain")
 	reverse := fs.Bool("reverse", false, "treat input as IPs and do a reverse (PTR) lookup instead of forward A/AAAA")
 	conc := fs.Int("c", 40, "concurrent DNS lookups")
 	timeout := fs.Duration("timeout", 5*time.Second, "per-lookup timeout")
@@ -52,13 +54,16 @@ func Run(args []string) error {
 		return err
 	}
 	defer ioutil.StartHeartbeat("resolve")()
+	if *reverse {
+		fb.SetDefaultKinds("ip")
+	}
 
-	queries, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	queries, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
 	if len(queries) == 0 {
-		return ioutil.ErrMissing("no input: pass -l <file> or pipe hosts/IPs on stdin")
+		return ioutil.ErrMissing("no input: pass -l <file>, pipe hosts/IPs on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	resolver := &net.Resolver{}

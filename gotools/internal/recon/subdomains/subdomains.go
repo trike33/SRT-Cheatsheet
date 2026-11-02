@@ -18,6 +18,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func init() {
@@ -33,14 +34,15 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("subdomains", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"d", "l", "w"}},
+			{Title: "INPUT", Names: []string{"d", "l", "from", "where", "w"}},
 			{Title: "ENUMERATION", Names: []string{"passive", "active"}},
 			{Title: "PERFORMANCE", Names: []string{"c", "timeout", "resolve-timeout"}},
 			{Title: "OUTPUT", Names: []string{"o"}},
 		})
 	}
 	domain := fs.String("d", "", "single target domain")
-	list := fs.String("l", "", "file of target domains (or stdin)")
+	list := fs.String("l", "", "file of target domains (or stdin, else the project db's domain records -- see -from)")
+	fb := store.BindInputFallback(fs, "subdomains", "domain")
 	wordlist := fs.String("w", "", "wordlist for active DNS brute force (e.g. www, api, mail, ...); omit to skip active enum")
 	passive := fs.Bool("passive", true, "passive enumeration via crt.sh certificate transparency logs")
 	active := fs.Bool("active", true, "active DNS brute force (needs -w)")
@@ -59,7 +61,7 @@ func Run(args []string) error {
 		domains = append(domains, *domain)
 	}
 	if *domain == "" || *list != "" || fs.NArg() > 0 {
-		if lines, err := ioutil.InputLines(ioutil.ResolveInput(*list, fs.Args())); err == nil {
+		if lines, _, err := fb.Resolve(*list, fs.Args()); err == nil {
 			domains = append(domains, lines...)
 		} else if *domain == "" {
 			return err
@@ -67,7 +69,7 @@ func Run(args []string) error {
 	}
 	domains = ioutil.DedupStrings(domains)
 	if len(domains) == 0 {
-		return ioutil.ErrMissing("provide -d <domain>, -l <file>, or pipe domains on stdin")
+		return ioutil.ErrMissing("provide -d <domain>, -l <file>, pipe domains on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	seen := map[string]struct{}{}

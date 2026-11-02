@@ -22,6 +22,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func init() {
@@ -37,13 +38,14 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("robots", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "SITEMAP", Names: []string{"no-sitemap", "sitemap-max"}},
 			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c", "hc"}},
 			{Title: "OUTPUT", Names: []string{"color"}},
 		})
 	}
-	in := fs.String("l", "", "file of base URLs (optional; args/stdin also accepted)")
+	in := fs.String("l", "", "file of base URLs (optional; args/stdin also accepted, else the project db's url/probe/gau/robots records -- see -from)")
+	fb := store.BindInputFallback(fs, "robots", "url", "probe", "gau", "robots")
 	colorFlag := fs.String("color", "auto", "color output: auto|always|never")
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request timeout")
 	insecure := fs.Bool("insecure", true, "skip TLS verification")
@@ -68,12 +70,14 @@ func Run(args []string) error {
 		bases = append(bases, lines...)
 	}
 	if len(bases) == 0 {
-		if lines, err := ioutil.InputLines(""); err == nil {
-			bases = append(bases, lines...)
+		lines, _, err := fb.Resolve("", nil)
+		if err != nil {
+			return err
 		}
+		bases = append(bases, lines...)
 	}
 	if len(bases) == 0 {
-		return ioutil.ErrMissing("provide a base URL as an argument, via -l, or on stdin")
+		return ioutil.ErrMissing("provide a base URL as an argument, via -l, on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	client := netx.NewClient(*timeout, *insecure)

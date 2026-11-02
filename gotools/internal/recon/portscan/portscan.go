@@ -150,14 +150,15 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("portscan", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l", "p"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where", "p"}},
 			{Title: "PROBES", Names: []string{"banner"}},
 			{Title: "PERFORMANCE", Names: []string{"c", "timeout"}},
 			{Title: "RESUME", Names: []string{"resume"}},
 			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
-	in := fs.String("l", "", "input IP/host list (default: stdin)")
+	in := fs.String("l", "", "input IP/host list (default: stdin, else the project db's ip records -- see -from)")
+	fb := store.BindInputFallback(fs, "portscan", "ip")
 	portsFlag := fs.String("p", "common", `ports: "common", "uncommon", "all", or explicit e.g. "80,443,8000-9000" (comma-combinable, e.g. "common,uncommon")`)
 	conc := fs.Int("c", 200, "concurrent connection attempts")
 	timeout := fs.Duration("timeout", time.Second, "per-port connect timeout")
@@ -169,12 +170,12 @@ func Run(args []string) error {
 		return err
 	}
 
-	hosts, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	hosts, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
 	if len(hosts) == 0 {
-		return ioutil.ErrMissing("no hosts: pass -l <file> or pipe hosts on stdin")
+		return ioutil.ErrMissing("no hosts: pass -l <file>, pipe hosts on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	ports, err := resolvePorts(*portsFlag)

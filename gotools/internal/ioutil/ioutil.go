@@ -18,8 +18,21 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 )
+
+// StdinIsTerminal reports whether stdin is an interactive terminal, as
+// opposed to a pipe or a redirected file. Commands that can fall back to
+// another input source when nothing is given (see internal/store's
+// InputFallback) use this to tell "nothing piped in, safe to try something
+// else" apart from "actually waiting on a human to type", which InputLines
+// alone can't: it treats "" the same way (stdin) regardless of which one
+// it is.
+func StdinIsTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
 
 // InputLines reads non-empty, whitespace-trimmed lines from path. If path is
 // "" or "-", it reads from stdin. This is what makes every command accept a

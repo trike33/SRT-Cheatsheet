@@ -4,6 +4,47 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Commands default their input to the project database when nothing else is given
+- **`probe`, `portscan`, `resolve`, `traceroute`, `subdomains`, `gau`,
+  `sensitive`, `params`, `robots` and `validate` now fall back to
+  `.srt/srt.db`** (see `srt results`) when none of `-l`, a positional arg,
+  or piped/redirected stdin is given *and* stdin is an interactive
+  terminal. A bare `srt probe` (nothing else) after an earlier run/pipeline
+  already saved `domain`/`subdomain` records uses those instead of hanging
+  waiting on the terminal; `srt portscan` falls back to `ip` records,
+  `robots`/`validate`/`sensitive`/`params` to `url`/`probe`/`gau`/`robots`
+  records, `resolve` to `domain`/`subdomain` (or `ip` with `-reverse`),
+  `traceroute` to `ip`, `subdomains` to `domain`, `gau` to `domain`/
+  `subdomain`. An explicit `-l`/positional arg/piped stdin always wins, same
+  as before this existed; a real pipe (even an empty one) is never affected
+  — only a genuinely interactive, nothing-given invocation changes
+  behavior, so no existing script or `cmd1 | cmd2` chain is. `-from <kinds>`
+  (comma list) picks a different kind than the command's own default, and
+  `-where "status=<list/ranges>"` narrows it by HTTP status. One stderr
+  line says what was read ("probe: using 143 domain/subdomain record(s)
+  from .srt/srt.db ..."). See [commands.md's intro note](commands.md) for
+  the user-facing version.
+- Implementation: `internal/store.BindInputFallback`/`InputFallback.Resolve`
+  (`internal/store/input.go`) is a drop-in replacement for the
+  `ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))` pattern every one
+  of these commands already used; `ioutil.StdinIsTerminal` (new) is the
+  terminal-vs-pipe check that makes "an interactive terminal doesn't hang"
+  possible (a non-terminal stdin — a real pipe, or a redirected file, even
+  an empty one — is read exactly as `InputLines` always has). The status
+  filter reuses `ioutil.RangeSet`/`ParseRangeSet` (already used by `fuzz`/
+  `portscan`) rather than a new parser. `resolve`'s default kind switches
+  between hostnames and `ip` depending on `-reverse`, decided only after
+  `fs.Parse` (`InputFallback.SetDefaultKinds`). `dirlist` and `ipexpand`
+  were deliberately left out: neither has a matching db kind that's a clean
+  fit (dirlist's input is a narrow "open directory listing" URL subset;
+  ipexpand's input is the IP/CIDR range of the engagement itself, not a
+  prior command's output).
+- Verified live under a real pty (not just unit tests): a bare `srt
+  resolve` with a seeded `domain` record and no `-l`/args, on an
+  interactive terminal, correctly fell back to the db instead of hanging;
+  piped stdin (even empty) behaved exactly as before, including the
+  existing "no input" error when it really is empty.
+
 ### Skip the current pipeline step with a keyboard shortcut
 - **`pipeline` now listens for `s` on stdin and abandons the step currently
   running**, moving straight to the next one, when stdin is a terminal.
@@ -709,23 +750,6 @@ so they aren't lost:
   traffic/log-misattribution turns out to matter in practice; also open:
   the same shortcut inside `shell`'s own output pane (a dedicated key
   binding there, since raw-stdin reading isn't `shell`'s model).
-- **Subcommands read their input from the current project's `srt.db` by
-  default** — today every command needs `-l <file>`, positional args or
-  stdin, even though earlier runs already saved exactly what the next one
-  needs (`-save`/the pipeline write `ip`, `domain`, `subdomain`, `url`,
-  `probe`, `gau`... records into `.srt/srt.db`, see `srt results`). A bare
-  `srt probe` should pick its targets from the db (e.g. every `subdomain`/
-  `domain` record) when no input is given, `srt robots`/`validate`/`sensitive`
-  their URL records, `srt portscan` the `ip` records, and so on — with an
-  explicit `-l`/args/stdin always winning, a `-from <kind>` (and `-where`
-  filter, e.g. `-from url -where status=200`) to choose the source
-  explicitly, and a one-line note on stderr saying what was read ("probe:
-  using 143 subdomain records from .srt/srt.db"). Needs a per-command
-  "default input kind" declared next to its `cli.Register`, a shared
-  `ioutil` helper that resolves flag → args → stdin → db in that order
-  (stdin only counts when it's a pipe, so an interactive terminal doesn't
-  hang), and care that a command never silently re-targets a whole database
-  the user didn't mean (scope checks still apply).
 - **A guided flag-builder in `shell`** (the basic REPL itself shipped — see
   Shipped above) — interactively prompting for each flag instead of still
   typing them. Needs either a shared declarative flag schema across every

@@ -4,6 +4,21 @@ Every command reads a list from `-l <file>` **or stdin**, and writes to stdout
 **or `-o <file>`**. Status/progress goes to **stderr**, so stdout stays clean to
 pipe into the next tool. Run `srt <command> -h` for the live flag list.
 
+Most target-list commands also fall back to the project's results database
+(`.srt/srt.db`, see [results](#results)) when **none** of `-l`, a positional
+arg, or piped/redirected stdin is given **and** stdin is an interactive
+terminal — so running one bare, by hand, after an earlier run or pipeline
+already saved what it needs, uses that instead of hanging waiting for you to
+type targets. A real pipe (even an empty one) is never affected: existing
+scripts and `cmd1 | cmd2` chains behave exactly as before. `-from <kinds>`
+(comma list, e.g. `-from domain,subdomain`) picks which result kind(s) to
+read instead of the command's own default, and `-where "status=<list/
+ranges>"` narrows that further by HTTP status (e.g. `-where
+"status=200,301-399"`). A command's own `-h` says which kind(s) it defaults
+to; `srt results -kind` lists every kind actually saved so far. Commands
+with this fallback: `probe`, `portscan`, `resolve`, `traceroute`,
+`subdomains`, `gau`, `sensitive`, `params`, `robots`, `validate`.
+
 If a command is still working 5 seconds after it starts, it logs a
 `still running (Ns elapsed)...` line to stderr every 5 seconds until it's
 done — so a long run on a big input never looks hung. `fuzz` and `portscan`

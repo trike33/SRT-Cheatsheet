@@ -50,12 +50,13 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("traceroute", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "OPTIONS", Names: []string{"max-hops", "timeout"}},
 			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
-	in := fs.String("l", "", "target list: hosts or IPs (default: stdin)")
+	in := fs.String("l", "", "target list: hosts or IPs (default: stdin, else the project db's ip records -- see -from)")
+	fb := store.BindInputFallback(fs, "traceroute", "ip")
 	maxHops := fs.Int("max-hops", 30, "maximum TTL to probe")
 	timeout := fs.Duration("timeout", time.Second, "per-hop wait for a response")
 	out := fs.String("o", "", "output file (default: stdout)")
@@ -64,12 +65,12 @@ func Run(args []string) error {
 		return err
 	}
 
-	targets, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	targets, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
 	if len(targets) == 0 {
-		return ioutil.ErrMissing("no targets: pass -l <file> or pipe hosts/IPs on stdin")
+		return ioutil.ErrMissing("no targets: pass -l <file>, pipe hosts/IPs on stdin, or save some into the project db first (see `srt results`)")
 	}
 	if *maxHops < 1 {
 		return ioutil.ErrMissing("-max-hops must be at least 1")

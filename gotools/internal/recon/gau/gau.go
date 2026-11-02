@@ -17,6 +17,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/payloads"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 func init() {
@@ -84,14 +85,15 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("gau", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"d", "l", "sub"}},
+			{Title: "INPUT", Names: []string{"d", "l", "from", "where", "sub"}},
 			{Title: "FILTERS", Names: []string{"ce", "cp"}},
 			{Title: "PERFORMANCE", Names: []string{"timeout"}},
 			{Title: "OUTPUT", Names: []string{"o", "v"}},
 		})
 	}
 	domain := fs.String("d", "", "single target domain")
-	list := fs.String("l", "", "file of target domains (or stdin)")
+	list := fs.String("l", "", "file of target domains (or stdin, else the project db's domain/subdomain records -- see -from)")
+	fb := store.BindInputFallback(fs, "gau", "domain", "subdomain")
 	subs := fs.Bool("sub", false, "include subdomains (*.domain)")
 	out := fs.String("o", "", "write collected URLs to this file")
 	verbose := fs.Bool("v", false, "also print URLs to stdout when -o is set")
@@ -110,7 +112,7 @@ func Run(args []string) error {
 	}
 	if *domain == "" || *list != "" || fs.NArg() > 0 {
 		if *list != "" || fs.NArg() > 0 || *domain == "" {
-			if lines, err := ioutil.InputLines(ioutil.ResolveInput(*list, fs.Args())); err == nil {
+			if lines, _, err := fb.Resolve(*list, fs.Args()); err == nil {
 				hosts = append(hosts, lines...)
 			} else if *domain == "" {
 				return err
@@ -119,7 +121,7 @@ func Run(args []string) error {
 	}
 	hosts = ioutil.DedupStrings(hosts)
 	if len(hosts) == 0 {
-		return ioutil.ErrMissing("provide -d <domain>, -l <file>, or pipe domains on stdin")
+		return ioutil.ErrMissing("provide -d <domain>, -l <file>, pipe domains on stdin, or save some into the project db first (see `srt results`)")
 	}
 
 	seen := map[string]struct{}{}
@@ -175,12 +177,13 @@ func RunSensitive(args []string) error {
 	fs := flag.NewFlagSet("sensitive", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "CONTENT SCAN", Names: []string{"content", "c", "timeout", "insecure", "max-size"}},
 			{Title: "OUTPUT", Names: []string{"o", "json"}},
 		})
 	}
-	in := fs.String("l", "", "URL list file (default: stdin)")
+	in := fs.String("l", "", "URL list file (default: stdin, else the project db's url/probe/gau/robots records -- see -from)")
+	fb := store.BindInputFallback(fs, "sensitive", "url", "probe", "gau", "robots")
 	out := fs.String("o", "", "output file (default: stdout)")
 	content := fs.Bool("content", false, "fetch every URL and scan its body for secrets/credentials (API keys, private keys, tokens, connection strings, ...) instead of filtering by extension -- the extension list only catches a file by its name, this catches a leaked key regardless of it")
 	conc := fs.Int("c", 20, "with -content: concurrent fetches")
@@ -192,7 +195,7 @@ func RunSensitive(args []string) error {
 		return err
 	}
 	defer ioutil.StartHeartbeat("sensitive")()
-	urls, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	urls, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -228,17 +231,18 @@ func RunParams(args []string) error {
 	fs := flag.NewFlagSet("params", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"l"}},
+			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "FILTERS", Names: []string{"class"}},
 		})
 	}
-	in := fs.String("l", "", "URL list file (default: stdin)")
+	in := fs.String("l", "", "URL list file (default: stdin, else the project db's url/probe/gau/robots records -- see -from)")
+	fb := store.BindInputFallback(fs, "params", "url", "probe", "gau", "robots")
 	only := fs.String("class", "", "only show one class (e.g. ssrf, sqli, xss, lfi, rce, open-redirect)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	defer ioutil.StartHeartbeat("params")()
-	urls, err := ioutil.InputLines(ioutil.ResolveInput(*in, fs.Args()))
+	urls, _, err := fb.Resolve(*in, fs.Args())
 	if err != nil {
 		return err
 	}
