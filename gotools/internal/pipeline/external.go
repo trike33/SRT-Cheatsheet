@@ -26,15 +26,14 @@ import (
 // the same order of traffic as `probe`). A future external-tool step
 // follows the same shape: runExternal with a binary name and an argv.
 //
-// katana (active crawling) was investigated for this same list and is
-// deliberately NOT wired in: in this environment's sandbox it hung
-// indefinitely on a trivial local crawl, opening parallel HTTPS
-// connections through the egress proxy unrelated to the crawl target
-// before ever reaching it -- `-duc` didn't prevent it, and there's no
-// flag that visibly does. Shipping an automated pipeline step that can
-// hang a run indefinitely, with no way to know whether a given
-// deployment's own network hits the same thing, isn't an acceptable
-// trade for what it would add. See ROADMAP.md.
+// katana (active crawling) is the WEB stage's crawler -- options.crawl/
+// -no-crawl, on by default. It was first left out after it hung for 60s
+// with no output on a trivial local crawl in the dev sandbox; on re-testing
+// (katana v1.8.0) the same command, and every flag individually, completed in
+// ~12s, so that run is treated as a one-off (it was the first invocation on
+// the machine) and the step is built to survive a repeat: katana's own -ct
+// crawl-duration cap, plus runExternal's hard wall-clock timeout, which kills
+// it regardless. See ROADMAP.md.
 
 // externalToolTimeout is a hard, last-resort wall-clock cap on every
 // external-tool invocation below, independent of whatever timeout/rate
@@ -249,4 +248,48 @@ func dnsxWildcardArgs(listFile, domain string) []string {
 // the explosion, since every result becomes a DNS query.
 func alterxArgs(listFile string) []string {
 	return []string{"-l", listFile, "-silent", "-duc", "-limit", "2000"}
+}
+
+// katanaArgs builds the WEB stage's crawl of one target. Every flag exists
+// to keep an unattended crawl bounded and safe:
+//
+//   - -d/-ct cap depth and wall-clock time (-ct stays under
+//     externalToolTimeout so katana winds down on its own first);
+//   - -fs fqdn keeps it on the target's exact host (katana's default scope,
+//     rdn, would follow every sibling subdomain of the registered domain);
+//   - -jc parses JavaScript files for endpoints, -kf all reads robots.txt
+//     and sitemap.xml;
+//   - -ef drops static assets that are never an interesting endpoint;
+//   - -rl/-c bound the request rate and concurrency (rate overrides
+//     katana's default 150 req/s with the pipeline's own, when set);
+//   - -duc skips the update check, -silent -nc keep stdout machine-readable,
+//     and -j -fx -or -ob emit JSON lines (endpoint + status + extracted
+//     forms) without the raw request/response bodies.
+func katanaArgs(target string, depth, rate, conc int, proxy string) []string {
+	if depth <= 0 {
+		depth = 3
+	}
+	if rate <= 0 {
+		rate = 50
+	}
+	if conc <= 0 {
+		conc = 5
+	}
+	args := []string{
+		"-u", target,
+		"-d", fmt.Sprint(depth),
+		"-ct", "3m",
+		"-jc", "-kf", "all",
+		"-fs", "fqdn",
+		"-ef", "png,jpg,jpeg,gif,svg,ico,webp,css,woff,woff2,ttf,eot,otf,mp3,mp4,avi,mov,webm",
+		"-rl", fmt.Sprint(rate),
+		"-c", fmt.Sprint(conc),
+		"-timeout", "10", "-retry", "1",
+		"-duc", "-silent", "-nc",
+		"-j", "-fx", "-or", "-ob",
+	}
+	if proxy != "" {
+		args = append(args, "-proxy", proxy)
+	}
+	return args
 }

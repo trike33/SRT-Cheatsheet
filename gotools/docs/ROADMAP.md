@@ -4,6 +4,24 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### katana crawler wired into the WEB stage (gap 5)
+- `pipeline`'s WEB stage now crawls every explicit target with katana (on by
+  default, `-no-crawl`/`options.crawl:false`, `options.crawlDepth`): links,
+  JavaScript endpoints (`-jc`), robots/sitemap (`-kf all`), form extraction
+  (`-fx`), `-fs fqdn` same-host scope, depth 3, 3-minute `-ct` cap, ~50 req/s,
+  static assets filtered, output filtered through the target's Burp scope.
+  Endpoints join `06b_endpoints.txt` (and so go through `validate`); forms
+  land in `05c_forms.txt` — the first piece of gap 9 (parameters a site
+  declares itself).
+- The earlier hang finding was re-tested: the same command finished in ~12s
+  (katana v1.8.0), so it was treated as a one-off; the step keeps katana's own
+  `-ct` cap and `runExternal`'s 5-minute kill as a backstop. Known limits:
+  out-of-Burp-scope paths on the same host are still *requested* (the scope
+  filter only drops them from the results); JS-derived endpoints vary
+  between runs; headless mode (`-hl`), `-aff` form filling and `-jsl` are
+  deliberately not used.
+- `install.sh`/`update.sh`/`uninstall.sh --with-pd` now manage eight tools.
+
 ### `validate`: soft-404-aware endpoint validation (gaps 3, 4, 10)
 - New native command `srt validate` and a pipeline step (`06c`, on by
   default, `-no-validate`): re-probes the merged endpoint list and keeps only
@@ -72,8 +90,7 @@ Running log of what's shipped and what's queued, newest first.
   through the same host↔web scopecheck cross-link. One TLS handshake per
   target, the same order of traffic as `probe`'s own one request per
   target.
-- **`katana` (active crawling) was investigated and deliberately NOT
-  shipped.** It would have been the highest-value addition on this list —
+- **`katana` (active crawling) was first investigated and NOT shipped — superseded, see the entry above.** It would have been the highest-value addition on this list —
   `gau`'s passive Wayback lookups miss everything that was never archived
   — but in the sandbox this was built in, a trivial local crawl hung
   indefinitely: it opened several parallel HTTPS connections through the
@@ -501,14 +518,9 @@ methodology.md's External-tool policy.
 
 ### More ProjectDiscovery tool chaining (see Shipped above for `cdncheck`/`tlsx`)
 
-- **`katana` (active crawling)** — investigated, not shipped (see Shipped
-  above for why). Would widen `02_all_urls.txt` with URLs an active crawl
-  finds that were never archived to Wayback, which `gau` alone can't see.
-  Revisit if: a flag is found that actually prevents whatever background
-  fetch was hanging (worth re-testing against a newer release, or asking
-  upstream), or it's wired in with its own hard per-call timeout from the
-  start rather than relying only on `runExternal`'s backstop, and proven
-  not to hang across a few different real environments first.
+- **`katana`** — shipped (see Shipped). Still open: headless crawling
+  (`-hl`, for JS-heavy SPAs), authenticated crawling (cookies/headers via
+  `-H`), and crawling discovered subdomains (gap 8).
 - **`dnsx` (more record types)** — brute force, resolution and wildcard
   filtering are now wired (see Shipped); still open: TXT/CNAME/NS/MX/SOA
   record collection, which `srt resolve` doesn't do.
@@ -557,8 +569,7 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    validation step needs a per-host random-path fingerprint (status, size,
    words, body hash) and to drop matches — `fuzz`'s `calibData` is the
    reusable piece.
-5. **No crawler.** katana is still out (hung in the dev sandbox); nothing
-   else follows links, extracts JS/form URLs or reads `<a>`/`<script>`.
+5. ~~**No crawler.**~~ *(done — katana, see Shipped)*
 6. ~~**Directory brute force is off unless you configure a wordlist.**~~ *(done — embedded `common.txt`, on by default)* `fuzz`
    is skipped per target when no `wordlist`/`options.wordlist` resolves —
    the same problem subdomains had before the embedded list. Needs an
@@ -610,6 +621,35 @@ so they aren't lost:
 - **Auto-detect and send payloads** — close the loop from recon
   (parameters, tech-detect) to actually firing payloads at likely-vulnerable
   targets.
+- **Skip the current pipeline step while it runs** (keyboard shortcut) —
+  today Ctrl+C halts the *whole* pipeline (first press asks it to stop and
+  save state, second kills it). A long step (a 20k-word subdomain brute
+  force, a big `fuzz`, a slow `katana`/`nuclei` call) should be skippable on
+  its own — e.g. a dedicated key in `shell` (and a signal such as SIGUSR1 for
+  plain `srt pipeline`) that cancels just the running step, records it as
+  `"skipped"` (reason: skipped by user) and carries on with the next one.
+  Needs a per-step cancellation context threaded through `runStep`/
+  `runExternal` (external tools already run under a context, so they're the
+  easy half; the native steps — `fuzz`, `portscan`, `validate` — would need
+  to honour it and save resumable state like they do for the global halt,
+  see `internal/halt`), and a key binding in the shell's output pane.
+- **Subcommands read their input from the current project's `srt.db` by
+  default** — today every command needs `-l <file>`, positional args or
+  stdin, even though earlier runs already saved exactly what the next one
+  needs (`-save`/the pipeline write `ip`, `domain`, `subdomain`, `url`,
+  `probe`, `gau`... records into `.srt/srt.db`, see `srt results`). A bare
+  `srt probe` should pick its targets from the db (e.g. every `subdomain`/
+  `domain` record) when no input is given, `srt robots`/`validate`/`sensitive`
+  their URL records, `srt portscan` the `ip` records, and so on — with an
+  explicit `-l`/args/stdin always winning, a `-from <kind>` (and `-where`
+  filter, e.g. `-from url -where status=200`) to choose the source
+  explicitly, and a one-line note on stderr saying what was read ("probe:
+  using 143 subdomain records from .srt/srt.db"). Needs a per-command
+  "default input kind" declared next to its `cli.Register`, a shared
+  `ioutil` helper that resolves flag → args → stdin → db in that order
+  (stdin only counts when it's a pipe, so an interactive terminal doesn't
+  hang), and care that a command never silently re-targets a whole database
+  the user didn't mean (scope checks still apply).
 - **A guided flag-builder in `shell`** (the basic REPL itself shipped — see
   Shipped above) — interactively prompting for each flag instead of still
   typing them. Needs either a shared declarative flag schema across every

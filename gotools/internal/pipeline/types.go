@@ -62,6 +62,8 @@ type pipelineOptions struct {
 	Proxy              string `json:"proxy,omitempty"`
 	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); default: the embedded SecLists top-20000 list
+	Crawl              *bool  `json:"crawl,omitempty"`              // WEB stage: crawl the explicit web targets with katana (default true; skipped if katana isn't installed)
+	CrawlDepth         int    `json:"crawlDepth,omitempty"`         // WEB stage: katana crawl depth (default 3)
 	Validate           *bool  `json:"validate,omitempty"`           // WEB stage: re-probe the merged endpoint list and keep only real ones, dropping soft-404s, before sensitive/params (default true)
 	ValidateMax        int    `json:"validateMax,omitempty"`        // WEB stage: check at most this many endpoints (default 10000; active-step hits come first, archived URLs last)
 	Fuzz               *bool  `json:"fuzz,omitempty"`               // WEB stage: directory/file brute force of the explicit web targets (default true; wordlist: per-target/options.wordlist, else the embedded SecLists common.txt)
@@ -99,6 +101,13 @@ func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.EasyWins
+}
+
+func (o pipelineOptions) crawlOrDefault(def bool) bool {
+	if o.Crawl == nil {
+		return def
+	}
+	return *o.Crawl
 }
 
 func (o pipelineOptions) validateOrDefault(def bool) bool {

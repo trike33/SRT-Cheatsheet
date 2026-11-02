@@ -10,14 +10,14 @@
 #   sudo ./update.sh
 #   ./update.sh --local-build
 #   curl -fsSL .../update.sh | bash -s -- --local-build
-#   sudo ./update.sh --with-pd            # also `pdtm -u` vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx
+#   sudo ./update.sh --with-pd            # also `pdtm -u` vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx/katana
 set -euo pipefail
 
 # --- ProjectDiscovery tools (opt-in), managed through pdtm -------------------
 # Duplicated in install.sh / update.sh / uninstall.sh on purpose: each one has
 # to work standalone via `curl | bash`. Runs as the invoking user (SUDO_USER
 # when under sudo) so the tools land in *their* ~/.pdtm, not root's.
-PD_TOOLS="vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx"
+PD_TOOLS="vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx,katana"
 
 # pd_run <-i|-u|-r> <bootstrap 0|1>
 pd_run() {

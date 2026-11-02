@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/uninstall.sh | sudo bash
 #   sudo ./uninstall.sh
 #   ./uninstall.sh --purge                # also delete the --local-build clone
-#   sudo ./uninstall.sh --purge-pd        # also `pdtm -r` vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx
+#   sudo ./uninstall.sh --purge-pd        # also `pdtm -r` vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx/katana
 #
 # Honors the same PREFIX (default /usr/local) and SRT_SRC_DIR (default
 # ~/.local/src/SRT-Cheatsheet) as install.sh. Engagement output such as
@@ -23,7 +23,7 @@ PURGE_PD=0
 # Duplicated in install.sh / update.sh / uninstall.sh on purpose: each one has
 # to work standalone via `curl | bash`. Runs as the invoking user (SUDO_USER
 # when under sudo) so the tools land in *their* ~/.pdtm, not root's.
-PD_TOOLS="vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx"
+PD_TOOLS="vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx,katana"
 
 # pd_run <-i|-u|-r> <bootstrap 0|1>
 pd_run() {

@@ -223,6 +223,18 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}))
 	}
 
+	// --- 05b: katana crawl, per explicit target: follows links, parses JS
+	// for endpoints, reads robots/sitemap, and extracts form fields. Its
+	// endpoints join the merged list below; its forms are written to
+	// 05c_forms.txt (parameter names the site declares itself).
+	crawled, forms, crawlSteps := crawlTargets(cfg, outDir)
+	steps = append(steps, crawlSteps...)
+	if len(forms) > 0 {
+		if err := writeForms(filepath.Join(outDir, "05c_forms.txt"), forms); err != nil {
+			steps = append(steps, stepResult{Kind: "web", Name: "forms", Status: "error", Detail: err.Error()})
+		}
+	}
+
 	// --- 06: fuzz, per target that resolves to a wordlist ---
 	for _, e := range cfg.Web {
 		if e.Target == "" {
@@ -290,7 +302,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 			fuzzFiles = append(fuzzFiles, filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json"))
 		}
 	}
-	endpoints := collectEndpoints(allURLs, filepath.Join(outDir, "05_robots.txt"), fuzzFiles)
+	endpoints := collectEndpoints(allURLs, filepath.Join(outDir, "05_robots.txt"), fuzzFiles, crawled)
 	endpointsFile := filepath.Join(outDir, "06b_endpoints.txt")
 	if len(endpoints) > 0 {
 		if err := writeLinesFile(endpointsFile, endpoints); err != nil {
@@ -566,13 +578,14 @@ var robotsHitRe = regexp.MustCompile(`^(https?://\S+) \[(\d{3})\] \[\d+\]\s*$`)
 
 // collectEndpoints merges every endpoint source into one deduplicated list:
 // the URLs `robots` probed (robots.txt paths plus sitemap URLs) that
-// answered 2xx/3xx/401/403, every `fuzz` hit, and gau's archived URLs.
+// answered 2xx/3xx/401/403, every `fuzz` hit, the crawler's endpoints, and
+// gau's archived URLs.
 // Active hits come first so a cap on how many get validated drops archived
 // URLs first, never the ones an active step just saw.
 //
 // Nothing here proves a URL is real -- that is the `validate` step's job
 // (soft-404 aware), which runs over this list next.
-func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string) []string {
+func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string, crawled []string) []string {
 	var out []string
 	for _, l := range mustLines(robotsFile) {
 		m := robotsHitRe.FindStringSubmatch(strings.TrimSpace(ansiRe.ReplaceAllString(l, "")))
@@ -593,6 +606,7 @@ func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string) [
 			}
 		}
 	}
+	out = append(out, crawled...)
 	out = append(out, gauURLs...)
 	return ioutil.DedupStrings(out)
 }

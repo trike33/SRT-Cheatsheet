@@ -22,13 +22,13 @@ dependency, `golang.org/x/term`, for the interactive `shell`'s line editor
 — unrelated to this policy, which is about not shelling out to *other
 recon tools*, not about the build staying stdlib-only forever.)
 
-**Seven named ProjectDiscovery tools are the exceptions**, each kept as an
+**Eight named ProjectDiscovery tools are the exceptions**, each kept as an
 external call via the `runExternal` hook in `gotools/internal/pipeline/
 external.go` (looks the binary up on `PATH`, skips cleanly if it's missing
 — never aborts a run over an optional tool). Install any of them with
 [pdtm](https://github.com/projectdiscovery/pdtm), ProjectDiscovery's own
 tool manager (`go install -v github.com/projectdiscovery/pdtm/cmd/pdtm@latest`,
-then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx`):
+then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx,katana`):
 
 - **vulnx** — CVE lookups from a grabbed service/software version.
 - **nuclei** — the HOST stage's "easy wins" pass (default creds, common
@@ -61,21 +61,22 @@ then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx`):
 - **alterx** — permutations of the discovered names, **opt-in**
   (`options.permutations`/`-permutations`) since each one is a DNS query.
 
-**katana (active crawling) was evaluated for this list and deliberately
-NOT added.** In the sandbox this was developed in, a trivial local crawl
-(`katana -u http://127.0.0.1:<port>`) hung indefinitely: it opened several
-parallel HTTPS connections through the egress proxy to something unrelated
-to the crawl target before ever reaching it, and `-duc`
-(disable-update-check) didn't prevent it — no flag found did. `runExternal`
-now enforces a hard 5-minute wall-clock timeout on every external-tool
-call specifically because of this finding (so a future addition, or an
-environment where katana behaves differently, can't hang a whole pipeline
-run either way), but shipping an *automated, unattended* pipeline step
-built on a tool that was directly observed hanging — with no way to know
-whether a given deployment's own network hits the same thing — wasn't a
-trade worth making. Crawling for endpoints (what katana would add over
-`gau`'s passive Wayback lookups) stays a genuine, open methodology gap; see
-[ROADMAP.md](ROADMAP.md).
+- **katana** — the WEB stage's crawler: follows links, parses JavaScript
+  for endpoints (`-jc`), reads robots.txt/sitemap.xml (`-kf all`) and
+  extracts form fields (`-fx`). **On by default** (`options.crawl`/
+  `-no-crawl`); depth 3, 3-minute cap, request rate and concurrency bounded,
+  same host only (`-fs fqdn`), static assets filtered, results dropped if a
+  Burp scope is configured and they fall outside it.
+
+  katana was first left out: in the dev sandbox a trivial local crawl
+  produced no output for 60 seconds. On re-testing (v1.8.0) the same command
+  and every flag individually finished in ~12s, so that run is treated as a
+  one-off — but the step is built to survive a repeat: katana's own `-ct`
+  cap, plus `runExternal`'s hard 5-minute wall-clock kill, so a hung crawl
+  can cost time but never hang a run. Crawl output is also nondeterministic
+  at the edges (JavaScript-derived endpoints appeared in some runs and not
+  others), which is one more reason the endpoint list merges several
+  sources rather than trusting any one.
 
 ## HOST
 
@@ -184,7 +185,7 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
      robots` fetches robots.txt and the sitemap(s) it declares or
      `/sitemap.xml` — indexes and `.gz` followed, same-host URLs only —
      and probes every path/URL; `srt dirlist`. A real link-following
-     crawler is not implemented — see katana above)*; brute force using random/generic wordlists
+     crawling is `katana`'s job — see above)*; brute force using random/generic wordlists
      *(implemented: `srt fuzz`)* **and** wordlists guessed from the
      engagement/app context — the target's own naming conventions,
      detected tech stack, anything source-derived (`srt relpaths` already

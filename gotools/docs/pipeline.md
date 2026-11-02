@@ -34,6 +34,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default; same as `options.easyWins:false`). `-easy-wins` is accepted as a deprecated no-op. |
 | `-no-active-subdomains` | off | WEB stage: skip the active DNS brute force of subdomains (on by default, embedded SecLists top-20000 list; same as `options.subdomainsActive:false`) |
+| `-no-crawl` | off | WEB stage: skip the katana crawl (on by default; skipped if katana isn't installed) |
 | `-no-validate` | off | WEB stage: skip the soft-404-aware re-probe of the merged endpoints (on by default) |
 | `-no-fuzz` | off | WEB stage: skip directory/file brute force (on by default; embedded SecLists common.txt unless a wordlist is set) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (same as `options.subfinder:false`) |
@@ -97,6 +98,8 @@ exact Burp include/exclude rules, not just a flattened host list.
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
     "fuzz": true,
+    "crawl": true,
+    "crawlDepth": 3,
     "validate": true,
     "validateMax": 10000,
     "easyWins": true,
@@ -135,6 +138,10 @@ exact Burp include/exclude rules, not just a flattened host list.
   [Steps](#steps) below for exactly what it runs) — set it to `false`
   (or pass `-no-easy-wins`) for an engagement whose rules forbid probing
   beyond recon.
+- `options.crawl` (also `-no-crawl`; options-only) controls the katana
+  crawl; `options.crawlDepth` sets its depth (default 3). **On by default**,
+  it sends real requests to the target (bounded: ~50 req/s, 5 concurrent,
+  3 minutes, same host).
 - `options.validate` (also `-no-validate`; options-only) controls the
   soft-404-aware re-probe of the merged endpoint list. **On by default** —
   one request per endpoint (up to `options.validateMax`, default 10000) plus
@@ -179,10 +186,10 @@ exact Burp include/exclude rules, not just a flattened host list.
   "real exploitation-adjacent probes" category `easyWins`/`contentScan`
   are opt-in for.
 
-Install `vulnx`/`nuclei`/`cdncheck`/`tlsx`/`subfinder`/`dnsx`/`alterx` with [pdtm](https://github.com/
+Install `vulnx`/`nuclei`/`cdncheck`/`tlsx`/`subfinder`/`dnsx`/`alterx`/`katana` with [pdtm](https://github.com/
 projectdiscovery/pdtm), ProjectDiscovery's tool manager: `go install -v
 github.com/projectdiscovery/pdtm/cmd/pdtm@latest`, then `pdtm -i
-vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx` (installs to `$HOME/.pdtm/go/bin`, added to
+vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx,katana` (installs to `$HOME/.pdtm/go/bin`, added to
 `PATH` by default). `install.sh --with-pd` does this for you,
 `update.sh --with-pd` runs `pdtm -u`, and `uninstall.sh --purge-pd` runs
 `pdtm -r` (pdtm itself is kept). Each step **skips cleanly** with a `"skipped"` status
@@ -317,6 +324,15 @@ stage discovered and handed off (written to a `web/` subfolder of that
 5. `gau` — per domain **and** discovered subdomain, archived URLs from the
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.
+6a. `katana` (github.com/projectdiscovery/katana), **on by default**
+   (`options.crawl:false`/`-no-crawl`; `options.crawlDepth`, default 3) —
+   crawls each explicit target: links, JavaScript endpoints, robots/sitemap,
+   and form extraction. Same host only, 3-minute cap, static assets
+   filtered, `options.rate`/`concurrency`/`proxy` honoured, results
+   filtered through the target's Burp scope when one is set. Its endpoints
+   join the merged list; its forms are written to `05c_forms.txt`
+   (`METHOD action  param,param`) — parameter names the site declares
+   itself. **Skipped** if `katana` isn't installed.
 6. `robots` — per target, fetch `robots.txt` and probe its paths, plus the
    same-host URLs of the sitemap(s) it declares (or `/sitemap.xml`), capped
    at 100 per target.
@@ -325,8 +341,8 @@ stage discovered and handed off (written to a `web/` subfolder of that
    `wordlist`, else `options.wordlist`, else the SecLists `common.txt`
    (~4.7k names) embedded in the binary.
 8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of every
-   `robots`/sitemap URL that answered 2xx/3xx/401/403, every `fuzz` hit and
-   gau's archived URLs (active hits first).
+   `robots`/sitemap URL that answered 2xx/3xx/401/403, every `fuzz` hit,
+   the crawler's endpoints and gau's archived URLs (active hits first).
 8b. `validate` (**on by default**, `options.validate:false`/`-no-validate`)
    — re-probes every endpoint (native, no redirects followed) and keeps only
    real ones: dead URLs, errors and **soft-404s** are dropped. Each host's
@@ -380,6 +396,8 @@ it never aborts the run.
     01c_probe.json
     02_gau_<domain>.txt      # one per domain + discovered subdomain
     02_all_urls.txt          # merged, deduped
+    05b_katana_<target>.jsonl   # katana's JSON lines (endpoints + forms)
+    05c_forms.txt            # form actions and their field names
     06b_endpoints.txt        # merged gau + robots/sitemap + fuzz
     06c_valid_endpoints.txt  # the same, after validate (soft-404s dropped)
     06c_rejected.txt         # reason<TAB>URL for everything validate dropped
@@ -427,21 +445,21 @@ skipped:
 
 Today's `host`/`web` stages implement most of the flow described in
 [methodology.md](methodology.md) — port scanning, reverse DNS, service
-classification, the web hand-off, subdomain enumeration, recon-on-root,
-the host↔web IP-scope cross-link, vulnx CVE lookups, the nuclei "easy
-wins" pass, cdncheck/tlsx enrichment, sitemap-aware `robots` and
-content-based secret scanning are all there. A few pieces aren't
-implemented yet: active crawling, Google dorking, context-aware wordlist
-generation, parameter fuzzing/guessing and DNS brute force for HOST. As each lands it
+classification, the web hand-off, subdomain enumeration (passive and
+active), recon-on-root, the host↔web IP-scope cross-link, vulnx CVE
+lookups, the nuclei "easy wins" pass, cdncheck/tlsx enrichment, the katana
+crawl, sitemap-aware `robots`, directory brute force, soft-404-aware
+endpoint validation and content-based secret scanning are all there. A few
+pieces aren't implemented yet: Google dorking, context-aware wordlist
+generation, parameter fuzzing/guessing, and chaos/uncover. As each lands it
 gets added to `internal/pipeline/host.go`/`internal/pipeline/web.go` in
 the order `methodology.md` lays out. See [ROADMAP.md](ROADMAP.md) for what's
 queued.
 
-`srt`'s policy is to implement that gap natively rather than shell out to
-third-party tools (naabu, httpx, subfinder, katana, nuclei, dalfox). The one
-exception is **vulnx** (github.com/projectdiscovery/vulnx), for CVE lookups
-from a grabbed service/software version — `gotools/internal/pipeline/external.go`
-ships the plumbing for this (`runExternal`: look up a binary on `PATH`, run
-it, capture its output, and report a clean `"skipped"` step instead of
-failing the run when it isn't installed), used by the HOST stage's `vulnx`
-step above. A future external-tool step follows the same shape.
+`srt` implements recon natively where it's worth it, and shells out to a
+short, named list of ProjectDiscovery tools where it isn't: vulnx, nuclei,
+cdncheck, tlsx, subfinder, dnsx, alterx and katana
+(`gotools/internal/pipeline/external.go` ships the plumbing: `runExternal`
+looks up a binary on `PATH`, runs it under a hard timeout, captures its
+output, and reports a clean `"skipped"` step instead of failing the run when
+it isn't installed). A future external-tool step follows the same shape.

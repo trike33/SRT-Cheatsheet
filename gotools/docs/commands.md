@@ -648,6 +648,7 @@ Full guide in [pipeline.md](pipeline.md).
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: skip the conservative nuclei default-login/misconfig/exposure pass on non-web ports (on by default; it sends real probes). `-easy-wins` is a deprecated no-op. |
 | `-no-active-subdomains` | off | WEB stage: skip the default active DNS brute force of subdomains (embedded SecLists top-20000 list; or `options.subdomainsWordlist`) |
+| `-no-crawl` | off | WEB stage: skip the katana crawl (default on; skipped if katana isn't installed) |
 | `-no-validate` | off | WEB stage: skip the soft-404-aware re-probe of merged endpoints (default on) |
 | `-no-fuzz` | off | WEB stage: skip directory/file brute force (default on; embedded `common.txt` unless a wordlist is configured) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default) |
