@@ -53,6 +53,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-no-context-words` | off | WEB stage: don't add `fuzz -words-auto`'s curated per-host words, or engagement-name words, to the fuzz wordlist (same as `options.contextWords:false`) |
 | `-dork` | off | WEB stage: Google dorking -- generate (and, with credentials, run) dork queries per target domain + engagement name (same as `options.dork`) |
 | `-dork-api-key`, `-dork-cx` | `$SRT_GOOGLE_API_KEY`/`$SRT_GOOGLE_CSE_ID` | with `-dork`: Google Custom Search API key / Programmable Search Engine ID (same as `options.dorkAPIKey`/`options.dorkCX`) |
+| `-dork-max-daily` | `100` | with `-dork`: hard cap on Custom Search queries per API key per UTC day, tracked across every run on this machine (same as `options.dorkMaxDaily`; see [commands.md](commands.md#dork)) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -399,7 +400,13 @@ stage discovered and handed off (written to a `web/` subfolder of that
    links, not target URLs). With credentials it actually runs each query
    against the Google Custom Search JSON API (never google.com itself --
    see [commands.md](commands.md#dork)) and the real hit URLs it finds do
-   join the merged endpoint list, same as `gau`'s own URLs.
+   join the merged endpoint list, same as `gau`'s own URLs. `-search` is
+   itself capped at `options.dorkMaxDaily`/`-dork-max-daily` (default
+   100, the Custom Search free tier's own limit) queries per API key per
+   UTC day, tracked across every run on this machine, so turning this on
+   can never run up a bill on its own -- see
+   [commands.md](commands.md#dork) for what that guard does and doesn't
+   cover.
 6a. `katana` (github.com/projectdiscovery/katana), **on by default**
    (`options.crawl:false`/`-no-crawl`; `options.crawlDepth`, default 3) —
    crawls each explicit target: links, JavaScript endpoints, robots/sitemap,

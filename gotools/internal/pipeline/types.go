@@ -83,6 +83,7 @@ type pipelineOptions struct {
 	Dork                  *bool  `json:"dork,omitempty"`                  // WEB stage: Google dorking (gap 12) -- generate (and, with dorkAPIKey/dorkCX, actually run) a curated set of dork queries per explicit target's domain plus the engagement name (default false -- without credentials it sends no traffic and just writes search URLs to paste by hand, but it's still a new kind of step most runs don't want on unasked)
 	DorkAPIKey            string `json:"dorkAPIKey,omitempty"`            // WEB stage: Google Custom Search API key for options.dork's -search (falls back to $SRT_GOOGLE_API_KEY)
 	DorkCX                string `json:"dorkCX,omitempty"`                // WEB stage: Google Programmable Search Engine ID for options.dork's -search (falls back to $SRT_GOOGLE_CSE_ID)
+	DorkMaxDaily          int    `json:"dorkMaxDaily,omitempty"`          // WEB stage: hard cap on options.dork's -search queries per API key per UTC day, tracked across every dork/pipeline run on this machine (default: dork's own default, the Custom Search API's free-tier limit of 100 -- lower it, don't raise it, unless you've deliberately enabled billing)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.

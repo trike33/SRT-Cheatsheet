@@ -50,6 +50,25 @@ Running log of what's shipped and what's queued, newest first.
   `options.dorkAPIKey`/`dorkCX` (JSON config) or the same env vars the
   standalone command uses, so a config file committed to a repo never has
   to carry a secret key in plain text.
+- **`-search` enforces the free tier's 100-queries/day cap itself, by
+  default** — `-max-daily`/`options.dorkMaxDaily` (and `pipeline`'s
+  `-dork-max-daily`) default to 100, not unlimited. Every query decrements
+  a per-API-key budget persisted to `~/.srt/dork_quota.json`
+  (`internal/recon/dork/quota.go`), shared across *every* `srt dork`/`srt
+  pipeline -dork` invocation on the machine that day, not just within one
+  process — a second `dork` run an hour later sees the same spent budget
+  and refuses to send anything once it's gone, rather than each
+  invocation getting its own fresh 100. Keyed by a SHA-256 fingerprint of
+  the API key (never the raw key) so different keys get independent
+  budgets, reset on UTC day rollover, and guarded by a lock file so
+  concurrent runs can't race the counter into under-counting (verified
+  with 30 concurrent goroutines never exceeding the cap). This is a local
+  safety net, not authoritative — it can't stop a different machine, or
+  this one with its state file deleted, from spending the same key past
+  the real quota; the one actual guarantee is a hard quota override or no
+  billing account at all, set in the Google Cloud Console itself, which
+  commands.md says explicitly rather than implying this flag alone is
+  enough.
 - See [commands.md](commands.md#dork), [pipeline.md's step
   5b](pipeline.md#web-stage--outputdirweb), and
   [methodology.md](methodology.md)'s WEB "gather endpoints/files" passive

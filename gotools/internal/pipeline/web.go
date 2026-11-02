@@ -253,6 +253,9 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 			}
 			if searching {
 				dorkArgs = append(dorkArgs, "-search", "-api-key", apiKey, "-cx", cx)
+				if cfg.Options.DorkMaxDaily > 0 {
+					dorkArgs = append(dorkArgs, "-max-daily", strconv.Itoa(cfg.Options.DorkMaxDaily))
+				}
 			}
 			sr := runStep("web", "dork", d, dorkFile, func() error {
 				return dork.Run(dorkArgs)

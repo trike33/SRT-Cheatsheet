@@ -326,6 +326,7 @@ traffic, useful on its own.
 | `-api-key`, `-cx` | — | Custom Search API key / Programmable Search Engine ID |
 | `-num` | `10` | results per query (API max 10/request) |
 | `-delay` | `1s` | with `-search`: delay between queries |
+| `-max-daily` | `100` | with `-search`: hard cap on queries sent per API key per UTC day — see below |
 | `-o` | stdout | output file |
 | `-json` | off | JSON lines instead of plain text/URLs |
 
@@ -355,7 +356,28 @@ srt dork -d example.com -search -o hits.txt
 
 Getting an API key/engine ID: [developers.google.com/custom-search/v1/overview](https://developers.google.com/custom-search/v1/overview).
 Free tier: 100 queries/day — one `srt dork -search` over 6 domain categories
-(no `-name`) costs 6 of those.
+(no `-name`) costs 6 of those. Past the free tier, every query is **billed**
+(roughly $5 per 1,000 queries).
+
+**`-search` enforces that 100/day cap itself, by default** — `-max-daily`
+defaults to 100, not unlimited, and every query decrements a per-API-key
+budget tracked in `~/.srt/dork_quota.json` across *every* `srt dork`/`srt
+pipeline -dork` run on this machine, not just within one invocation. Once
+the budget for the day is spent, `-search` stops sending queries (reporting
+how many of the planned queries it actually sent) rather than silently
+running past the free tier into billing. The budget resets at UTC midnight
+and is per API key, so a different key gets its own 100.
+
+This is a **local safety net, not an authoritative one**: it protects this
+machine's invocations of this key, not the key itself from other sources.
+The one way to *guarantee* no charge, regardless of what runs this key, is
+in the [Google Cloud Console](https://console.cloud.google.com/apis/) —
+either don't attach a billing account to the project the key belongs to at
+all (requests just start failing once the free 100/day is used, which
+`dork` treats as an ordinary per-query error), or set a hard daily quota
+override there. Do that first if you want a real guarantee; `-max-daily`
+is a second layer, and raising it past 100 is only for a key you've
+deliberately enabled billing on.
 
 ---
 
