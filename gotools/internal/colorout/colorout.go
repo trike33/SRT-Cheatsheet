@@ -96,6 +96,18 @@ func TermWidth(f *os.File) int {
 	return w
 }
 
+// EnvProgressMark is set to "1" by the interactive shell on the commands it
+// runs. Their output is a pipe, so Overwrite can't use \r tricks, but the
+// shell wants live counters to replace themselves in its output pane instead
+// of piling up one line per tick. With it set, a live line off a terminal is
+// terminated with ProgressMark instead of a newline ("this line is transient,
+// the next one replaces it"), and ClearLine sends a bare ProgressMark ("drop
+// the transient line"). The shell's output reader is the only consumer.
+const EnvProgressMark = "SRT_PROGRESS_MARK"
+
+// ProgressMark (ASCII record separator) ends a transient progress line.
+const ProgressMark = '\x1e'
+
 // Overwrite prints s to f as a single self-updating line: a leading \r
 // returns the cursor to the start of the line and a trailing "erase to end
 // of line" wipes anything left over from a longer previous tick -- the
@@ -116,6 +128,10 @@ func TermWidth(f *os.File) int {
 func Overwrite(f *os.File, s string) {
 	width := TermWidth(f)
 	if width <= 0 {
+		if os.Getenv(EnvProgressMark) == "1" {
+			fmt.Fprintf(f, "%s%c", s, ProgressMark)
+			return
+		}
 		fmt.Fprintln(f, s)
 		return
 	}
@@ -132,5 +148,9 @@ func Overwrite(f *os.File, s string) {
 func ClearLine(f *os.File) {
 	if TermWidth(f) > 0 {
 		fmt.Fprint(f, "\r\033[K")
+		return
+	}
+	if os.Getenv(EnvProgressMark) == "1" {
+		fmt.Fprintf(f, "%c", ProgressMark)
 	}
 }

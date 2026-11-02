@@ -51,3 +51,19 @@ func TestClearLineNoopOffTerminal(t *testing.T) {
 		t.Errorf("ClearLine on a non-terminal should write nothing, got %q", b)
 	}
 }
+
+func TestProgressMarkModeOffTerminal(t *testing.T) {
+	t.Setenv(EnvProgressMark, "1")
+	p := filepath.Join(t.TempDir(), "out.txt")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Overwrite(f, "tick one")
+	ClearLine(f)
+	f.Close()
+	b, _ := os.ReadFile(p)
+	if want := "tick one\x1e\x1e"; string(b) != want {
+		t.Errorf("got %q, want %q", b, want)
+	}
+}

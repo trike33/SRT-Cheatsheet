@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 )
 
@@ -72,16 +73,33 @@ func (rs *runState) begin() tea.Cmd {
 					batch = nil
 				}
 			}
-			for {
-				s, err := br.ReadString('\n')
-				if s != "" {
-					batch = append(batch, cleanLine(s))
-					if len(batch) >= 256 || br.Buffered() == 0 {
-						flush()
-					}
+			var line []byte
+			emit := func(l string) {
+				batch = append(batch, l)
+				if len(batch) >= 256 || br.Buffered() == 0 {
+					flush()
 				}
+			}
+			for {
+				b, err := br.ReadByte()
 				if err != nil {
+					if len(line) > 0 {
+						emit(cleanLine(string(line)))
+					}
 					break
+				}
+				switch b {
+				case '\n':
+					emit(cleanLine(string(line)))
+					line = line[:0]
+				case colorout.ProgressMark:
+					// A live counter: it replaces itself on the next tick
+					// (empty = the command cleared it). Tagged so
+					// appendCmdOut can tell it from ordinary output.
+					emit(progressTag + cleanLine(string(line)))
+					line = line[:0]
+				default:
+					line = append(line, b)
 				}
 			}
 			flush()
@@ -102,6 +120,11 @@ func keepSGR(seq string) string {
 	}
 	return ""
 }
+
+// progressTag marks (in the reader's output only) a line that is a live
+// counter rather than permanent output. cleanLine strips control characters,
+// so a real line can never start with it.
+const progressTag = "\x01"
 
 // cleanLine drops the newline, resolves carriage-return rewrites (progress
 // lines keep only their last state), expands tabs (which the width math of
@@ -154,8 +177,45 @@ func classifyLine(line string) lineKind {
 // header and coloured.
 func (m *shellModel) appendCmdOut(lines []string) {
 	var keep []string
+	flushKeep := func() {
+		if len(keep) > 0 {
+			m.appendOut(keep...)
+			keep = nil
+		}
+	}
 	last := len(m.out) == 0 || m.out[len(m.out)-1] == ""
 	for _, l := range lines {
+		if text, ok := strings.CutPrefix(l, progressTag); ok {
+			// A live counter replaces the previous one in place; it is
+			// styled like a warning but never counted as one (it is a
+			// status, and one per tick would swamp the header).
+			flushKeep()
+			if text != "" {
+				text = classStyle(classFlag, m.colorOn).Render(text)
+			}
+			switch {
+			case m.progress && text == "":
+				m.out = m.out[:len(m.out)-1]
+				m.progress = false
+			case m.progress:
+				m.out[len(m.out)-1] = text
+			case text != "":
+				m.appendOut(text)
+				m.progress = true
+			}
+			last = len(m.out) == 0 || m.out[len(m.out)-1] == ""
+			continue
+		}
+		if m.progress {
+			// Ordinary output after a live counter: an empty line just
+			// settles it as permanent; real text replaces it (the counter's
+			// last state was only ever a stand-in for what follows).
+			m.progress = false
+			if l != "" {
+				m.out = m.out[:len(m.out)-1]
+				last = len(m.out) == 0 || m.out[len(m.out)-1] == ""
+			}
+		}
 		if l == "" {
 			if last {
 				continue
@@ -178,7 +238,7 @@ func (m *shellModel) appendCmdOut(lines []string) {
 		}
 		keep = append(keep, l)
 	}
-	m.appendOut(keep...)
+	flushKeep()
 }
 
 // endBlock closes a command's output with one blank line (never two).
@@ -216,6 +276,7 @@ func (rs *runState) interrupt() {
 // appendOut adds lines to the scrollback, keeping the view anchored on
 // whatever the user scrolled to.
 func (m *shellModel) appendOut(lines ...string) {
+	m.progress = false // anything appended settles a live counter
 	m.out = append(m.out, lines...)
 	if len(m.out) > maxOutLines {
 		m.out = append([]string(nil), m.out[len(m.out)-maxOutLines+maxOutLines/5:]...)

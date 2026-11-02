@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
@@ -75,6 +76,7 @@ type shellModel struct {
 	height  int
 
 	helpCache   map[string]*cmdHelp // per-command usage, nil value = still loading
+	progress    bool                // the last output line is a live counter the next tick replaces
 	pendingHelp string              // `help <cmd>` waiting for that command's usage text to load
 
 	traffic     netx.Totals // session total across every command run
@@ -600,7 +602,7 @@ func shellSplitArgs(line string) ([]string, error) {
 // where to write its totals and which limits to enforce. The handoff file is
 // per-command so a stale one can never be misattributed.
 func (m *shellModel) childEnv() []string {
-	env := os.Environ()
+	env := append(os.Environ(), colorout.EnvProgressMark+"=1")
 	if f, err := os.CreateTemp("", "srt-traffic-*.json"); err == nil {
 		f.Close()
 		m.trafficFile = f.Name()

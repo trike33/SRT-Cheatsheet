@@ -79,3 +79,27 @@ func TestSessionCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveProgressReplacesInPlace(t *testing.T) {
+	m := &shellModel{}
+	p := func(s string) string { return progressTag + s }
+	m.appendCmdOut([]string{"start", p("[!] scanned 1/9"), p("[!] scanned 2/9"), p("[!] scanned 3/9")})
+	if got := len(m.out); got != 2 || !strings.Contains(m.out[1], "3/9") {
+		t.Fatalf("counter should be one replaced line, got %q", m.out)
+	}
+	if m.warnCount != 0 {
+		t.Errorf("live counter must not count as a warning, got %d", m.warnCount)
+	}
+	m.appendCmdOut([]string{p("")}) // ClearLine
+	if len(m.out) != 1 || m.progress {
+		t.Fatalf("clear should drop the counter, got %q", m.out)
+	}
+	m.appendCmdOut([]string{p("[!] tick"), "summary"})
+	if len(m.out) != 2 || m.out[1] != "summary" {
+		t.Fatalf("text after a counter replaces it, got %q", m.out)
+	}
+	m.appendCmdOut([]string{p("[!] tick"), "", "next"})
+	if len(m.out) != 5 || !strings.Contains(m.out[2], "tick") {
+		t.Fatalf("an empty line settles the counter as permanent, got %q", m.out)
+	}
+}
