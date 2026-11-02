@@ -254,7 +254,9 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 		// instead of this one's, since the capture target has moved on by
 		// then -- a cosmetic side effect of abandoning rather than killing it.
 		warnings := stopCapture()
-		reportStep(name, target, "skipped: user pressed '"+string(skipKey)+"' -- abandoned in the background", warnings)
+		reason := "user pressed '" + string(skipKey) + "' while it was running; abandoned, not killed -- it may still be finishing in the background"
+		reportStep(name, target, "skipped: "+reason, warnings)
+		recordUserSkip(key, kind, name, target, reason)
 		return stepResult{
 			Kind: kind, Name: name, Target: target, Output: output,
 			Duration: time.Since(start).Round(time.Millisecond).String(),
@@ -304,6 +306,25 @@ var stepKinds = map[string]string{
 	// traceroute-excluded isn't listed: traceroute already saves structured
 	// "route" records itself, so ingesting its JSON output file line-by-line
 	// here would duplicate it.
+}
+
+// recordUserSkip saves a keyboard-skipped step to the results database
+// (kind "pipeline_skip"), so a run's skips survive past manifest.json and
+// can be queried later (`srt results -kind pipeline_skip`). A nil sink
+// (no -save / -no-db) makes this a no-op, same as every other store call
+// in this package.
+func recordUserSkip(key, stage, name, target, reason string) {
+	store.CurrentSink().Add(store.Record{
+		Kind: "pipeline_skip",
+		Key:  key,
+		Data: map[string]any{
+			"stage":  stage,
+			"step":   name,
+			"target": target,
+			"reason": reason,
+			"at":     time.Now().UTC().Format(time.RFC3339),
+		},
+	})
 }
 
 // ingestStepOutput stores a finished step's line output in the active run.

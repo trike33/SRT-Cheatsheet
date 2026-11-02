@@ -59,7 +59,11 @@ the step currently in progress and move straight to the next one — useful
 when a slow step (a big `fuzz`, `nuclei` easy-wins pass, `katana` crawl,
 ...) isn't worth waiting on for this engagement. The step is recorded in
 `manifest.json` as `"status": "skipped"`, same as a step skipped for
-missing input.
+missing input, and — only for a keyboard skip, so it's distinguishable from
+that — also saved to the results database as a `pipeline_skip` record
+(unless `-no-db`), with the stage, step name, target and timestamp in its
+`data` column: `srt results -kind pipeline_skip` lists every step a run
+was told to abandon.
 
 This abandons the step, it doesn't kill it: whatever request(s) it already
 started keep running in the background until they finish on their own —

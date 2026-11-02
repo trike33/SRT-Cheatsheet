@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 const loanDepotScope = `{"target":{"scope":{"include":[
@@ -253,6 +254,44 @@ func TestRunStepAbandonsOnSkipRequest(t *testing.T) {
 	<-started
 	close(release)
 	<-finished // the abandoned goroutine does eventually finish on its own
+}
+
+func TestRunStepRecordsUserSkipToDB(t *testing.T) {
+	t.Setenv("SRT_DB", filepath.Join(t.TempDir(), "srt.db"))
+	s, err := store.StartSink("pipeline", []string{"pipeline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sl := &skipListener{requests: make(chan struct{}, 1)}
+	old := activeSkip
+	activeSkip = sl
+	defer func() { activeSkip = old }()
+	sl.requests <- struct{}{}
+
+	release := make(chan struct{})
+	res := runStep("web", "fuzz", "https://example.com", "", func() error {
+		<-release
+		return nil
+	})
+	close(release)
+	if res.Status != "skipped" {
+		t.Fatalf("Status = %q, want skipped", res.Status)
+	}
+	s.Close()
+
+	db, err := store.OpenReadable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var key, data string
+	if err := db.QueryRow(`SELECT key, data FROM records WHERE kind='pipeline_skip'`).Scan(&key, &data); err != nil {
+		t.Fatalf("no pipeline_skip record saved: %v", err)
+	}
+	if !strings.Contains(data, `"step":"fuzz"`) || !strings.Contains(data, `"target":"https://example.com"`) {
+		t.Errorf("pipeline_skip record = key=%q data=%q", key, data)
+	}
 }
 
 func TestSkipChanNilOnNilListener(t *testing.T) {

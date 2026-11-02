@@ -7,7 +7,11 @@ Running log of what's shipped and what's queued, newest first.
 ### Skip the current pipeline step with a keyboard shortcut
 - **`pipeline` now listens for `s` on stdin and abandons the step currently
   running**, moving straight to the next one, when stdin is a terminal.
-  Recorded in `manifest.json` as `"status": "skipped"`. See
+  Recorded in `manifest.json` as `"status": "skipped"`, and (unless
+  `-no-db`) as its own `pipeline_skip` record in the results database --
+  `stage`/`step`/`target`/`reason`/`at` in `data`, queryable with `srt
+  results -kind pipeline_skip` -- so a run's keyboard skips survive past
+  that one manifest.json, same as every other pipeline result. See
   [pipeline.md's "Skipping a step while it runs"](pipeline.md#skipping-a-step-while-it-runs).
 - Took the lighter of the two designs this bullet originally described
   (below), by explicit choice over the per-step-cancellation-context
