@@ -303,11 +303,15 @@ Running log of what's shipped and what's queued, newest first.
   opts out). Non-web uncommon/specialty ports (rsync, Java RMI, and the rest
   of `portscan`'s `uncommon` list) get flagged in the manifest for manual
   follow-up.
-- **vulnx integration** — `pipeline`'s HOST stage runs `vulnx search
-  "<banner>"` (github.com/projectdiscovery/vulnx) for every non-web open
-  port with a grabbed banner, via the `runExternal` helper in
-  `internal/pipeline/external.go` (skips cleanly if `vulnx` isn't installed). Works
-  unauthenticated, just rate-limited without `vulnx auth` configured.
+- **vulnx integration** — `pipeline`'s HOST stage runs `vulnx search` for
+  every non-web open port with a grabbed banner, via the `runExternal`
+  helper in `internal/pipeline/external.go` (skips cleanly if `vulnx` isn't
+  installed). Works unauthenticated, just rate-limited without `vulnx auth`
+  configured. `vulnxSearchArgs`/`vulnxProduct` use `-p <product>` (e.g. `-p
+  openssh`, `-p arcgis`) when the banner matches a recognized service --
+  the precise, structured form of the real CLI (verified against the built
+  binary, not just its docs/help text) -- falling back to a free-text
+  search over the banner for anything `vulnxProduct` doesn't recognize.
 
 ### WEB methodology (see [methodology.md](methodology.md))
 - **`subdomains`** — passive enumeration via crt.sh certificate transparency

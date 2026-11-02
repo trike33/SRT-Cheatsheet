@@ -73,9 +73,13 @@ scope (IPs, or a pipeline JSON config's "host" list)
    - Everything else goes through **"scan"**:
      1. Grab the service's version, then check it against CVE databases —
         this is where **vulnx** gets called. *(Implemented: `portscan`'s
-        banner grab feeds a `vulnx search` call — `pipeline`'s HOST stage
-        runs it for every non-web port with a banner, skipped cleanly if
-        `vulnx` isn't installed.)*
+        banner grab feeds a `vulnx search` call — `-p <product>` (e.g. `-p
+        openssh`) when the banner matches a recognized service, the
+        structured, precise form of vulnx's real CLI (verified against the
+        built binary: `vulnx search -p arcgis`), else a free-text search
+        over the banner itself. `pipeline`'s HOST stage runs it for every
+        non-web port with a banner, skipped cleanly if `vulnx` isn't
+        installed.)*
      2. Run a native "easy wins" pass: default credentials, common
         misconfigurations — the useful subset of what a nuclei run would
         catch, reimplemented rather than shelling out to nuclei.

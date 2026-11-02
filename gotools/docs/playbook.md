@@ -101,7 +101,11 @@ for every flag.
 # once srt probe's tech-detect (or a portscan banner) tells you a component + version
 srt snyk -url "https://security.snyk.io/package/composer/moodle%2Fmoodle" -version 3.7
 
-# vulnx (github.com/projectdiscovery/vulnx) for a broader CVE search
+# vulnx (github.com/projectdiscovery/vulnx) for a broader CVE search --
+# -p/--product is the precise, structured form when you know the product
+# name (e.g. from a portscan banner); free text still works for anything
+# without a clean product name
+vulnx search -p moodle --json
 vulnx search "Moodle 3.7" --json
 
 # build a target-specific wordlist from unpacked source, then fuzz with it

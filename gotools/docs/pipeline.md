@@ -143,10 +143,13 @@ spec only runs once:
      risk, so this is flagged as its own distinct step rather than lumped
      into `flag-uncommon-service`.
    - Any open port with a grabbed banner, that isn't a web service → a
-     `vulnx search "<banner>"` step (github.com/projectdiscovery/vulnx).
-     **Skipped** if `vulnx` isn't installed, never fails the run. Runs
-     alongside `flag-uncommon-service`/`flag-beanshell` above, not instead
-     of them.
+     `vulnx search` step (github.com/projectdiscovery/vulnx): `-p <product>`
+     when the banner matches a recognized service (e.g. `-p openssh` for an
+     `SSH-2.0-OpenSSH_...` banner — far more precise than free-texting the
+     whole banner, version numbers and all), else a free-text search over
+     the banner itself. **Skipped** if `vulnx` isn't installed, never fails
+     the run. Runs alongside `flag-uncommon-service`/`flag-beanshell` above,
+     not instead of them.
 
 A `host` entry with `"excluded": true` is excluded-but-tracked instead:
 steps 3-4 above don't run for it at all. In their place:

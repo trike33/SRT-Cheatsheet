@@ -133,8 +133,7 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 				target := fmt.Sprintf("%s:%d", r.Host, r.Port)
 				vulnxFile := filepath.Join(outDir, "vulnx_"+safeName(target)+".json")
 				steps = append(steps, runExternal("host", "vulnx", target, "vulnx",
-					[]string{"search", vulnxQuery(r.Banner), "--json", "--silent", "--limit", "5"},
-					vulnxFile))
+					vulnxSearchArgs(r.Banner), vulnxFile))
 			}
 		}
 	}
