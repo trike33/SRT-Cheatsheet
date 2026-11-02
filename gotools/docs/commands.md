@@ -84,6 +84,7 @@ excluded-host handling (see [methodology.md](methodology.md)).
 |---|---|---|
 | `-l` | stdin | hostnames, or IPs with `-reverse` |
 | `-reverse` | off | treat input as IPs and do a PTR lookup instead |
+| `-type` | — | forward lookups only: also collect these record types, comma list of `cname,mx,ns,txt` (not `soa` — no stdlib primitive for it) |
 | `-c` | `40` | concurrent lookups |
 | `-timeout` | `5s` | per-lookup timeout |
 | `-o` | stdout | output file |
@@ -92,10 +93,23 @@ excluded-host handling (see [methodology.md](methodology.md)).
 ```bash
 srt resolve -l hosts.txt                    # host -> ip1,ip2
 srt ipexpand -l scope.txt | srt resolve -reverse   # ip -> ptr-name
+srt resolve -l hosts.txt -type mx,txt        # + per-host MX/TXT lines
 ```
 
 Failed lookups are reported to stderr and left out of plain-text output; with
 `-json`, every query gets a line, successes and failures alike.
+
+`-type`'s extra records print as additional lines per query —
+`example.com MX -> 10 mail.example.com`, `example.com TXT -> v=spf1 ...` —
+and land in `-json`'s `extra` field (`{"CNAME":[...],"MX":[...], ...}`),
+keyed by uppercase type. A type with no records for a given query is just
+missing from the output/JSON, not an error — a domain with no MX/TXT is the
+common case. `-type` only applies to forward lookups (`-reverse` + `-type`
+together is an error): DNS record types like MX/TXT are properties of a
+name, not something to look up for a raw IP in reverse mode. `srt resolve
+-type cname example.com` returns `example.com` itself when it has no CNAME
+(DNS's definition: a name's "canonical name" is itself when it isn't an
+alias — see `go doc net.Resolver.LookupCNAME`), same as `dig` would.
 
 ---
 

@@ -4,6 +4,50 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### `resolve -type`: CNAME/MX/NS/TXT record collection
+- **`srt resolve` can now collect `cname`/`mx`/`ns`/`txt` records**
+  alongside its existing forward (A/AAAA) and reverse (PTR, `-reverse`)
+  lookups (`-type cname,mx,ns,txt`, comma list, any subset). Native --
+  Go's `net.Resolver` already has `LookupCNAME`/`LookupMX`/`LookupNS`/
+  `LookupTXT`, no new dependency. **`soa` is not supported**: `net` has no
+  `LookupSOA` at all, and this project is native-by-policy (see
+  methodology.md's External-tool policy), so pulling in a DNS library for
+  one record type wasn't judged worth it. `-type` only applies to forward
+  lookups; combined with `-reverse` it's a clear error rather than a silent
+  no-op, since record types like MX/TXT describe a name, not a raw IP.
+- Output: one extra line per type found (`example.com MX -> 10
+  mail.example.com`), or an `extra` field in `-json` output keyed by
+  uppercase type (`{"CNAME":[...],"MX":[...],...}`) alongside the existing
+  fields -- purely additive, so existing `-json` consumers (and
+  `pipeline`, which only ever calls `resolve -reverse` without `-type`)
+  see no change. A type with no records for a query is simply missing
+  from the output, not an error.
+- **Found and worked around a real stdlib surprise, not assumed**:
+  `net.Resolver.LookupCNAME` does **not** send a dedicated CNAME-type DNS
+  query -- confirmed via `go doc net.Resolver.LookupCNAME` ("Callers...
+  both [LookupHost/LookupIP] take care of resolving the canonical name as
+  part of the lookup"). It performs an ordinary A/AAAA-style lookup and
+  reads off whatever CNAME chain the server returned along the way,
+  falling back to the queried name itself if no CNAME appeared. A test
+  fake DNS server built for this (see below) initially answered CNAME
+  queries on a dedicated `case 5:` branch only, which `LookupCNAME` never
+  actually reaches -- the test caught this immediately (got the queried
+  name back instead of the target), and the fake server's `A`-query
+  handling now chases the CNAME chain itself, same as a real nameserver
+  would, which is exactly the behavior this feature depends on in
+  production.
+- Verified with a real, from-scratch, test-only DNS server
+  (`internal/recon/resolve/dnsfake_test.go`) speaking actual DNS wire
+  format over UDP -- not a mock of `net.Resolver`'s Go-level API, a real
+  parsed-and-built DNS message round trip through `net.Resolver` itself
+  (via its `Dial` override) -- rather than trusting the stdlib's
+  documented behavior on faith. `go test ./internal/recon/resolve/...`
+  covers CNAME-chain resolution, MX preference+host formatting, multi-NS/
+  multi-TXT records, "no records for this type" being silently omitted,
+  `-type`+`-reverse` rejection, and an unknown `-type` value erroring
+  clearly instead of being silently ignored.
+- See [commands.md](commands.md#resolve).
+
 ### Google dorking (gap 12)
 - **New native command `srt dork`**, and a WEB-stage pipeline step (`02b`,
   off by default: `options.dork`/`-dork`) — generates a curated set of
@@ -767,8 +811,12 @@ methodology.md's External-tool policy.
   (`-hl`, for JS-heavy SPAs), authenticated crawling (cookies/headers via
   `-H`), and crawling discovered subdomains (gap 8).
 - **`dnsx` (more record types)** — brute force, resolution and wildcard
-  filtering are now wired (see Shipped); still open: TXT/CNAME/NS/MX/SOA
-  record collection, which `srt resolve` doesn't do.
+  filtering are now wired (see Shipped). ~~TXT/CNAME/NS/MX/SOA record
+  collection~~ — TXT/CNAME/NS/MX done natively, see Shipped
+  (`srt resolve -type`); **SOA still open** -- Go's `net` package has no
+  `LookupSOA` at all (no public primitive for it), and pulling in a DNS
+  library just for one record type wasn't judged worth it for a command
+  that's native by policy.
 - **`shuffledns`** — massDNS-based brute force for very large wordlists;
   needs massdns and a resolver list, so it wasn't chosen over dnsx.
 - **`mapcidr`** — CIDR aggregation (merge many ranges into the smallest
