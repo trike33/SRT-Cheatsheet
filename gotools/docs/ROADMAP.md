@@ -505,6 +505,69 @@ methodology.md's External-tool policy.
   assets matching a query. Needs per-engine API keys to do anything useful,
   same friction as `asnmap`; lower priority than the above.
 
+### WEB pipeline: target flow and gaps (investigated, not started)
+
+Target flow: **endpoints** (active: robots + sitemap, crawl, dir/file brute
+force with generic *and* guessed wordlists; passive: gau, optionally
+chaos/uncover) -> one merged endpoint list -> **re-probe with native httpx**
+-> **valid endpoints** (careful: soft-404 sites answer 200 for anything) ->
+**parameters** (fuzz/guess, or read from what the site declares) and
+**sensitive info** (sensitive extensions, creds/API keys).
+
+What the pipeline does today, in order: domains -> subdomains (+subfinder/
+dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
+`params` (over gau URLs only) -> `robots` -> `fuzz` -> `snyk`. Gaps:
+
+1. **No endpoint merge.** `robots`/sitemap output (`05_robots.txt`) and
+   `fuzz` results (`06_fuzz_*.json`) never join `02_all_urls.txt`; there is
+   no single "endpoints/directories/files" list to carry forward.
+2. **Wrong order.** `sensitive`/`params` run *before* `robots`/`fuzz`, so
+   they only ever see gau's archived URLs, never what the active steps found.
+3. **No re-probe of endpoints.** `probe` runs once on domains (recon on
+   root). gau/robots/sitemap/fuzz URLs are never validated as a distinct
+   step (`probe` already accepts URLs, so the plumbing exists).
+4. **No soft-404 handling outside `fuzz`.** `fuzz -ac` calibrates per
+   directory, but `probe` has none, and `robots` prints green for any 200
+   (so the new sitemap URLs on a soft-404 site all look valid). The
+   validation step needs a per-host random-path fingerprint (status, size,
+   words, body hash) and to drop matches — `fuzz`'s `calibData` is the
+   reusable piece.
+5. **No crawler.** katana is still out (hung in the dev sandbox); nothing
+   else follows links, extracts JS/form URLs or reads `<a>`/`<script>`.
+6. **Directory brute force is off unless you configure a wordlist.** `fuzz`
+   is skipped per target when no `wordlist`/`options.wordlist` resolves —
+   the same problem subdomains had before the embedded list. Needs an
+   embedded generic list (raft/common-style) and a `-no-fuzz`-style switch.
+7. **No guessed/context wordlists.** Only extensions are auto-detected
+   (`-ext-auto`); words derived from the target's tech stack, titles, JS
+   identifiers or the engagement name are not generated.
+8. **Active steps only cover explicit targets.** `robots`/`fuzz` never run
+   against discovered live subdomains (deliberate, to bound traffic, but
+   then "recon on every subdomain" never reaches endpoint discovery). Needs
+   an opt-in that feeds `probe`-confirmed live hosts forward.
+9. **Parameters are only classified, not discovered.** `params` buckets
+   parameters already present in URLs by vuln class. Missing: parameter
+   fuzzing/guessing against valid endpoints, and automatic extraction of
+   what the site declares itself (HTML forms/inputs, JS, OpenAPI/Swagger/
+   GraphQL introspection).
+10. **Sensitive-info checks the wrong population.** The extension list is
+    identical to your regex (and matches on the URL *path*, so a query
+    string can't hide or fake a hit), but it runs on archived URLs without
+    checking the file still exists, and `-content-scan` (off by default)
+    fetches every URL including dead ones and soft-404 pages. Both should
+    run over the validated list only.
+11. **chaos / uncover not wired.** Both need a ProjectDiscovery/engine API
+    key. chaos is a subdomain source (subfinder can use it once a chaos key
+    is in its provider config — worth documenting before adding a tool);
+    uncover (Shodan/Censys/...) seeds hosts/IPs from a query and belongs at
+    scope-building, with a config field for keys and a clean skip when
+    absent.
+12. **Google dorking** is still unimplemented.
+
+Suggested build order: (1)+(2) merge and reorder, (4) soft-404-aware
+validation, (3) re-probe, then (10) rerun sensitive/params on the valid
+list, then (6)/(7) default wordlists, (9) parameter discovery, (5) crawler.
+
 ### Active testing & UX (from engagement notes, not started)
 
 Noted for later — none of these are scoped or designed yet, just captured
