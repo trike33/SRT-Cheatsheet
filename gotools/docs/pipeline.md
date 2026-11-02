@@ -47,6 +47,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-param-discover-top` | `500` | with `-param-discover`: try at most this many candidate names per endpoint (same as `options.paramDiscoverTop`) |
 | `-active-on-subdomains` | off | WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (same as `options.activeOnSubdomains`) |
 | `-active-on-subdomains-max` | `20` | with `-active-on-subdomains`: cap to this many live discovered subdomains, first-confirmed first (same as `options.activeOnSubdomainsMax`) |
+| `-no-context-words` | off | WEB stage: don't add `fuzz -words-auto`'s curated per-host words, or engagement-name words, to the fuzz wordlist (same as `options.contextWords:false`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -393,7 +394,13 @@ stage discovered and handed off (written to a `web/` subfolder of that
 7. `fuzz` — directory/file brute force per target, **on by default**
    (`options.fuzz:false`/`-no-fuzz` to disable). Wordlist: the target's
    `wordlist`, else `options.wordlist`, else the SecLists `common.txt`
-   (~4.7k names) embedded in the binary.
+   (~4.7k names) embedded in the binary. `options.contextWords`/
+   `-no-context-words` (**on by default**, gap 7) adds `fuzz -words-auto`
+   (curated per-host words from its detected tech stack/page title, capped
+   at 40/host, reusing step 6's -ext-auto probe when that's also on) plus,
+   when the config has a `name`, that name's words (split on spaces/
+   camelCase, written once to `00_name_words.txt` and merged into every
+   target's wordlist) — see [fuzz.md](fuzz.md#context-aware-words-words-auto).
 8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of every
    `robots`/sitemap URL that answered 2xx/3xx/401/403, every `fuzz` hit,
    the crawler's endpoints and gau's archived URLs (active hits first).

@@ -4,6 +4,38 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Context-aware wordlist words: tech stack, page title, engagement name (gap 7)
+- **`fuzz -words-auto`** (new flag, off by default standalone) — adds a
+  small curated set of extra candidate words per host, the same way
+  `-ext-auto` adds extensions: a per-tech directory/file-name map
+  (`WordPress` → `wp-admin`/`wp-content`/`wp-login`/`wp-json`/`xmlrpc`/...;
+  similar small sets for Drupal, Joomla, Laravel, Django, Express, ASP.NET,
+  IIS, PHP) plus the root page's `<title>`, tokenized (lowercase, 3+
+  chars, generic English stopwords dropped). Resolved once per host origin
+  and capped at 40 extra words total, tech words first. Reuses
+  `-ext-auto`'s own `probe.One` root-page request when both flags are set
+  (one request serves both, via a new per-origin `siteProbeCache`), rather
+  than probing twice.
+- **`srt pipeline`**: `options.contextWords`/`-no-context-words` (**on by
+  default** — WEB stage `fuzz` calls gain `-words-auto`; costs nothing
+  extra in the common case since step 6's `-ext-auto` is also on by
+  default and the two share one probe). Adds a third word source
+  `-words-auto` can't see on its own: the engagement's `name` from the
+  config, tokenized (split on spaces/camelCase, short tokens and
+  corporate-suffix noise like `inc`/`llc`/`corp` dropped) and written once
+  to `00_name_words.txt`, merged into every target's fuzz wordlist via an
+  extra `-w` (already repeatable) — a client's short name or product/
+  codename is often also a path on their own site.
+- **Still open** (see Ideas/backlog, gap 7's note): JS-declared identifiers
+  (variable/function/route names parsed out of crawled JS) as a fourth word
+  source — katana's existing crawl only extracts links/forms, not generic
+  JS identifiers, and that parsing is a meaningfully larger piece of work
+  than the curated-map approach used here.
+- See [fuzz.md's Context-aware words
+  section](fuzz.md#context-aware-words-words-auto) and
+  [pipeline.md's step 7](pipeline.md#web-stage--outputdirweb) for the
+  user-facing version.
+
 ### Active steps (`robots`/`fuzz`/`katana`) can reach probe-confirmed-live discovered subdomains (gap 8)
 - **`options.activeOnSubdomains`/`-active-on-subdomains`** (off by default)
   — `robots`/`fuzz`/`katana` previously only ever ran against the explicit
@@ -717,9 +749,13 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    is skipped per target when no `wordlist`/`options.wordlist` resolves —
    the same problem subdomains had before the embedded list. Needs an
    embedded generic list (raft/common-style) and a `-no-fuzz`-style switch.
-7. **No guessed/context wordlists.** Only extensions are auto-detected
-   (`-ext-auto`); words derived from the target's tech stack, titles, JS
-   identifiers or the engagement name are not generated.
+7. ~~**No guessed/context wordlists.**~~ *(mostly done — see Shipped:
+   `fuzz -words-auto` + `options.contextWords`)* *(original note:)* Only
+   extensions are auto-detected (`-ext-auto`); words derived from the
+   target's tech stack, titles, JS identifiers or the engagement name are
+   not generated. **Still open**: JS-declared identifiers (variable/
+   function/route names parsed out of crawled JS, as opposed to katana's
+   existing link/form extraction) as a word source.
 8. ~~**Active steps only cover explicit targets.**~~ *(done — see Shipped:
    `options.activeOnSubdomains`/`-active-on-subdomains`)* *(original
    note:)* `robots`/`fuzz` never run against discovered live subdomains

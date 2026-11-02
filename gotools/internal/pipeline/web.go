@@ -282,6 +282,24 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	for _, b := range activeSubBases {
 		fuzzTargets = append(fuzzTargets, targetEntry{Target: b})
 	}
+
+	// options.contextWords/-no-context-words (on by default, gap 7): extra
+	// candidate words beyond the base wordlist. Per-host tech-stack/title
+	// words are fuzz's own job (-words-auto, resolved per origin inside
+	// fuzz itself); the engagement name is only known here, so its words
+	// are written once to a small file and added as an extra -w to every
+	// fuzz call below (fuzz's -w is already repeatable/mergeable).
+	var nameWordsFile string
+	if cfg.Options.contextWordsOrDefault(true) {
+		if nw := engagementNameWords(cfg.Name); len(nw) > 0 {
+			nameWordsFile = filepath.Join(outDir, "00_name_words.txt")
+			if err := writeLinesFile(nameWordsFile, nw); err != nil {
+				steps = append(steps, stepResult{Kind: "web", Name: "name-words", Status: "error", Detail: err.Error()})
+				nameWordsFile = ""
+			}
+		}
+	}
+
 	for _, e := range fuzzTargets {
 		if e.Target == "" {
 			continue
@@ -303,6 +321,9 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 
 		fuzzFile := filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json")
 		args := []string{"-u", fuzzURL(e.Target), "-w", wordlist, "-json", "-o", fuzzFile}
+		if nameWordsFile != "" {
+			args = append(args, "-w", nameWordsFile)
+		}
 
 		targetScope := e.Scope
 		if targetScope == "" {
@@ -316,6 +337,9 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}
 		if len(e.Extensions) == 0 && cfg.Options.autoExtensionsOrDefault(true) {
 			args = append(args, "-ext-auto") // tech-detect hints + live verification
+		}
+		if cfg.Options.contextWordsOrDefault(true) {
+			args = append(args, "-words-auto") // per-host tech-stack/title words, gap 7
 		}
 		if cfg.Options.Concurrency > 0 {
 			args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))

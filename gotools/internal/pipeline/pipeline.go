@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -69,6 +69,7 @@ func Run(args []string) error {
 	paramDiscoverTop := fs.Int("param-discover-top", 0, "with -param-discover: try at most this many candidate parameter names per endpoint (default 500; same as options.paramDiscoverTop)")
 	activeOnSubdomains := fs.Bool("active-on-subdomains", false, "WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (off by default -- each one gets its own full active pass; same as options.activeOnSubdomains in a JSON config)")
 	activeOnSubdomainsMax := fs.Int("active-on-subdomains-max", 0, "with -active-on-subdomains: cap to this many live discovered subdomains, first-confirmed first (default 20; same as options.activeOnSubdomainsMax)")
+	noContextWords := fs.Bool("no-context-words", false, "WEB stage: don't add fuzz -words-auto's curated per-host tech-stack/title words, or engagement-name words, to the fuzz wordlist (on by default; same as options.contextWords:false)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -146,6 +147,10 @@ func Run(args []string) error {
 	}
 	if *activeOnSubdomainsMax > 0 {
 		cfg.Options.ActiveOnSubdomainsMax = *activeOnSubdomainsMax
+	}
+	if *noContextWords {
+		disabled := false
+		cfg.Options.ContextWords = &disabled
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)

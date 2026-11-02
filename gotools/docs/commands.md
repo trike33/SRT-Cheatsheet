@@ -543,6 +543,7 @@ See [fuzz.md](fuzz.md) for the full guide. Flag summary:
 | `-w` | stdin | wordlist file (repeatable) |
 | `-e` | — | extra extension per word, e.g. `-e .php` (repeatable) |
 | `-ext-auto` | | discover which extensions each host serves (see below); combines with `-e` |
+| `-words-auto` | off | add curated extra words per host from its detected tech stack (`wp-admin` for WordPress, ...) and page title — capped at 40 words/host, shares `-ext-auto`'s probe request when both are set |
 | `-mutate-case` | off | also try lower/UPPER/Title-case variants of every word |
 | `-scope` | — | Burp scope JSON: gate requests + seed targets when no `-u`/`-tl` |
 

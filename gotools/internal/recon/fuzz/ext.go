@@ -113,6 +113,28 @@ type extCache struct {
 	done map[string][]string // origin -> extensions (user -e first)
 }
 
+// siteProbeCache memoizes probe.One(origin) per origin, so -ext-auto and
+// -words-auto (context.go) share the one root-page request a host needs
+// instead of each sending its own.
+type siteProbeCache struct {
+	mu   sync.Mutex
+	done map[string]probe.Result
+}
+
+func (e *fuzzEngine) siteProbe(origin string) probe.Result {
+	e.sitec.mu.Lock()
+	defer e.sitec.mu.Unlock()
+	if r, ok := e.sitec.done[origin]; ok {
+		return r
+	}
+	if e.sitec.done == nil {
+		e.sitec.done = map[string]probe.Result{}
+	}
+	r := probe.One(e.client, origin+"/")
+	e.sitec.done[origin] = r
+	return r
+}
+
 // extsFor returns the extensions to try under base: the user's -e list, plus
 // -ext-auto's hinted and discovered ones (resolved once per origin).
 func (e *fuzzEngine) extsFor(base string) []string {
@@ -151,7 +173,7 @@ func (e *fuzzEngine) resolveExts(base, origin string) []string {
 		return added
 	}
 
-	pr := probe.One(e.client, origin+"/")
+	pr := e.siteProbe(origin)
 	hinted := add(hintedExtensions(pr.Tech))
 
 	var cands []string

@@ -65,7 +65,7 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("fuzz", flag.ExitOnError)
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
-			{Title: "INPUT", Names: []string{"u", "tl", "w", "e", "ext-auto", "mutate-case", "scope"}},
+			{Title: "INPUT", Names: []string{"u", "tl", "w", "e", "ext-auto", "words-auto", "mutate-case", "scope"}},
 			{Title: "TRAFFIC CONTROL", Names: []string{
 				"X", "H", "d", "ua", "proxy", "c", "rate", "rate-global", "hc", "adaptive-conc",
 				"delay", "jitter", "timeout", "retries", "insecure", "random-agent", "auto-throttle",
@@ -88,6 +88,7 @@ func Run(args []string) error {
 	fs.Var(&wordlists, "w", "wordlist file (repeatable). Omit to read the wordlist from stdin")
 	var exts stringSlice
 	extAuto := fs.Bool("ext-auto", false, "work out which extensions each host serves: tech-detect hints (PHP -> .php ...) plus live verification of common extensions; combines with -e")
+	wordsAuto := fs.Bool("words-auto", false, "add extra candidate words per host from its detected tech stack (wp-admin for WordPress, ...) and page title -- curated and capped (40 words/host), not a generative guesser; shares -ext-auto's probe request when both are set")
 	fs.Var(&exts, "e", "extension to also try per word, e.g. -e .php -e .bak (repeatable)")
 	scopeFile := fs.String("scope", "", "Burp scope JSON: only in-scope requests are sent (and seeds targets if no -u/-tl)")
 
@@ -219,6 +220,7 @@ func Run(args []string) error {
 		words:        words,
 		exts:         exts,
 		extAuto:      *extAuto,
+		wordsAuto:    *wordsAuto,
 		cm:           cm,
 		jsonOut:      *jsonOut,
 		silent:       *silent,
@@ -292,6 +294,9 @@ type fuzzEngine struct {
 	exts        []string
 	extAuto     bool
 	extc        extCache
+	wordsAuto   bool
+	wordc       wordsCache
+	sitec       siteProbeCache
 	cm          colorout.Mode
 	jsonOut     bool
 	silent      bool
@@ -492,13 +497,18 @@ func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int, parentBase str
 	if e.calibrationEnabled(originOf(base)) {
 		e.calibrate(base, parentBase) // per-directory soft-404 fingerprint
 	}
-	exts := e.extsFor(base) // -e plus -ext-auto's per-host discoveries
+	exts := e.extsFor(base)        // -e plus -ext-auto's per-host discoveries
+	extraWords := e.wordsFor(base) // -words-auto's per-host tech/title words
 	mult := 1
 	if e.mutateCase {
 		mult = 4 // word, lower, upper, title -- an upper bound; dedup may land under this
 	}
-	e.planned.Add(int64(len(e.words) * mult * (1 + len(exts))))
-	for _, w := range e.words {
+	allWords := e.words
+	if len(extraWords) > 0 {
+		allWords = append(append([]string{}, e.words...), extraWords...)
+	}
+	e.planned.Add(int64(len(allWords) * mult * (1 + len(exts))))
+	for _, w := range allWords {
 		if e.stopped() || e.baseDead(base) {
 			return
 		}

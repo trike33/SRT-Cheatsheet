@@ -213,6 +213,37 @@ gets the normal suffix-append treatment.
 srt fuzz -u https://host/FUZZ -w words-with-tokens.txt -ext-auto -mutate-case -ac
 ```
 
+## Context-aware words (`-words-auto`)
+
+A generic wordlist has no way to know a WordPress site probably has
+`/wp-admin`, or that a page titled "Acme Billing Portal" might also have a
+`/acme` or `/billing` path. `-words-auto` adds a small, curated set of extra
+words per host — the same `probe.One` tech-detect/title fetch `-ext-auto`
+already does for extensions, reused (one request, not two, when both flags
+are set):
+
+- **Tech stack → directory/file names.** A short, hand-picked map per
+  detected technology (`WordPress` → `wp-admin`, `wp-content`, `wp-login`,
+  `wp-json`, `xmlrpc`, ...; similar small sets for Drupal, Joomla, Laravel,
+  Django, Express, ASP.NET, IIS, PHP). Not a guesser — if a tech isn't in
+  the map, it adds nothing for it.
+- **Page title → words.** The root page's `<title>` is tokenized (lowercase,
+  3+ characters, generic English stopwords like "the"/"home"/"welcome"
+  dropped) — a product or client name in the title is often also a path.
+
+Resolved once per host origin and capped at 40 extra words total (tech
+words first, then title words), so it can't balloon a run the way the base
+wordlist would. Off by default:
+
+```bash
+srt fuzz -u https://host/FUZZ -w common.txt -words-auto -ac
+```
+
+`srt pipeline` also adds a third source this standalone command can't: every
+word from the engagement's `name` in its config (split on spaces/camelCase,
+short tokens and corporate-suffix noise like "inc"/"llc" dropped) — see
+[pipeline.md](pipeline.md), `options.contextWords`/`-no-context-words`.
+
 ## Output
 
 - default: aligned table `status size words lines url`, colored by status;

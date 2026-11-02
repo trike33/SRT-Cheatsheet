@@ -79,6 +79,7 @@ type pipelineOptions struct {
 	ParamDiscoverTop      int    `json:"paramDiscoverTop,omitempty"`      // WEB stage: try at most this many candidate names per endpoint (default 500, same "0/unset falls back to the default" convention as validateMax/crawlDepth)
 	ActiveOnSubdomains    *bool  `json:"activeOnSubdomains,omitempty"`    // WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (default false -- each one gets its own full active pass, capped by activeOnSubdomainsMax)
 	ActiveOnSubdomainsMax int    `json:"activeOnSubdomainsMax,omitempty"` // WEB stage: with activeOnSubdomains, cap to this many live discovered subdomains, first-confirmed first (default 20)
+	ContextWords          *bool  `json:"contextWords,omitempty"`          // WEB stage: fuzz -words-auto -- add curated per-host words from the detected tech stack/page title, plus words from the engagement name, to every fuzz wordlist (default true -- reuses probe's own request via -ext-auto's cache when that's also on, capped at 40 extra words/host)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -176,6 +177,13 @@ func (o pipelineOptions) activeOnSubdomainsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.ActiveOnSubdomains
+}
+
+func (o pipelineOptions) contextWordsOrDefault(def bool) bool {
+	if o.ContextWords == nil {
+		return def
+	}
+	return *o.ContextWords
 }
 
 func (o pipelineOptions) contentScanOrDefault(def bool) bool {
