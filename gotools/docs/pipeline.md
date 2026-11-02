@@ -148,7 +148,9 @@ Install `vulnx`/`nuclei`/`cdncheck`/`tlsx` with [pdtm](https://github.com/
 projectdiscovery/pdtm), ProjectDiscovery's tool manager: `go install -v
 github.com/projectdiscovery/pdtm/cmd/pdtm@latest`, then `pdtm -i
 vulnx,nuclei,cdncheck,tlsx` (installs to `$HOME/.pdtm/go/bin`, added to
-`PATH` by default). Each step **skips cleanly** with a `"skipped"` status
+`PATH` by default). `install.sh --with-pd` does this for you,
+`update.sh --with-pd` runs `pdtm -u`, and `uninstall.sh --purge-pd` runs
+`pdtm -r` (pdtm itself is kept). Each step **skips cleanly** with a `"skipped"` status
 if its tool isn't on `PATH` — nothing here is required for the rest of the
 pipeline to run.
 
