@@ -4,6 +4,38 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### `paramdiscover`: hidden GET parameter guessing (gap 9)
+- New native command **`srt paramdiscover`**, and a WEB-stage pipeline step
+  (`06d`, off by default: `options.paramDiscover`/`-param-discover`).
+  Arjun-style batch+bisect: fetch a baseline response for an endpoint, try
+  candidate parameter names in batches (default 25) against it, and only
+  bisect a batch that changed something (different status, the probe
+  value reflected in the body, or a body size/word-count delta beyond
+  tolerance) down to the specific name(s) responsible -- cuts a ~6.4k-name
+  default wordlist to a couple hundred requests per endpoint instead of
+  one request per candidate. Skips binary responses after the baseline
+  alone (by `Content-Type`), and excludes any candidate already present
+  in the endpoint's own query string (already visible, not hidden --
+  `params`' job). Defaults to the embedded SecLists
+  `burp-parameter-names.txt` (~6.4k names, MIT, see
+  `internal/wordlists/NOTICE.md`) when no `-w` is given.
+- The pipeline step is capped on both axes so turning it on can't silently
+  balloon into thousands of extra requests: `options.paramDiscoverMax`
+  (default 20) limits how many validated endpoints get probed, first
+  ones first (the same convention `validateMax` uses);
+  `options.paramDiscoverTop` (default 500) limits candidate names tried
+  per endpoint. Runs over the same validated endpoint list `sensitive`/
+  `params` do.
+- This is the "fuzzing/guessing" half of gap 9; katana's form extraction
+  (`05c_forms.txt`, shipped with the crawler) is the "what the site
+  declares itself via HTML forms" half. JS-declared parameters and
+  OpenAPI/Swagger/GraphQL introspection are still open -- see
+  Ideas/backlog.
+- Verified end to end: a local test server with a hidden `debug` query
+  parameter was found correctly (and flagged as reflected) both via the
+  standalone command and through the real `pipeline` CLI with
+  `-param-discover` end to end.
+
 ### katana crawler wired into the WEB stage (gap 5)
 - `pipeline`'s WEB stage now crawls every explicit target with katana (on by
   default, `-no-crawl`/`options.crawl:false`, `options.crawlDepth`): links,
@@ -503,9 +535,12 @@ methodology.md's External-tool policy.
 - **WEB**: Google dorking; context-aware wordlist generation for `fuzz`
   (extensions now are, via `-ext-auto`; candidate *words* derived from the detected tech stack/app context — `probe`'s
   tech-detect output is the natural input for this now, not just static
-  wordlists); a re-validation step for URLs pulled from `gau`/dorking;
-  parameter fuzzing/guessing beyond `params`' URL-based classification,
-  plus reading parameters from a webset/API spec when one exists;
+  wordlists); ~~a re-validation step for URLs pulled from `gau`/dorking~~ —
+  done, see Shipped (`validate`; dorking itself still isn't implemented,
+  so nothing from it reaches `validate` yet); ~~parameter
+  fuzzing/guessing beyond `params`' URL-based classification~~ — done,
+  see Shipped (`paramdiscover`), though reading parameters from a
+  webset/API spec when one exists is still open;
   ~~content-based sensitive-info classification~~ — done, see Shipped
   (`sensitive -content`); optionally also running `robots`/`fuzz`
   against `pipeline`-discovered subdomains, opt-in given the traffic-volume
@@ -581,11 +616,16 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    against discovered live subdomains (deliberate, to bound traffic, but
    then "recon on every subdomain" never reaches endpoint discovery). Needs
    an opt-in that feeds `probe`-confirmed live hosts forward.
-9. **Parameters are only classified, not discovered.** `params` buckets
-   parameters already present in URLs by vuln class. Missing: parameter
-   fuzzing/guessing against valid endpoints, and automatic extraction of
-   what the site declares itself (HTML forms/inputs, JS, OpenAPI/Swagger/
-   GraphQL introspection).
+9. ~~**Parameters are only classified, not discovered.**~~ *(mostly done —
+   see Shipped: `paramdiscover`'s batch+bisect guessing, wired in opt-in;
+   katana's form extraction covers HTML forms/inputs)* *(original note:)*
+   `params` buckets parameters already present in URLs by vuln class.
+   Missing: parameter fuzzing/guessing against valid endpoints, and
+   automatic extraction of what the site declares itself (HTML
+   forms/inputs, JS, OpenAPI/Swagger/GraphQL introspection). **Still
+   open**: JS-declared parameters (XHR bodies/query strings katana parses
+   but doesn't surface as parameter names today) and OpenAPI/Swagger/
+   GraphQL introspection.
 10. ~~**Sensitive-info checks the wrong population.**~~ *(done — runs on the validated list)*  
     *(original note:)* The extension list is
     identical to your regex (and matches on the URL *path*, so a query

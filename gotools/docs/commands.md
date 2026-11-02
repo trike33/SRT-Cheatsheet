@@ -13,7 +13,8 @@ Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [portscan](#portscan) · [traceroute](#traceroute) · [domains](#domains) · [scopecheck](#scopecheck) ·
 [subdomains](#subdomains) · [probe](#probe) · [burphosts](#burphosts) ·
 [burpscope](#burpscope) · [gau](#gau) · [sensitive](#sensitive) ·
-[params](#params) · [dirlist](#dirlist) · [robots](#robots) · [snyk](#snyk) ·
+[params](#params) · [paramdiscover](#paramdiscover) · [dirlist](#dirlist) ·
+[robots](#robots) · [validate](#validate) · [snyk](#snyk) ·
 [relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
 [results](#results) · [runs](#runs) · [export](#export) · [db](#db) ·
 [shell](#shell) · [version](#version)
@@ -347,6 +348,49 @@ Group URLs by the vuln class their parameters hint at (`sqli`, `xss`, `lfi`,
 srt params -l all_urls.txt                      # grouped report
 srt params -l all_urls.txt -class sqli | nuclei  # one class, piped
 ```
+
+---
+
+## paramdiscover
+
+Guess hidden GET parameters an endpoint reads but never exposes in any URL
+or form -- `params` above only ever classifies parameter names already
+sitting in a URL; this finds the ones that aren't. Arjun-style: fetch a
+baseline response, try candidate names in batches (`-bs`, default 25), and
+only bisect a batch that changed something (a different status, the probe
+value reflected in the body, or a body size/word-count delta beyond
+`-tol`) down to the specific name(s) responsible -- far fewer requests
+than one per candidate whenever (as is typical) almost none of a batch's
+names apply. Skips binary responses (by `Content-Type`) after the
+baseline alone. Defaults to the embedded SecLists `burp-parameter-names.txt`
+(~6.4k names) when no `-w` is given.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin/args | endpoint URL list |
+| `-w` | embedded list | candidate parameter name wordlist (repeatable) |
+| `-top` | `0` (all) | try at most the first N candidate names |
+| `-X` | `GET` | `GET` adds candidates to the query string; anything else form-encodes them in the body |
+| `-bs` | `25` | candidate names tried per request before bisecting |
+| `-tol` | `5` | body size/word-count tolerance around the baseline, % |
+| `-timeout` | `10s` | per-request timeout |
+| `-insecure` | `true` | skip TLS verification |
+| `-c` | `10` | endpoints probed concurrently |
+| `-delay` | `0` | fixed delay before each request |
+| `-o` | stdout | output file |
+| `-json` | off | JSON line per endpoint (`url`, `found`, `reflected`, `requests`) |
+| `-silent` | off | print only endpoints with at least one discovered parameter |
+| `-color` | `auto` | `auto` \| `always` \| `never` |
+
+```bash
+srt paramdiscover -l endpoints.txt -json -o hidden-params.json
+echo "https://target/search" | srt paramdiscover -top 1000
+```
+
+A name followed by `*` in the default table output means its value came
+back in the response body (a strong, separate signal worth noting even
+when nothing else about the response changed -- e.g. a reflected,
+unsanitized parameter).
 
 ---
 

@@ -74,6 +74,9 @@ type pipelineOptions struct {
 	ContentScan        *bool  `json:"contentScan,omitempty"`        // WEB stage: fetch every merged URL and scan its body for secrets (sensitive -content) instead of just classifying by extension (default false -- fetches every URL, not just inspects a string)
 	CDNCheck           *bool  `json:"cdnCheck,omitempty"`           // HOST stage: flag IPs behind a known CDN/WAF/cloud provider via cdncheck (default true -- a local dataset lookup, no traffic to the target at all)
 	TLSX               *bool  `json:"tlsx,omitempty"`               // WEB stage: widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (default true -- one TLS handshake per target, same order of traffic as probe)
+	ParamDiscover      *bool  `json:"paramDiscover,omitempty"`      // WEB stage: guess hidden GET parameters on the validated endpoint list via paramdiscover (default false -- a batch of extra requests per endpoint, capped by paramDiscoverMax/paramDiscoverTop)
+	ParamDiscoverMax   int    `json:"paramDiscoverMax,omitempty"`   // WEB stage: probe at most this many validated endpoints (default 20)
+	ParamDiscoverTop   int    `json:"paramDiscoverTop,omitempty"`   // WEB stage: try at most this many candidate names per endpoint (default 500, same "0/unset falls back to the default" convention as validateMax/crawlDepth)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -157,6 +160,13 @@ func (o pipelineOptions) tlsxOrDefault(def bool) bool {
 		return def
 	}
 	return *o.TLSX
+}
+
+func (o pipelineOptions) paramDiscoverOrDefault(def bool) bool {
+	if o.ParamDiscover == nil {
+		return def
+	}
+	return *o.ParamDiscover
 }
 
 func (o pipelineOptions) contentScanOrDefault(def bool) bool {

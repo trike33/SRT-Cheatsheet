@@ -194,16 +194,22 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
      from a detected framework or CMS automatically — is not implemented.)*
    - **Passive**: archived URLs *(implemented: `srt gau`)*; Google dorking
      *(not implemented)*.
-4. **Test them** → valid endpoints/files. *(Partially implemented: `fuzz`'s
-   matcher validates results as it discovers them, but URLs pulled from
-   `gau`/dorking aren't re-validated as a distinct step today.)*
+4. **Test them** → valid endpoints/files. *(Implemented: `srt validate`
+   (and `pipeline`'s WEB stage `validate` step, on by default)
+   re-probes every endpoint `gau`/the crawler/`robots`/`fuzz` found and
+   drops dead ones and soft-404s by fingerprinting each host's real
+   not-found response. Google dorking itself still isn't implemented, so
+   nothing from it reaches this step yet.)*
 5. From the valid endpoints/files list:
    - **Parameters**: fuzz them, guess common ones, or — when a webset/API
      spec is available — read them automatically from that definition.
      *(Partially implemented: `srt params` classifies parameters already
-     present in a URL by likely vuln class; actively fuzzing/guessing new
-     parameter names, or reading them from an API spec, is not
-     implemented.)*
+     present in a URL by likely vuln class; `srt paramdiscover` (and
+     `pipeline`'s WEB stage, opt-in via `options.paramDiscover`) guesses
+     hidden ones a batch+bisect pass against a baseline, Arjun-style;
+     katana's form extraction (`05c_forms.txt`) covers what a site
+     declares via HTML forms. Reading parameters from an OpenAPI/Swagger/
+     GraphQL spec automatically is still not implemented.)*
    - **Sensitive information**: classify discovered documents, flag
      credentials/API keys/etc. *(Implemented: `srt sensitive` matches by
      file extension by default; `sensitive -content` instead fetches each

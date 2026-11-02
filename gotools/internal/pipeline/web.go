@@ -15,6 +15,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/gau"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/paramdiscover"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/probe"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/robots"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/snyk"
@@ -35,6 +36,12 @@ import (
 // URL and scanning its body for secrets (sensitive -content) -- off by
 // default since it turns one string-classification step into a request
 // per URL in what can be a very large gau dump.
+//
+// options.paramDiscover/-param-discover (off by default) runs paramdiscover's
+// batch+bisect guessing pass against the validated endpoint list, capped to
+// options.paramDiscoverMax endpoints (default 20) and options.paramDiscoverTop
+// candidate names each (default 500) -- hidden GET parameters neither
+// forms (05c_forms.txt) nor params' URL-based classification can see.
 //
 // options.tlsx/-no-tlsx (on by default) widens the discovered-domain pool
 // with every explicit web target's certificate SAN/CN entries, alongside
@@ -367,6 +374,30 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}))
 	}
 
+	// --- 06d: paramdiscover -- guess hidden GET parameters on the
+	// validated endpoint list, only with options.paramDiscover/
+	// -param-discover (off by default: a batch of extra requests per
+	// endpoint on top of everything above -- gap 9's "fuzzing/guessing"
+	// half, where forms (05c_forms.txt, above) cover the "what the site
+	// declares itself" half). Capped to paramDiscoverMax endpoints (first
+	// ones first, same convention as validate's own -max) and
+	// paramDiscoverTop candidate names per endpoint, so turning this on
+	// can't silently balloon into thousands of extra requests across a
+	// large endpoint list.
+	if len(allURLs) > 0 && cfg.Options.paramDiscoverOrDefault(false) {
+		targets := paramDiscoverTargets(cfg, allURLs)
+		pdTargetsFile := filepath.Join(outDir, "06d_paramdiscover_targets.txt")
+		pdFile := filepath.Join(outDir, "06d_paramdiscover.json")
+		if err := writeLinesFile(pdTargetsFile, targets); err != nil {
+			steps = append(steps, stepResult{Kind: "web", Name: "paramdiscover", Status: "error", Detail: err.Error()})
+		} else {
+			pdArgs := paramDiscoverArgsFor(cfg, pdTargetsFile, pdFile)
+			steps = append(steps, runStep("web", "paramdiscover", "", pdFile, func() error {
+				return paramdiscover.Run(pdArgs)
+			}))
+		}
+	}
+
 	// --- 07: snyk, only for targets that supply advisory info ---
 	for _, e := range cfg.Web {
 		if e.Target == "" {
@@ -571,6 +602,40 @@ func sensitiveArgsFor(cfg *pipelineConfig, allURLsFile, outDir string) (outFile 
 		args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))
 	}
 	return outFile, args
+}
+
+// paramDiscoverTargets caps allURLs to options.paramDiscoverMax entries
+// (default 20), first ones first -- same convention as validate's own
+// -max -- so turning options.paramDiscover on can't silently run the
+// batch+bisect pass against an entire large endpoint list.
+func paramDiscoverTargets(cfg *pipelineConfig, allURLs []string) []string {
+	maxEP := cfg.Options.ParamDiscoverMax
+	if maxEP <= 0 {
+		maxEP = 20
+	}
+	if len(allURLs) > maxEP {
+		return allURLs[:maxEP]
+	}
+	return allURLs
+}
+
+// paramDiscoverArgsFor builds the `paramdiscover` call's argv: JSON output,
+// options.paramDiscoverTop (default 500) candidate names per endpoint, and
+// -timeout/-insecure/-c from options the same way sensitiveArgsFor's
+// content-scan mode does.
+func paramDiscoverArgsFor(cfg *pipelineConfig, targetsFile, outFile string) []string {
+	topN := cfg.Options.ParamDiscoverTop
+	if topN <= 0 {
+		topN = 500
+	}
+	args := []string{"-l", targetsFile, "-o", outFile, "-json", "-top", strconv.Itoa(topN),
+		"-timeout", cfg.Options.timeoutDuration(10 * time.Second).String(),
+		"-insecure=" + strconv.FormatBool(cfg.Options.insecureOrDefault(true)),
+	}
+	if cfg.Options.Concurrency > 0 {
+		args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))
+	}
+	return args
 }
 
 // robotsHitRe matches a `robots` probe line: "<url> [status] [length]".

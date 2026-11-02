@@ -40,6 +40,7 @@ import (
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/gau"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/ipexpand"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/paramdiscover"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/portscan"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/probe"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/relpaths"

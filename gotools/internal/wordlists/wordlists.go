@@ -20,6 +20,13 @@ var subdomains []byte
 //go:embed common.txt
 var directories []byte
 
+// paramNames is SecLists' Discovery/Web-Content/burp-parameter-names.txt
+// (MIT, NOTICE.md): ~6.4k parameter names, the default candidate list for
+// `srt paramdiscover`'s guessing pass.
+//
+//go:embed burp-parameter-names.txt
+var paramNames []byte
+
 // DirectoriesFile writes the embedded directory/file wordlist into dir and
 // returns its path.
 func DirectoriesFile(dir string) (string, error) {
@@ -35,6 +42,16 @@ func DirectoriesFile(dir string) (string, error) {
 func SubdomainsFile(dir string) (string, error) {
 	p := filepath.Join(dir, "subdomains-top1million-20000.txt")
 	if err := os.WriteFile(p, subdomains, 0o644); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// ParamNamesFile writes the embedded parameter-name wordlist into dir and
+// returns its path.
+func ParamNamesFile(dir string) (string, error) {
+	p := filepath.Join(dir, "burp-parameter-names.txt")
+	if err := os.WriteFile(p, paramNames, 0o644); err != nil {
 		return "", err
 	}
 	return p, nil

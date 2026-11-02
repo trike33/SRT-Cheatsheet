@@ -42,6 +42,9 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
 | `-no-cdn-check` | off | HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (same as `options.cdnCheck:false`) |
 | `-no-tlsx` | off | WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (same as `options.tlsx:false`) |
+| `-param-discover` | off | WEB stage: guess hidden GET parameters on the validated endpoints (batch+bisect against a baseline) (same as `options.paramDiscover`) |
+| `-param-discover-max` | `20` | with `-param-discover`: probe at most this many endpoints, first ones first (same as `options.paramDiscoverMax`) |
+| `-param-discover-top` | `500` | with `-param-discover`: try at most this many candidate names per endpoint (same as `options.paramDiscoverTop`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -107,7 +110,10 @@ exact Burp include/exclude rules, not just a flattened host list.
     "permutations": false,
     "contentScan": false,
     "cdnCheck": true,
-    "tlsx": true
+    "tlsx": true,
+    "paramDiscover": false,
+    "paramDiscoverMax": 20,
+    "paramDiscoverTop": 500
   }
 }
 ```
@@ -185,6 +191,19 @@ exact Burp include/exclude rules, not just a flattened host list.
   same order of traffic as `probe`'s own one request per target, not the
   "real exploitation-adjacent probes" category `easyWins`/`contentScan`
   are opt-in for.
+- `options.paramDiscover` (also `-param-discover`; options-only, no
+  per-target override) runs [`paramdiscover`](commands.md#paramdiscover)'s
+  batch+bisect guessing pass against the validated endpoint list, finding
+  hidden GET parameters neither a form (`05c_forms.txt`) nor `params`'
+  URL-based classification can see. **Off by default** — a batch of extra
+  requests per endpoint on top of everything else here, native to `srt`
+  rather than another external tool. `options.paramDiscoverMax` (also
+  `-param-discover-max`, default 20) caps how many validated endpoints get
+  probed, first ones first (the same convention `validateMax` uses);
+  `options.paramDiscoverTop` (also `-param-discover-top`, default 500)
+  caps how many candidate names are tried per endpoint. Both exist so
+  turning this on can't silently balloon into thousands of extra requests
+  across a large endpoint list.
 
 Install `vulnx`/`nuclei`/`cdncheck`/`tlsx`/`subfinder`/`dnsx`/`alterx`/`katana` with [pdtm](https://github.com/
 projectdiscovery/pdtm), ProjectDiscovery's tool manager: `go install -v
@@ -361,6 +380,16 @@ stage discovered and handed off (written to a `web/` subfolder of that
    with `options.contentScan`/`-content-scan` (off by default) it instead
    fetches every URL and scans the body for secrets (`sensitive -content`),
    writing `03_sensitive.json` instead of `03_sensitive.txt`.
+9b. `paramdiscover`, **only with `options.paramDiscover`/`-param-discover`**
+   (off by default) — guesses hidden GET parameters on the validated
+   endpoint list (native, batch+bisect against a baseline; see
+   [commands.md](commands.md#paramdiscover)), capped to
+   `options.paramDiscoverMax` endpoints (default 20, first ones first) and
+   `options.paramDiscoverTop` candidate names each (default 500). Writes
+   `06d_paramdiscover.json` (`url`, `found`, `reflected`, `requests` per
+   endpoint). This is the "fuzzing/guessing" half of what `params`'
+   URL-based classification leaves undone; step 6a's form extraction
+   (`05c_forms.txt`) is the "what the site declares itself" half.
 10. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
    **Skipped** otherwise.
 
@@ -405,6 +434,8 @@ it never aborts the run.
     04_params.txt
     05_robots_<target>.txt
     06_fuzz_<target>.json
+    06d_paramdiscover_targets.txt  # only with options.paramDiscover
+    06d_paramdiscover.json         # url/found/reflected/requests per endpoint
     07_snyk_<target>.txt
 ```
 

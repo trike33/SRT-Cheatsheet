@@ -8,7 +8,7 @@ import (
 
 func TestEmbeddedLists(t *testing.T) {
 	dir := t.TempDir()
-	for name, fn := range map[string]func(string) (string, error){"subdomains": SubdomainsFile, "directories": DirectoriesFile} {
+	for name, fn := range map[string]func(string) (string, error){"subdomains": SubdomainsFile, "directories": DirectoriesFile, "paramNames": ParamNamesFile} {
 		p, err := fn(dir)
 		if err != nil {
 			t.Fatal(name, err)

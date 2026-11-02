@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -64,6 +64,9 @@ func Run(args []string) error {
 	contentScan := fs.Bool("content-scan", false, "WEB stage: fetch every merged URL (gau's output) and scan its body for secrets/credentials (sensitive -content) instead of just classifying by extension (off by default -- fetches every URL in the list, not just a string; same as options.contentScan in a JSON config)")
 	noCDNCheck := fs.Bool("no-cdn-check", false, "HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default -- a local dataset lookup, no traffic to the target at all; same as options.cdnCheck:false in a JSON config)")
 	noTLSX := fs.Bool("no-tlsx", false, "WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (on by default -- one TLS handshake per target, same order of traffic as probe; same as options.tlsx:false in a JSON config)")
+	paramDiscover := fs.Bool("param-discover", false, "WEB stage: guess hidden GET parameters on the validated endpoint list (batch+bisect against a baseline, Arjun-style) (off by default -- a batch of extra requests per endpoint; same as options.paramDiscover in a JSON config)")
+	paramDiscoverMax := fs.Int("param-discover-max", 0, "with -param-discover: probe at most this many validated endpoints, first ones first (default 20; same as options.paramDiscoverMax)")
+	paramDiscoverTop := fs.Int("param-discover-top", 0, "with -param-discover: try at most this many candidate parameter names per endpoint (default 500; same as options.paramDiscoverTop)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -124,6 +127,16 @@ func Run(args []string) error {
 	if *noTLSX {
 		disabled := false
 		cfg.Options.TLSX = &disabled
+	}
+	if *paramDiscover {
+		enabled := true
+		cfg.Options.ParamDiscover = &enabled
+	}
+	if *paramDiscoverMax > 0 {
+		cfg.Options.ParamDiscoverMax = *paramDiscoverMax
+	}
+	if *paramDiscoverTop > 0 {
+		cfg.Options.ParamDiscoverTop = *paramDiscoverTop
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)

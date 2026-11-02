@@ -1,10 +1,12 @@
 # Third-party content
 
-`subdomains-top1million-20000.txt` (Discovery/DNS) and `common.txt`
-(Discovery/Web-Content) are taken unmodified from
+`subdomains-top1million-20000.txt`, `common.txt`, and
+`burp-parameter-names.txt` (all Discovery/DNS or Discovery/Web-Content) are
+taken unmodified from
 [danielmiessler/SecLists](https://github.com/danielmiessler/SecLists)
 (`Discovery/DNS/subdomains-top1million-20000.txt`,
-`Discovery/Web-Content/common.txt`), distributed under the
+`Discovery/Web-Content/common.txt`,
+`Discovery/Web-Content/burp-parameter-names.txt`), distributed under the
 MIT License, Copyright (c) Daniel Miessler.
 
 ## License text
