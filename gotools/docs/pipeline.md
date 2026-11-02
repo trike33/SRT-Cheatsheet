@@ -34,6 +34,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-dry-run` | off | print the planned targets/steps and exit — sends no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-easy-wins` | off | HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (same as `options.easyWins`) |
+| `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -89,7 +90,8 @@ exact Burp include/exclude rules, not just a flattened host list.
     "ports": "common,uncommon",
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
-    "easyWins": false
+    "easyWins": false,
+    "contentScan": false
   }
 }
 ```
@@ -115,6 +117,13 @@ exact Burp include/exclude rules, not just a flattened host list.
   service, not just passive recon, so it's opt-in rather than
   auto-enabled the way `vulnx` is. See [Steps](#steps) below for exactly
   what it runs and how its traffic is bounded.
+- `options.contentScan` (also `-content-scan`; options-only, no per-target
+  override) switches the WEB stage's `sensitive` step from extension-based
+  filtering to fetching every URL in the merged `gau` list and scanning its
+  body for secrets (`sensitive -content`). **Off by default** — a large
+  `gau` dump can be thousands of URLs, and this turns a string
+  classification into a request per URL; `options.concurrency`, if set,
+  caps how many run at once, the same way it already does for `fuzz`.
 
 ### Per-target fields (object form)
 
@@ -221,7 +230,10 @@ stage discovered and handed off (written to a `web/` subfolder of that
    Wayback Machine (merged into one deduped list). **Skipped** if there was
    nothing to query.
 6. `sensitive` + `params` — classify the merged URL list. **Skipped** if step
-   5 produced no URLs.
+   5 produced no URLs. `sensitive` filters by extension by default; with
+   `options.contentScan`/`-content-scan` (off by default) it instead fetches
+   every URL and scans the body for secrets (`sensitive -content`), writing
+   `03_sensitive.json` instead of `03_sensitive.txt`.
 7. `robots` — per target, fetch `robots.txt` and probe its paths.
 8. `fuzz` — per target with a resolved wordlist (see the field table above).
    **Skipped** per-target if no wordlist resolves.
@@ -257,7 +269,7 @@ it never aborts the run.
     01c_probe.json
     02_gau_<domain>.txt      # one per domain + discovered subdomain
     02_all_urls.txt          # merged, deduped
-    03_sensitive.txt
+    03_sensitive.txt         # 03_sensitive.json instead, with options.contentScan
     04_params.txt
     05_robots_<target>.txt
     06_fuzz_<target>.json

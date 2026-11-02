@@ -24,6 +24,12 @@ import (
 // A target missing something a later step needs (e.g. no wordlist for fuzz)
 // is recorded as "skipped", never treated as a fatal error for the run.
 //
+// options.contentScan/-content-scan (off by default) switches the
+// sensitive step from extension-based filtering to fetching every merged
+// URL and scanning its body for secrets (sensitive -content) -- off by
+// default since it turns one string-classification step into a request
+// per URL in what can be a very large gau dump.
+//
 // hostScopeFile, when non-empty, is a plain IP/CIDR file built from the same
 // invocation's "host" targets (see pipeline.go). playbook.md's manual flow
 // runs every domain and subdomain it discovers through `scopecheck` against
@@ -147,9 +153,9 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		steps = append(steps, skipStep("web", "sensitive", "", "no URLs collected"))
 		steps = append(steps, skipStep("web", "params", "", "no URLs collected"))
 	} else {
-		sensitiveFile := filepath.Join(outDir, "03_sensitive.txt")
+		sensitiveFile, sensitiveArgs := sensitiveArgsFor(cfg, allURLsFile, outDir)
 		steps = append(steps, runStep("web", "sensitive", "", sensitiveFile, func() error {
-			return gau.RunSensitive([]string{"-l", allURLsFile, "-o", sensitiveFile})
+			return gau.RunSensitive(sensitiveArgs)
 		}))
 
 		// params has no -o flag; it always prints via fmt.Println, so capture
@@ -310,6 +316,33 @@ func filterDomainsInScope(names []string, hostScopeFile, outDir, label string, s
 		return names, steps
 	}
 	return kept, steps
+}
+
+// sensitiveArgsFor builds the `sensitive` command's argv for the merged-URL
+// step: plain extension-based filtering by default (unchanged from before
+// options.contentScan existed), or -- with options.contentScan/
+// -content-scan -- the fetch-every-URL-and-scan-for-secrets mode instead
+// (sensitive -content), writing JSON since content hits are structured
+// rather than a plain URL list. -c reuses options.Concurrency the same way
+// the fuzz step does, rather than adding a second concurrency knob just for
+// this.
+func sensitiveArgsFor(cfg *pipelineConfig, allURLsFile, outDir string) (outFile string, args []string) {
+	outFile = filepath.Join(outDir, "03_sensitive.txt")
+	args = []string{"-l", allURLsFile, "-o", outFile}
+	if !cfg.Options.contentScanOrDefault(false) {
+		return outFile, args
+	}
+
+	outFile = filepath.Join(outDir, "03_sensitive.json")
+	args = []string{
+		"-l", allURLsFile, "-o", outFile, "-content", "-json",
+		"-timeout", cfg.Options.timeoutDuration(15 * time.Second).String(),
+		"-insecure=" + strconv.FormatBool(cfg.Options.insecureOrDefault(true)),
+	}
+	if cfg.Options.Concurrency > 0 {
+		args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))
+	}
+	return outFile, args
 }
 
 // resolveWordlist picks the wordlist for one fuzz call: the target's own

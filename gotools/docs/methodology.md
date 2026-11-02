@@ -161,6 +161,14 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
      parameter names, or reading them from an API spec, is not
      implemented.)*
    - **Sensitive information**: classify discovered documents, flag
-     credentials/API keys/etc. *(Partially implemented: `srt sensitive`
-     matches by file extension only; content-based classification — what's
-     actually a credential/key inside a file — is not implemented.)*
+     credentials/API keys/etc. *(Implemented: `srt sensitive` matches by
+     file extension by default; `sensitive -content` instead fetches each
+     URL and scans the body against a set of secret/credential signatures
+     (AWS/Google/Slack/GitHub/Stripe tokens, private keys, JWTs, connection
+     strings, generic key=/secret=/password= assignments including
+     camelCase/snake_case key-name variants) — what's actually a credential
+     inside a file, not just a filename that looks like one.
+     `pipeline`'s WEB stage runs this mode too, via
+     `options.contentScan`/`-content-scan` (off by default — fetching every
+     URL in a merged `gau` list is real added traffic, unlike filtering by
+     extension).)*

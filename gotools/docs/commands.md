@@ -606,6 +606,7 @@ Full guide in [pipeline.md](pipeline.md).
 | `-dry-run` | off | print planned steps, send no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-easy-wins` | off | HOST stage: conservative nuclei default-login/misconfig/exposure pass on non-web ports (sends real probes — opt-in) |
+| `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (opt-in) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` is required; combining them

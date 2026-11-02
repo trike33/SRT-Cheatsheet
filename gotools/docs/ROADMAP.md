@@ -4,6 +4,23 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### WEB stage wiring for `sensitive -content` (`-content-scan`)
+- **`pipeline`'s WEB stage can now run `sensitive -content` over the
+  merged `gau` URL list** instead of only ever filtering by extension —
+  closes the "pipeline integration" gap that was still open after
+  `sensitive -content` itself shipped. `options.contentScan` in a JSON
+  config, or `-content-scan` on the CLI, switches the `sensitive` step
+  from `03_sensitive.txt` (plain extension-filtered URLs, the unchanged
+  default) to `03_sensitive.json` (structured secret hits: `url`,
+  `pattern`, `match`, `context`). **Off by default** — a large `gau` dump
+  can be thousands of URLs, and this turns a string classification into a
+  real fetch per URL; `options.concurrency`, if set, caps it the same way
+  it already does for `fuzz`, instead of adding a second concurrency knob
+  just for this step. The argv-building logic
+  (`sensitiveArgsFor` in `internal/pipeline/web.go`) was pulled out as its
+  own function so it's unit-testable without live HTTP calls, the same
+  shape `vulnxSearchArgs`/`nucleiEasyWinsArgs` already use.
+
 ### HOST "easy wins" pass: a conservative `nuclei` call (`-easy-wins`)
 - **`pipeline`'s HOST stage can now run nuclei's default-login/misconfig/
   exposure templates against every non-web open port** — the last entry
@@ -380,10 +397,8 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   implications (today only `gau`/`probe` auto-widen to them).
 - **`pipeline` integration** — as each of the above lands, extend
   `internal/pipeline/host.go`/`internal/pipeline/web.go` to call it in the
-  order `methodology.md` lays out. `sensitive -content` itself is done (see
-  Shipped) but the WEB stage's `sensitive` call there still doesn't pass
-  `-content` — fetching every URL in a merged `gau` dump is enough added
-  traffic that it should be an opt-in `options` field, not the default.
+  order `methodology.md` lays out. ~~`sensitive -content` wiring~~ — done,
+  see Shipped (`options.contentScan`/`-content-scan`).
 - ~~Host↔web scope cross-link in `pipeline`~~ — done, see Shipped.
 
 ### Active testing & UX (from engagement notes, not started)
