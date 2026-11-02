@@ -30,6 +30,11 @@ import (
 // default since it turns one string-classification step into a request
 // per URL in what can be a very large gau dump.
 //
+// options.tlsx/-no-tlsx (on by default) widens the discovered-domain pool
+// with every explicit web target's certificate SAN/CN entries, alongside
+// crt.sh/active brute force -- one TLS handshake per target, the same
+// order of traffic as probe's own one request per target.
+//
 // hostScopeFile, when non-empty, is a plain IP/CIDR file built from the same
 // invocation's "host" targets (see pipeline.go). playbook.md's manual flow
 // runs every domain and subdomain it discovers through `scopecheck` against
@@ -68,15 +73,25 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	ds, steps = filterDomainsInScope(ds, hostScopeFile, outDir, "domains", steps)
 
 	// --- 01b: subdomains (passive always; active too if options.subdomainsWordlist
-	// is set), per domain, merged. Widens the domain list gau (below) and probe
-	// (next) operate on; robots/fuzz stay scoped to the explicit web targets, so
-	// discovering 50 subdomains doesn't silently blow up active traffic.
+	// is set), per domain, merged with tlsx's cert SAN/CN extraction (01d,
+	// below) into one discovered-names pool. Widens the domain list gau
+	// (below) and probe (next) operate on; robots/fuzz stay scoped to the
+	// explicit web targets, so discovering 50 subdomains doesn't silently
+	// blow up active traffic.
 	allDomains := append([]string(nil), ds...)
+	discovered := map[string]struct{}{}
+	var discoveredAll []string
+	addDiscovered := func(s string) {
+		if _, dup := discovered[s]; dup {
+			return
+		}
+		discovered[s] = struct{}{}
+		discoveredAll = append(discoveredAll, s)
+	}
+
 	if len(ds) == 0 {
 		steps = append(steps, skipStep("web", "subdomains", "", "no domains extracted from targets"))
 	} else {
-		discovered := map[string]struct{}{}
-		var discoveredAll []string
 		for _, d := range ds {
 			d := d
 			subFile := filepath.Join(outDir, "01b_subdomains_"+safeName(d)+".txt")
@@ -90,16 +105,27 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 				return subdomains.Run(subArgs)
 			}))
 			for _, s := range mustLines(subFile) {
-				if _, dup := discovered[s]; dup {
-					continue
-				}
-				discovered[s] = struct{}{}
-				discoveredAll = append(discoveredAll, s)
+				addDiscovered(s)
 			}
 		}
-		discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
-		allDomains = append(allDomains, discoveredAll...)
 	}
+
+	// --- 01d: tlsx (another passive-ish discovery source: a certificate's
+	// SAN/CN entries) over every explicit web target, on by default --
+	// options.tlsx/-no-tlsx. One TLS handshake per target is the same
+	// order of traffic as probe's own one HTTP request per target, not
+	// the "sends real exploitation-adjacent probes" category -easy-wins/
+	// -content-scan are opt-in for. A bare-IP web target still has a
+	// host:port to connect to, so this runs regardless of whether any
+	// domain was extracted above.
+	tlsxNames, tlsxSteps := tlsxWidenDomains(cfg, outDir)
+	steps = append(steps, tlsxSteps...)
+	for _, s := range tlsxNames {
+		addDiscovered(s)
+	}
+
+	discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
+	allDomains = append(allDomains, discoveredAll...)
 	allDomains = ioutil.DedupStrings(allDomains)
 
 	// --- 01c: probe (recon on root) for every domain + discovered subdomain ---
@@ -279,6 +305,29 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	}
 
 	return steps
+}
+
+// tlsxWidenDomains runs tlsx over every explicit web target (when
+// options.tlsx/-no-tlsx allows it) and returns the certificate SAN/CN
+// names it found, plus the steps recording each call -- for the caller to
+// merge into its own discovered-names pool alongside crt.sh/active brute
+// force. Returns (nil, nil) when disabled, so the caller's merge loop is a
+// no-op. Pulled out of runWebStage so it's testable without the real
+// domains/subdomains/probe/gau network calls that function makes.
+func tlsxWidenDomains(cfg *pipelineConfig, outDir string) (names []string, steps []stepResult) {
+	if !cfg.Options.tlsxOrDefault(true) {
+		return nil, nil
+	}
+	for _, e := range cfg.Web {
+		if e.Target == "" {
+			continue
+		}
+		target := baseURL(e.Target)
+		tlsxFile := filepath.Join(outDir, "01d_tlsx_"+safeName(target)+".txt")
+		steps = append(steps, runExternal("web", "tlsx", target, "tlsx", tlsxDiscoveryArgs(target), tlsxFile))
+		names = append(names, mustLines(tlsxFile)...)
+	}
+	return names, steps
 }
 
 // filterDomainsInScope is the host<->web scope cross-link: when

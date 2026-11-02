@@ -4,6 +4,47 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Chaining more ProjectDiscovery tools: `cdncheck`, `tlsx`; `katana` investigated, not shipped
+- **`cdncheck`** (on by default, `options.cdnCheck`/`-no-cdn-check`) — the
+  HOST stage now flags which of a ports group's IPs sit behind a known
+  CDN/WAF/cloud provider, informational only. A local dataset lookup with
+  no traffic to the target at all, unlike every other external-tool step
+  here, so there's nothing to opt into.
+- **`tlsx`** (on by default, `options.tlsx`/`-no-tlsx`) — the WEB stage
+  now extracts each explicit target's certificate SAN/CN entries and
+  merges them into the same discovered-domain pool `subdomains` widens,
+  through the same host↔web scopecheck cross-link. One TLS handshake per
+  target, the same order of traffic as `probe`'s own one request per
+  target.
+- **`katana` (active crawling) was investigated and deliberately NOT
+  shipped.** It would have been the highest-value addition on this list —
+  `gau`'s passive Wayback lookups miss everything that was never archived
+  — but in the sandbox this was built in, a trivial local crawl hung
+  indefinitely: it opened several parallel HTTPS connections through the
+  egress proxy to something unrelated to the crawl target before ever
+  reaching it, and no flag (including `-duc`) was found to prevent it.
+  Shipping an automated, unattended pipeline step on a tool observed
+  hanging, with no way to know whether a given deployment's own network
+  hits the same thing, wasn't worth the risk. **Still a real, open gap —
+  see Ideas/backlog below** for what adding it properly would need.
+- **`runExternal` now enforces a hard 5-minute wall-clock timeout on every
+  external-tool call** (`vulnx`, `nuclei`, `cdncheck`, `tlsx`, and any
+  future addition) — directly because of the `katana` finding above. Set
+  comfortably above `nucleiEasyWinsArgs`' own `-mt 3m` cap so a tool
+  winding down cleanly on its own schedule is never cut off first; only
+  matters for a tool that's hung or unexpectedly slow, which previously
+  had no backstop at all.
+- All four tools' exact flags (`vulnx`, `nuclei` from before, plus
+  `cdncheck`/`tlsx` here, and `katana`'s investigation) were verified
+  against binaries built with `go install .../cmd/<tool>@latest` and run
+  directly (`-h`, and live against local test listeners/a self-signed TLS
+  cert with SAN entries for `tlsx`), not just READMEs —
+  `docs.projectdiscovery.io` itself is blocked in this session's network
+  policy, so each tool's own GitHub README (via
+  `raw.githubusercontent.com`, which is reachable) was the source instead.
+  Install any of them with [pdtm](https://github.com/projectdiscovery/pdtm):
+  `pdtm -i vulnx,nuclei,cdncheck,tlsx`.
+
 ### WEB stage wiring for `sensitive -content` (`-content-scan`)
 - **`pipeline`'s WEB stage can now run `sensitive -content` over the
   merged `gau` URL list** instead of only ever filtering by extension —
@@ -376,9 +417,10 @@ Running log of what's shipped and what's queued, newest first.
 ### Methodology gaps (see [methodology.md](methodology.md))
 
 Native implementations, not external-tool integrations — `srt`'s policy is
-to reimplement what naabu/httpx/subfinder/katana/nuclei/dalfox would give
-us rather than shell out to them (vulnx is the one exception, now wired up
-— see Shipped above).
+to reimplement what naabu/httpx/subfinder/dalfox would give us rather than
+shell out to them. `vulnx`, `nuclei`, `cdncheck`, and `tlsx` are the four
+named exceptions, each wired up for its own reason — see Shipped above and
+methodology.md's External-tool policy.
 
 - **HOST**: ~~excluded-but-tracked hosts~~ — done, see Shipped.
   ~~BeanShell detection~~ — done, see Shipped (`portscan.IsBeanShellBanner`).
@@ -400,6 +442,36 @@ us rather than shell out to them (vulnx is the one exception, now wired up
   order `methodology.md` lays out. ~~`sensitive -content` wiring~~ — done,
   see Shipped (`options.contentScan`/`-content-scan`).
 - ~~Host↔web scope cross-link in `pipeline`~~ — done, see Shipped.
+
+### More ProjectDiscovery tool chaining (see Shipped above for `cdncheck`/`tlsx`)
+
+- **`katana` (active crawling)** — investigated, not shipped (see Shipped
+  above for why). Would widen `02_all_urls.txt` with URLs an active crawl
+  finds that were never archived to Wayback, which `gau` alone can't see.
+  Revisit if: a flag is found that actually prevents whatever background
+  fetch was hanging (worth re-testing against a newer release, or asking
+  upstream), or it's wired in with its own hard per-call timeout from the
+  start rather than relying only on `runExternal`'s backstop, and proven
+  not to hang across a few different real environments first.
+- **`dnsx`** — bulk DNS with more record types (TXT/CNAME/NS/MX/SOA) and
+  proper wildcard-domain filtering (`-auto-wildcard`), notably more
+  sophisticated than `srt resolve`'s own forward/reverse lookup. Would
+  mostly overlap with `resolve`/`subdomains` rather than add a clearly new
+  capability, which is why it wasn't picked for this pass over
+  `cdncheck`/`tlsx`.
+- **`mapcidr`** — CIDR aggregation (merge many ranges into the smallest
+  covering set) and filtering. Overlaps with `srt ipexpand`'s existing CIDR
+  expansion; aggregation specifically could help build/shrink a host scope
+  file, but isn't a gap `ipexpand` leaves open today.
+- **`asnmap`** — maps an ASN/org/domain to its CIDR ranges, which could
+  seed a HOST scope from just a company name. Requires a ProjectDiscovery
+  Cloud Platform API key for the CLI to work at all (not just
+  rate-limited-without-one like `vulnx`), which is real adoption friction
+  for a default-on or even default-off pipeline step — would need its own
+  config field for the key and a clear skip when it's absent.
+- **`uncover`** — aggregates Shodan/Censys/etc. searches for exposed
+  assets matching a query. Needs per-engine API keys to do anything useful,
+  same friction as `asnmap`; lower priority than the above.
 
 ### Active testing & UX (from engagement notes, not started)
 

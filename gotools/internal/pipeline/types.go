@@ -64,6 +64,8 @@ type pipelineOptions struct {
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
 	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default false -- sends real probes, not just passive recon)
 	ContentScan        *bool  `json:"contentScan,omitempty"`        // WEB stage: fetch every merged URL and scan its body for secrets (sensitive -content) instead of just classifying by extension (default false -- fetches every URL, not just inspects a string)
+	CDNCheck           *bool  `json:"cdnCheck,omitempty"`           // HOST stage: flag IPs behind a known CDN/WAF/cloud provider via cdncheck (default true -- a local dataset lookup, no traffic to the target at all)
+	TLSX               *bool  `json:"tlsx,omitempty"`               // WEB stage: widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (default true -- one TLS handshake per target, same order of traffic as probe)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -91,6 +93,20 @@ func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.EasyWins
+}
+
+func (o pipelineOptions) cdnCheckOrDefault(def bool) bool {
+	if o.CDNCheck == nil {
+		return def
+	}
+	return *o.CDNCheck
+}
+
+func (o pipelineOptions) tlsxOrDefault(def bool) bool {
+	if o.TLSX == nil {
+		return def
+	}
+	return *o.TLSX
 }
 
 func (o pipelineOptions) contentScanOrDefault(def bool) bool {

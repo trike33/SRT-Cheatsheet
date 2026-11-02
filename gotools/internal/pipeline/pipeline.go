@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "content-scan"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "content-scan", "no-cdn-check", "no-tlsx"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -55,6 +55,8 @@ func Run(args []string) error {
 	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
 	easyWins := fs.Bool("easy-wins", false, "HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (off by default -- sends real exploitation-adjacent probes, not just passive recon; same as options.easyWins in a JSON config)")
 	contentScan := fs.Bool("content-scan", false, "WEB stage: fetch every merged URL (gau's output) and scan its body for secrets/credentials (sensitive -content) instead of just classifying by extension (off by default -- fetches every URL in the list, not just a string; same as options.contentScan in a JSON config)")
+	noCDNCheck := fs.Bool("no-cdn-check", false, "HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default -- a local dataset lookup, no traffic to the target at all; same as options.cdnCheck:false in a JSON config)")
+	noTLSX := fs.Bool("no-tlsx", false, "WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (on by default -- one TLS handshake per target, same order of traffic as probe; same as options.tlsx:false in a JSON config)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -83,6 +85,14 @@ func Run(args []string) error {
 	if *contentScan {
 		enabled := true
 		cfg.Options.ContentScan = &enabled
+	}
+	if *noCDNCheck {
+		disabled := false
+		cfg.Options.CDNCheck = &disabled
+	}
+	if *noTLSX {
+		disabled := false
+		cfg.Options.TLSX = &disabled
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)

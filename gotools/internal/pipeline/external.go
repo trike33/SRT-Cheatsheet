@@ -2,11 +2,13 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 )
@@ -14,26 +16,53 @@ import (
 // This is the extension point for driving a third-party tool from the
 // pipeline. srt's policy (see docs/methodology.md) is to implement recon
 // steps natively rather than shell out to tools like naabu, httpx,
-// subfinder, katana, nuclei, or dalfox — the sanctioned exceptions are
-// vulnx (github.com/projectdiscovery/vulnx), used below for CVE lookups
-// from a grabbed service banner, and nuclei (github.com/projectdiscovery/
-// nuclei), used for the HOST stage's "easy wins" pass (default creds,
-// common misconfigs -- options.easyWins/-easy-wins, off by default since
-// it sends real exploitation-adjacent probes, not just passive recon).
-// A future external-tool step follows the same shape: runExternal with a
-// binary name and an argv.
+// subfinder, dalfox, ... -- the sanctioned exceptions, each with its own
+// reason, are: vulnx (CVE lookups from a grabbed banner), nuclei (the HOST
+// stage's "easy wins" pass -- options.easyWins/-easy-wins, off by default
+// since it sends real exploitation-adjacent probes), cdncheck (flagging a
+// known CDN/WAF/cloud IP -- on by default, a local dataset lookup with no
+// traffic to the target), and tlsx (widening the discovered-domain pool
+// with cert SAN/CN entries -- on by default, one TLS handshake per target,
+// the same order of traffic as `probe`). A future external-tool step
+// follows the same shape: runExternal with a binary name and an argv.
+//
+// katana (active crawling) was investigated for this same list and is
+// deliberately NOT wired in: in this environment's sandbox it hung
+// indefinitely on a trivial local crawl, opening parallel HTTPS
+// connections through the egress proxy unrelated to the crawl target
+// before ever reaching it -- `-duc` didn't prevent it, and there's no
+// flag that visibly does. Shipping an automated pipeline step that can
+// hang a run indefinitely, with no way to know whether a given
+// deployment's own network hits the same thing, isn't an acceptable
+// trade for what it would add. See ROADMAP.md.
+
+// externalToolTimeout is a hard, last-resort wall-clock cap on every
+// external-tool invocation below, independent of whatever timeout/rate
+// flags that tool's own argv already sets. It exists because at least one
+// candidate for this list (katana) was observed hanging indefinitely on a
+// trivial, fully-local invocation in a sandboxed environment -- a stuck
+// external tool must never be able to hang an entire pipeline run. Set
+// comfortably above the slowest of this file's own argv-builders'
+// internal caps (nucleiEasyWinsArgs' `-mt 3m`) so a tool winding down
+// cleanly on its own schedule is never cut off first.
+var externalToolTimeout = 5 * time.Minute // var (not const) so tests can lower it
 
 // runExternal looks up bin on PATH and, if found, runs it with args, writing
 // its stdout to outFile and logging its stderr via warn(). If bin isn't
 // installed, it reports a "skipped" stepResult instead of failing the whole
 // pipeline run — an uninstalled optional tool should never abort an
-// engagement.
+// engagement. The process is killed if it's still running after
+// externalToolTimeout, so a hung or unexpectedly slow tool can't stall the
+// run indefinitely either.
 func runExternal(kind, name, target, bin string, args []string, outFile string) stepResult {
 	if _, err := exec.LookPath(bin); err != nil {
 		return skipStep(kind, name, target, "external tool \""+bin+"\" not found on PATH")
 	}
 	return runStep(kind, name, target, outFile, func() error {
-		cmd := exec.Command(bin, args...)
+		ctx, cancel := context.WithTimeout(context.Background(), externalToolTimeout)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, bin, args...)
 		out, err := os.Create(outFile)
 		if err != nil {
 			return err
@@ -47,6 +76,9 @@ func runExternal(kind, name, target, bin string, args []string, outFile string) 
 			if l != "" {
 				ioutil.Warn("%s: %s", bin, l)
 			}
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("killed after exceeding the %s safety timeout (hung or unexpectedly slow)", externalToolTimeout)
 		}
 		return runErr
 	})
@@ -163,4 +195,25 @@ func nucleiEasyWinsArgs(host string, port int) []string {
 		"-silent",
 		"-j",
 	}
+}
+
+// cdncheckArgs builds the HOST stage's cdncheck invocation for one ports
+// group's expanded IP list (ipListFile, one IP per line -- cdncheck's -i
+// takes a file path directly, verified against the real CLI). JSON lines
+// output includes only IPs it actually matched a CDN/WAF/cloud provider
+// for, not a line per input, so the output file's own line count is the
+// hit count. -duc skips its per-run update-check call; this is otherwise a
+// local dataset lookup with no live traffic to the target.
+func cdncheckArgs(ipListFile string) []string {
+	return []string{"-i", ipListFile, "-jsonl", "-silent", "-duc"}
+}
+
+// tlsxDiscoveryArgs builds the WEB stage's tlsx invocation that extracts
+// one target's certificate SAN/CN entries for widening the
+// discovered-domain pool (verified against the real CLI: -u accepts a full
+// URL directly, not just a bare host, and resolves the port/scheme from
+// it). -resp-only -silent gives one hostname per line with nothing else to
+// parse, the same bare-list shape the subdomains step's own output has.
+func tlsxDiscoveryArgs(target string) []string {
+	return []string{"-u", target, "-san", "-cn", "-resp-only", "-silent", "-duc"}
 }

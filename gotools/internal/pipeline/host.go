@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/ipexpand"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/portscan"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/resolve"
@@ -17,6 +18,9 @@ import (
 // config.Host entries, writing output under outDir ("<outputDir>/host/"):
 //
 //	ipexpand -> resolve (reverse DNS, informational) -> portscan
+//	  -> cdncheck (options.cdnCheck, on by default): flag IPs behind a
+//	     known CDN/WAF/cloud provider -- informational, a local dataset
+//	     lookup with no traffic to the target
 //	  -> classify each open port:
 //	       web service  -> handed off to the WEB stage (webHandoff)
 //	       other service -> flagged if it's an uncommon/specialty port or
@@ -24,7 +28,7 @@ import (
 //	                        looked up via vulnx (github.com/
 //	                        projectdiscovery/vulnx); with options.easyWins
 //	                        (off by default), also a conservative nuclei
-//	                        default-login/misconfig/exposure pass. Both
+//	                        default-login/misconfig/exposure pass. All
 //	                        external tools skip cleanly if not installed.
 //
 // Entries are grouped by their effective "ports" value (entry.Ports ->
@@ -101,6 +105,25 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 		steps = append(steps, runStep("host", "portscan", ports, portscanFile, func() error {
 			return portscan.Run(append([]string{"-l", expandFile, "-p", ports, "-json", "-o", portscanFile}, resumeStateArgs(portscanFile)...))
 		}))
+
+		// cdncheck: flag which of this group's IPs sit behind a known
+		// CDN/WAF/cloud provider -- on by default (options.cdnCheck), since
+		// it's a local dataset lookup with no traffic to the target at all,
+		// unlike every opt-in step below. Informational only: it doesn't
+		// change what gets scanned, just what the operator sees about it
+		// (an "open" web port that's actually a CDN edge, not the origin,
+		// is worth knowing before testing it). Skips cleanly if cdncheck
+		// isn't installed.
+		if cfg.Options.cdnCheckOrDefault(true) {
+			cdnFile := filepath.Join(outDir, fmt.Sprintf("03b_cdncheck_%d.json", gi))
+			sr := runExternal("host", "cdncheck", ports, "cdncheck", cdncheckArgs(expandFile), cdnFile)
+			if sr.Status == "ok" {
+				if n := len(mustLines(cdnFile)); n > 0 {
+					ioutil.Warn("cdncheck %s: %d IP(s) behind a known CDN/WAF/cloud provider, see %s", ports, n, cdnFile)
+				}
+			}
+			steps = append(steps, sr)
+		}
 
 		results, err := readScanResults(portscanFile)
 		if err != nil {

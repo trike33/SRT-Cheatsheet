@@ -12,8 +12,8 @@ the tracked list.
 ## External-tool policy
 
 `srt` does not shell out to third-party recon tools (naabu, httpx,
-subfinder, katana, dalfox, ...). Where the methodology below needs what one
-of those would normally provide, the plan is to implement it natively in
+subfinder, dalfox, ...). Where the methodology below needs what one of
+those would normally provide, the plan is to implement it natively in
 Go — porting the useful logic from existing open-source discovery projects
 where that saves work, but not invoking their binaries or calling out to
 their APIs at runtime — so `srt` stays a single static binary for every
@@ -22,10 +22,13 @@ dependency, `golang.org/x/term`, for the interactive `shell`'s line editor
 — unrelated to this policy, which is about not shelling out to *other
 recon tools*, not about the build staying stdlib-only forever.)
 
-**vulnx and nuclei are the two exceptions**, both kept as external calls via
-the `runExternal` hook already built in `gotools/internal/pipeline/
+**Four named ProjectDiscovery tools are the exceptions**, each kept as an
+external call via the `runExternal` hook in `gotools/internal/pipeline/
 external.go` (looks the binary up on `PATH`, skips cleanly if it's missing
-— never aborts a run over an optional tool):
+— never aborts a run over an optional tool). Install any of them with
+[pdtm](https://github.com/projectdiscovery/pdtm), ProjectDiscovery's own
+tool manager (`go install -v github.com/projectdiscovery/pdtm/cmd/pdtm@latest`,
+then `pdtm -i vulnx,nuclei,cdncheck,tlsx`):
 
 - **vulnx** — CVE lookups from a grabbed service/software version.
 - **nuclei** — the HOST stage's "easy wins" pass (default creds, common
@@ -36,6 +39,33 @@ external.go` (looks the binary up on `PATH`, skips cleanly if it's missing
   database, so it's **opt-in** (`options.easyWins`/`-easy-wins`, off by
   default) and its traffic is kept deliberately bounded regardless (see
   [pipeline.md](pipeline.md)'s classify-services step for the exact flags).
+- **cdncheck** — flags a HOST-stage IP as a known CDN/WAF/cloud provider.
+  A local dataset lookup with no traffic to the target at all, so it's
+  **on by default** (`options.cdnCheck`/`-no-cdn-check` to disable) —
+  informational only, it doesn't change what gets scanned, just tells the
+  operator when an "open" port is actually a CDN edge rather than the
+  origin.
+- **tlsx** — widens the WEB stage's discovered-domain pool with each
+  target's certificate SAN/CN entries, alongside crt.sh/active brute
+  force. One TLS handshake per target is the same order of traffic as
+  `probe`'s own one request per target, so it's **on by default**
+  (`options.tlsx`/`-no-tlsx` to disable).
+
+**katana (active crawling) was evaluated for this list and deliberately
+NOT added.** In the sandbox this was developed in, a trivial local crawl
+(`katana -u http://127.0.0.1:<port>`) hung indefinitely: it opened several
+parallel HTTPS connections through the egress proxy to something unrelated
+to the crawl target before ever reaching it, and `-duc`
+(disable-update-check) didn't prevent it — no flag found did. `runExternal`
+now enforces a hard 5-minute wall-clock timeout on every external-tool
+call specifically because of this finding (so a future addition, or an
+environment where katana behaves differently, can't hang a whole pipeline
+run either way), but shipping an *automated, unattended* pipeline step
+built on a tool that was directly observed hanging — with no way to know
+whether a given deployment's own network hits the same thing — wasn't a
+trade worth making. Crawling for endpoints (what katana would add over
+`gau`'s passive Wayback lookups) stays a genuine, open methodology gap; see
+[ROADMAP.md](ROADMAP.md).
 
 ## HOST
 

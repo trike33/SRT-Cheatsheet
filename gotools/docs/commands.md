@@ -607,6 +607,8 @@ Full guide in [pipeline.md](pipeline.md).
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-easy-wins` | off | HOST stage: conservative nuclei default-login/misconfig/exposure pass on non-web ports (sends real probes — opt-in) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (opt-in) |
+| `-no-cdn-check` | off | HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default — local dataset lookup, no traffic to the target) |
+| `-no-tlsx` | off | WEB stage: don't widen the discovered-domain pool with cert SAN/CN entries via tlsx (on by default — one TLS handshake per target) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` is required; combining them

@@ -35,6 +35,8 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-easy-wins` | off | HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (same as `options.easyWins`) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
+| `-no-cdn-check` | off | HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (same as `options.cdnCheck:false`) |
+| `-no-tlsx` | off | WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (same as `options.tlsx:false`) |
 | `-color` | `auto` | `auto` \| `always` \| `never` |
 
 At least one of `-c`, `-host-file`, `-web-scope` must be given; all three
@@ -91,7 +93,9 @@ exact Burp include/exclude rules, not just a flattened host list.
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
     "easyWins": false,
-    "contentScan": false
+    "contentScan": false,
+    "cdnCheck": true,
+    "tlsx": true
   }
 }
 ```
@@ -124,6 +128,29 @@ exact Burp include/exclude rules, not just a flattened host list.
   `gau` dump can be thousands of URLs, and this turns a string
   classification into a request per URL; `options.concurrency`, if set,
   caps how many run at once, the same way it already does for `fuzz`.
+- `options.cdnCheck` (also `-no-cdn-check` to disable; options-only, no
+  per-target override) flags which HOST-stage IPs sit behind a known
+  CDN/WAF/cloud provider, via [cdncheck](https://github.com/
+  projectdiscovery/cdncheck). **On by default** — unlike every other
+  external-tool step here, it's a local dataset lookup with no traffic to
+  the target at all, so there's nothing to opt into. Informational only:
+  it doesn't change what gets scanned.
+- `options.tlsx` (also `-no-tlsx` to disable; options-only, no per-target
+  override) widens the WEB stage's discovered-domain pool with each
+  explicit target's certificate SAN/CN entries, via [tlsx](https://github.
+  com/projectdiscovery/tlsx) — another source alongside crt.sh/active
+  brute force. **On by default** — one TLS handshake per target is the
+  same order of traffic as `probe`'s own one request per target, not the
+  "real exploitation-adjacent probes" category `easyWins`/`contentScan`
+  are opt-in for.
+
+Install `vulnx`/`nuclei`/`cdncheck`/`tlsx` with [pdtm](https://github.com/
+projectdiscovery/pdtm), ProjectDiscovery's tool manager: `go install -v
+github.com/projectdiscovery/pdtm/cmd/pdtm@latest`, then `pdtm -i
+vulnx,nuclei,cdncheck,tlsx` (installs to `$HOME/.pdtm/go/bin`, added to
+`PATH` by default). Each step **skips cleanly** with a `"skipped"` status
+if its tool isn't on `PATH` — nothing here is required for the rest of the
+pipeline to run.
 
 ### Per-target fields (object form)
 
@@ -149,6 +176,11 @@ spec only runs once:
    methodology's "DNS check" for included hosts).
 3. `portscan` — scan that group's port spec (see [`portscan`'s
    docs](commands.md#portscan) for what `-p` accepts).
+3b. `cdncheck` (github.com/projectdiscovery/cdncheck), **on by default** —
+   `options.cdnCheck`/`-no-cdn-check` to disable: flags which of the
+   group's IPs sit behind a known CDN/WAF/cloud provider. A local dataset
+   lookup, no traffic to the target at all; purely informational, doesn't
+   change what gets scanned. **Skipped** if `cdncheck` isn't installed.
 4. Classify each open port:
    - **Web service** (a recognized HTTP(S) port) → added to the targets the
      `web` stage below runs against, automatically — this is the "hand off
@@ -220,10 +252,19 @@ stage discovered and handed off (written to a `web/` subfolder of that
    `robots`/`fuzz` stay scoped to the explicit `web` targets, so this never
    silently multiplies active traffic (see [ROADMAP.md](ROADMAP.md) for
    making that opt-in-expandable).
-3b. `scopecheck` again — the newly discovered subdomains go through the same
-   host-scope filter before being merged into the domain list, matching
-   `playbook.md`'s "subdomains ... kept in scope, then probed." Same
-   skip/fail-open behavior as step 2.
+3b. `tlsx` (github.com/projectdiscovery/tlsx), **on by default** —
+   `options.tlsx`/`-no-tlsx` to disable: per explicit `web` target, a
+   certificate SAN/CN extraction widening the same discovered-names pool
+   subdomains does -- `-san -cn -resp-only`. One TLS handshake per target,
+   the same order of traffic as step 4 (`probe`)'s own one request per
+   target. Runs regardless of whether step 1 extracted a domain (a bare-IP
+   target still has a host:port to connect to). **Skipped** if `tlsx`
+   isn't installed.
+3c. `scopecheck` again — the newly discovered subdomains (step 3) and
+   tlsx names (step 3b) together go through the same host-scope filter
+   before being merged into the domain list, matching `playbook.md`'s
+   "subdomains ... kept in scope, then probed." Same skip/fail-open
+   behavior as step 2.
 4. `probe` — recon-on-root (title/status/content-length/`Server`/tech-detect)
    for every domain and discovered subdomain. **Skipped** if none exist.
 5. `gau` — per domain **and** discovered subdomain, archived URLs from the
@@ -253,6 +294,7 @@ it never aborts the run.
     01_ipexpand_<n>.txt
     02_resolve_<n>.txt       # reverse DNS
     03_portscan_<n>.json
+    03b_cdncheck_<n>.json    # one per ports group, only without -no-cdn-check
     vulnx_<host:port>.json   # one per flagged non-web port with a banner
     easywins_<host:port>.json  # one per non-web open port, only with options.easyWins
     web/                      # web services the host stage discovered,
@@ -263,7 +305,8 @@ it never aborts the run.
     scopecheck_domains_in.txt     # host<->web cross-link; only when "host" targets exist
     scopecheck_domains_out.txt    #   (in = pre-filter, out = kept-in-scope)
     01b_subdomains_<domain>.txt  # one per domain
-    scopecheck_subdomains_in.txt  # same cross-link, over discovered subdomains
+    01d_tlsx_<target>.txt    # one per explicit web target, only without -no-tlsx
+    scopecheck_subdomains_in.txt  # same cross-link, over subdomains + tlsx names
     scopecheck_subdomains_out.txt
     01c_probe_targets.txt
     01c_probe.json
