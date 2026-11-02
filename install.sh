@@ -6,7 +6,7 @@
 #   sudo ./install.sh
 #   ./install.sh --local-build            # clone + compile instead (needs git, Go 1.24+)
 #   curl -fsSL .../install.sh | bash -s -- --local-build
-#   sudo ./install.sh --with-pd           # also install vulnx/nuclei/cdncheck/tlsx via pdtm
+#   sudo ./install.sh --with-pd           # also install vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx via pdtm
 #
 # --with-pd installs (building pdtm with Go if missing) the ProjectDiscovery
 # tools the pipeline can use, as the invoking user (SUDO_USER), not root.
@@ -44,7 +44,7 @@ done
 # Duplicated in install.sh / update.sh / uninstall.sh on purpose: each one has
 # to work standalone via `curl | bash`. Runs as the invoking user (SUDO_USER
 # when under sudo) so the tools land in *their* ~/.pdtm, not root's.
-PD_TOOLS="vulnx,nuclei,cdncheck,tlsx"
+PD_TOOLS="vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx"
 
 # pd_run <-i|-u|-r> <bootstrap 0|1>
 pd_run() {

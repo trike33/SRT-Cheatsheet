@@ -27,7 +27,7 @@ import (
 //	                        BeanShell by banner; a grabbed banner gets
 //	                        looked up via vulnx (github.com/
 //	                        projectdiscovery/vulnx); with options.easyWins
-//	                        (off by default), also a conservative nuclei
+//	                        (on by default), also a conservative nuclei
 //	                        default-login/misconfig/exposure pass. All
 //	                        external tools skip cleanly if not installed.
 //
@@ -161,12 +161,12 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 				steps = append(steps, runExternal("host", "vulnx", target, "vulnx",
 					vulnxSearchArgs(r.Banner), vulnxFile))
 			}
-			if cfg.Options.easyWinsOrDefault(false) && !portscan.IsWebPort(r.Port) {
+			if cfg.Options.easyWinsOrDefault(true) && !portscan.IsWebPort(r.Port) {
 				// methodology.md's "easy wins" pass: default creds, common
-				// misconfigs. Off by default (options.easyWins/-easy-wins) --
-				// unlike vulnx above, this sends real probes against the
-				// service, not a lookup against a third-party API, so it's
-				// opt-in and kept deliberately rate-limited regardless (see
+				// misconfigs. On by default (options.easyWins/-no-easy-wins to
+				// disable) -- unlike vulnx above, this sends real probes
+				// against the service, not a lookup against a third-party
+				// API, so it's kept deliberately rate-limited (see
 				// nucleiEasyWinsArgs). Runs independent of whether a banner
 				// was grabbed: nuclei's own templates identify the service.
 				target := fmt.Sprintf("%s:%d", r.Host, r.Port)

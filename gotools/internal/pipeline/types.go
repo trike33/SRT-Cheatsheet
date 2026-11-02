@@ -62,7 +62,9 @@ type pipelineOptions struct {
 	Proxy              string `json:"proxy,omitempty"`
 	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); passive (crt.sh) always runs regardless
-	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default false -- sends real probes, not just passive recon)
+	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default true; rate-limited and bounded -- set false to avoid sending probes beyond recon)
+	Subfinder          *bool  `json:"subfinder,omitempty"`          // WEB stage: passive subdomain discovery via subfinder (default true -- queries third-party sources, no traffic to the target)
+	Permutations       *bool  `json:"permutations,omitempty"`       // WEB stage: alterx permutations of discovered names, resolved with dnsx (default false -- multiplies DNS queries)
 	ContentScan        *bool  `json:"contentScan,omitempty"`        // WEB stage: fetch every merged URL and scan its body for secrets (sensitive -content) instead of just classifying by extension (default false -- fetches every URL, not just inspects a string)
 	CDNCheck           *bool  `json:"cdnCheck,omitempty"`           // HOST stage: flag IPs behind a known CDN/WAF/cloud provider via cdncheck (default true -- a local dataset lookup, no traffic to the target at all)
 	TLSX               *bool  `json:"tlsx,omitempty"`               // WEB stage: widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (default true -- one TLS handshake per target, same order of traffic as probe)
@@ -93,6 +95,20 @@ func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.EasyWins
+}
+
+func (o pipelineOptions) subfinderOrDefault(def bool) bool {
+	if o.Subfinder == nil {
+		return def
+	}
+	return *o.Subfinder
+}
+
+func (o pipelineOptions) permutationsOrDefault(def bool) bool {
+	if o.Permutations == nil {
+		return def
+	}
+	return *o.Permutations
 }
 
 func (o pipelineOptions) cdnCheckOrDefault(def bool) bool {

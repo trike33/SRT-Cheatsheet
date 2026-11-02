@@ -9,13 +9,12 @@ Targets come from a JSON config file (`-c`), a plain IP/CIDR list
 see [No JSON config needed](#no-json-config-needed) if you only have a
 plain host list and/or a Burp scope file.
 
-It's still a subset of the full methodology — a few steps (Google dorking,
-context-aware wordlist generation, a native "easy wins" misconfiguration
-pass, ...) aren't implemented yet, and one that is (`sensitive -content`'s
-content-based secret/credential classification) isn't wired into the WEB
-stage's `sensitive` call here yet — run it by hand over `web/02_all_urls.txt`
-for now. See [The methodology this is meant to
-drive](#the-methodology-this-is-meant-to-drive) below.
+It's still a subset of the full methodology — a few steps (active crawling,
+Google dorking, context-aware wordlist generation, parameter
+fuzzing/guessing, DNS brute force for HOST, ...) aren't implemented yet.
+The "easy wins" pass (a direct, rate-limited `nuclei` call, on by default) and content-based
+secret scanning (`-content-scan`) are both wired in. See [The methodology
+this is meant to drive](#the-methodology-this-is-meant-to-drive) below.
 
 ## Quick start
 
@@ -33,7 +32,9 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-o` | `options.outputDir`, else `srt-pipeline-out` | output directory |
 | `-dry-run` | off | print the planned targets/steps and exit — sends no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
-| `-easy-wins` | off | HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (same as `options.easyWins`) |
+| `-no-easy-wins` | off | HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default; same as `options.easyWins:false`). `-easy-wins` is accepted as a deprecated no-op. |
+| `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (same as `options.subfinder:false`) |
+| `-permutations` | off | WEB stage: alterx permutations of the discovered names, resolved with dnsx (same as `options.permutations`) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (same as `options.contentScan`) |
 | `-no-cdn-check` | off | HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (same as `options.cdnCheck:false`) |
 | `-no-tlsx` | off | WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (same as `options.tlsx:false`) |
@@ -92,7 +93,9 @@ exact Burp include/exclude rules, not just a flattened host list.
     "ports": "common,uncommon",
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
-    "easyWins": false,
+    "easyWins": true,
+    "subfinder": true,
+    "permutations": false,
     "contentScan": false,
     "cdnCheck": true,
     "tlsx": true
@@ -114,13 +117,25 @@ exact Burp include/exclude rules, not just a flattened host list.
   label wordlist (`www`, `api`, `dev`, ...) that turns on active DNS
   brute-force subdomain enumeration alongside the passive crt.sh lookup that
   always runs. Omit it to stay passive-only.
-- `options.easyWins` (also `-easy-wins`; options-only, no per-target
-  override) turns on the HOST stage's nuclei default-login/misconfig/
-  exposure pass over non-web open ports. **Off by default** — unlike every
-  other step here, this sends real exploitation-adjacent probes at the
-  service, not just passive recon, so it's opt-in rather than
-  auto-enabled the way `vulnx` is. See [Steps](#steps) below for exactly
-  what it runs and how its traffic is bounded.
+- `options.easyWins` (also `-no-easy-wins` to disable; options-only, no
+  per-target override) controls the HOST stage's nuclei default-login/
+  misconfig/exposure pass over non-web open ports. **On by default.**
+  Unlike most steps here it sends real probes at the service, not just
+  passive recon, so its traffic is deliberately bounded (see
+  [Steps](#steps) below for exactly what it runs) — set it to `false`
+  (or pass `-no-easy-wins`) for an engagement whose rules forbid probing
+  beyond recon.
+- `options.subfinder` (also `-no-subfinder`; options-only) adds
+  [subfinder](https://github.com/projectdiscovery/subfinder)'s passive
+  sources to subdomain discovery. **On by default** — third-party lookups
+  only, no traffic to the target, same category as crt.sh.
+- `options.permutations` (also `-permutations`; options-only) feeds the
+  names found so far to [alterx](https://github.com/projectdiscovery/alterx)
+  (capped at 2000 permutations per domain), resolves them with
+  [dnsx](https://github.com/projectdiscovery/dnsx) and drops wildcard
+  answers. **Off by default** — every permutation is a DNS query.
+  `options.subdomainsWordlist` also turns on a dnsx brute force (with
+  wildcard filtering) alongside the native one.
 - `options.contentScan` (also `-content-scan`; options-only, no per-target
   override) switches the WEB stage's `sensitive` step from extension-based
   filtering to fetching every URL in the merged `gau` list and scanning its
@@ -144,10 +159,10 @@ exact Burp include/exclude rules, not just a flattened host list.
   "real exploitation-adjacent probes" category `easyWins`/`contentScan`
   are opt-in for.
 
-Install `vulnx`/`nuclei`/`cdncheck`/`tlsx` with [pdtm](https://github.com/
+Install `vulnx`/`nuclei`/`cdncheck`/`tlsx`/`subfinder`/`dnsx`/`alterx` with [pdtm](https://github.com/
 projectdiscovery/pdtm), ProjectDiscovery's tool manager: `go install -v
 github.com/projectdiscovery/pdtm/cmd/pdtm@latest`, then `pdtm -i
-vulnx,nuclei,cdncheck,tlsx` (installs to `$HOME/.pdtm/go/bin`, added to
+vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx` (installs to `$HOME/.pdtm/go/bin`, added to
 `PATH` by default). `install.sh --with-pd` does this for you,
 `update.sh --with-pd` runs `pdtm -u`, and `uninstall.sh --purge-pd` runs
 `pdtm -r` (pdtm itself is kept). Each step **skips cleanly** with a `"skipped"` status
@@ -202,15 +217,15 @@ spec only runs once:
      the banner itself. **Skipped** if `vulnx` isn't installed, never fails
      the run. Runs alongside `flag-uncommon-service`/`flag-beanshell` above,
      not instead of them.
-   - Every non-web open port, **only with `options.easyWins`/`-easy-wins`**
-     (off by default) → a `nuclei` step (github.com/projectdiscovery/nuclei):
+   - Every non-web open port, **unless disabled with `options.easyWins:false`/
+     `-no-easy-wins`** (on by default) → a `nuclei` step (github.com/projectdiscovery/nuclei):
      `-tags default-login,exposure,misconfig -etags dos,fuzz,intrusive`,
      deliberately rate-limited (`-rl 10 -c 3 -bs 1 -timeout 5 -mt 3m`) so an
      automated, unattended pipeline step can't turn into an unbounded scan
      of one target. This is methodology.md's "easy wins" pass (default
      creds, common misconfigs) — unlike `vulnx`, it sends real probes at
      the service rather than querying a third-party database, which is
-     exactly why it needs an explicit opt-in. **Skipped** if `nuclei` isn't
+     exactly why its traffic is capped and it can be turned off. **Skipped** if `nuclei` isn't
      installed; also needs its templates fetched once (`nuclei -ut`) —
      `-duc` only disables nuclei's own update-check network call on every
      run, it doesn't bootstrap templates from nothing.
@@ -262,6 +277,14 @@ stage discovered and handed off (written to a `web/` subfolder of that
    target. Runs regardless of whether step 1 extracted a domain (a bare-IP
    target still has a host:port to connect to). **Skipped** if `tlsx`
    isn't installed.
+3b2. `subfinder` / `dnsx` / `alterx` (ProjectDiscovery), per domain, each
+   skipped cleanly if not installed: **subfinder** (on by default,
+   `-no-subfinder`) adds passive sources; with `options.subdomainsWordlist`
+   set, **dnsx** brute-forces `<word>.<domain>` and a second `dnsx -wd` pass
+   drops wildcard answers (the native brute force can't tell those from real
+   hosts); with `options.permutations`/`-permutations` (off by default),
+   **alterx** permutes the names found so far and dnsx resolves and
+   wildcard-filters them. Results join the same discovered-names pool.
 3c. `scopecheck` again — the newly discovered subdomains (step 3) and
    tlsx names (step 3b) together go through the same host-scope filter
    before being merged into the domain list, matching `playbook.md`'s
@@ -277,7 +300,9 @@ stage discovered and handed off (written to a `web/` subfolder of that
    `options.contentScan`/`-content-scan` (off by default) it instead fetches
    every URL and scans the body for secrets (`sensitive -content`), writing
    `03_sensitive.json` instead of `03_sensitive.txt`.
-7. `robots` — per target, fetch `robots.txt` and probe its paths.
+7. `robots` — per target, fetch `robots.txt` and probe its paths, plus the
+   same-host URLs of the sitemap(s) it declares (or `/sitemap.xml`), capped
+   at 100 per target.
 8. `fuzz` — per target with a resolved wordlist (see the field table above).
    **Skipped** per-target if no wordlist resolves.
 9. `snyk` — per target that sets both `snykUrl` and `snykVersion`.
@@ -298,7 +323,7 @@ it never aborts the run.
     03_portscan_<n>.json
     03b_cdncheck_<n>.json    # one per ports group, only without -no-cdn-check
     vulnx_<host:port>.json   # one per flagged non-web port with a banner
-    easywins_<host:port>.json  # one per non-web open port, only with options.easyWins
+    easywins_<host:port>.json  # one per non-web open port, unless options.easyWins is false
     web/                      # web services the host stage discovered,
       ...                     #   same layout as the top-level web/ below
   web/
@@ -307,6 +332,7 @@ it never aborts the run.
     scopecheck_domains_in.txt     # host<->web cross-link; only when "host" targets exist
     scopecheck_domains_out.txt    #   (in = pre-filter, out = kept-in-scope)
     01b_subdomains_<domain>.txt  # one per domain
+    01e_*_<domain>.txt           # subfinder / dnsx / alterx steps, when installed
     01d_tlsx_<target>.txt    # one per explicit web target, only without -no-tlsx
     scopecheck_subdomains_in.txt  # same cross-link, over subdomains + tlsx names
     scopecheck_subdomains_out.txt
@@ -359,11 +385,11 @@ skipped:
 Today's `host`/`web` stages implement most of the flow described in
 [methodology.md](methodology.md) — port scanning, reverse DNS, service
 classification, the web hand-off, subdomain enumeration, recon-on-root,
-the host↔web IP-scope cross-link, and vulnx CVE lookups are all there. A
-few pieces aren't implemented yet: context-aware wordlist generation,
-Google dorking, and a native "easy wins" misconfiguration pass; wiring
-`sensitive`'s content-based classification (`-content`) into this stage is
-also still open (the command itself already does it). As each lands it
+the host↔web IP-scope cross-link, vulnx CVE lookups, the nuclei "easy
+wins" pass, cdncheck/tlsx enrichment, sitemap-aware `robots` and
+content-based secret scanning are all there. A few pieces aren't
+implemented yet: active crawling, Google dorking, context-aware wordlist
+generation, parameter fuzzing/guessing and DNS brute force for HOST. As each lands it
 gets added to `internal/pipeline/host.go`/`internal/pipeline/web.go` in
 the order `methodology.md` lays out. See [ROADMAP.md](ROADMAP.md) for what's
 queued.

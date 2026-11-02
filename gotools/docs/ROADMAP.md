@@ -4,6 +4,29 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Easy wins on by default; subfinder/dnsx/alterx DNS discovery
+- **The nuclei "easy wins" pass is now on by default** (`options.easyWins:false`
+  or `-no-easy-wins` to disable; `-easy-wins` stays as a deprecated no-op).
+  Its flags are unchanged: rate-limited, `-etags dos,fuzz,intrusive`, no
+  OAST, 3-minute cap per target.
+- **WEB-stage subdomain discovery now chains ProjectDiscovery's DNS tools**,
+  each skipped cleanly if not installed: **subfinder** (passive, on by
+  default, `-no-subfinder`); **dnsx** brute force when
+  `options.subdomainsWordlist` is set, followed by a `-wd` wildcard-filter
+  pass; **alterx** permutations resolved by dnsx (opt-in,
+  `-permutations`, capped at 2000 per domain). This is the methodology's
+  HOST "DNS brute force" gap, delivered through the host↔web cross-link:
+  names found are scope-checked against the host IP scope before use.
+  `install.sh`/`update.sh`/`uninstall.sh --with-pd` manage all seven tools.
+
+### `robots`: sitemap handling
+- `srt robots` (and the pipeline's WEB `robots` step) now also reads
+  `Sitemap:` directives from robots.txt, falling back to `/sitemap.xml`,
+  follows sitemap indexes (2 levels, 25 files max) and gzipped sitemaps, and
+  probes the listed URLs under a `[Sitemap]` section. Same-host only (a
+  sitemap can list anything; it must not widen what gets probed), capped at
+  `-sitemap-max` (default 100) per base, `-no-sitemap` to disable.
+
 ### Chaining more ProjectDiscovery tools: `cdncheck`, `tlsx`; `katana` investigated, not shipped
 - **`cdncheck`** (on by default, `options.cdnCheck`/`-no-cdn-check`) — the
   HOST stage now flags which of a ports group's IPs sit behind a known
@@ -453,12 +476,11 @@ methodology.md's External-tool policy.
   upstream), or it's wired in with its own hard per-call timeout from the
   start rather than relying only on `runExternal`'s backstop, and proven
   not to hang across a few different real environments first.
-- **`dnsx`** — bulk DNS with more record types (TXT/CNAME/NS/MX/SOA) and
-  proper wildcard-domain filtering (`-auto-wildcard`), notably more
-  sophisticated than `srt resolve`'s own forward/reverse lookup. Would
-  mostly overlap with `resolve`/`subdomains` rather than add a clearly new
-  capability, which is why it wasn't picked for this pass over
-  `cdncheck`/`tlsx`.
+- **`dnsx` (more record types)** — brute force, resolution and wildcard
+  filtering are now wired (see Shipped); still open: TXT/CNAME/NS/MX/SOA
+  record collection, which `srt resolve` doesn't do.
+- **`shuffledns`** — massDNS-based brute force for very large wordlists;
+  needs massdns and a resolver list, so it wasn't chosen over dnsx.
 - **`mapcidr`** — CIDR aggregation (merge many ranges into the smallest
   covering set) and filtering. Overlaps with `srt ipexpand`'s existing CIDR
   expansion; aggregation specifically could help build/shrink a host scope

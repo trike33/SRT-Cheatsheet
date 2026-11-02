@@ -374,6 +374,10 @@ echo "https://target/uploads/" | srt dirlist -o loot.txt
 
 Fetch `robots.txt` and probe every `Allow`/`Disallow` path, printing
 `url [status] [length]` (green for 200). Wildcard (`*`) entries are skipped.
+It also reads the sitemap(s) robots.txt declares via `Sitemap:` (or
+`/sitemap.xml` when none are declared), follows sitemap indexes two levels
+deep and gzipped sitemaps, and probes the URLs listed under a `[Sitemap]`
+section. Only URLs on the base URL's own host are kept.
 Accepts many base URLs via args, `-l`, or stdin. (Port of `legacy/robots-checker.py`.)
 
 | Flag | Default | Meaning |
@@ -383,6 +387,8 @@ Accepts many base URLs via args, `-l`, or stdin. (Port of `legacy/robots-checker
 | `-timeout` | `15s` | per-request timeout |
 | `-insecure` | `true` | skip TLS verification |
 | `-c` | `20` | concurrent probes per host |
+| `-no-sitemap` | off | don't fetch or probe sitemaps |
+| `-sitemap-max` | `100` | max sitemap URLs probed per base URL (`0` = none) |
 
 ```bash
 srt robots https://target
@@ -605,7 +611,9 @@ Full guide in [pipeline.md](pipeline.md).
 | `-o` | `options.outputDir` | output directory |
 | `-dry-run` | off | print planned steps, send no traffic |
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
-| `-easy-wins` | off | HOST stage: conservative nuclei default-login/misconfig/exposure pass on non-web ports (sends real probes — opt-in) |
+| `-no-easy-wins` | off | HOST stage: skip the conservative nuclei default-login/misconfig/exposure pass on non-web ports (on by default; it sends real probes). `-easy-wins` is a deprecated no-op. |
+| `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default) |
+| `-permutations` | off | WEB stage: alterx permutations of discovered names, resolved with dnsx (opt-in) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (opt-in) |
 | `-no-cdn-check` | off | HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default — local dataset lookup, no traffic to the target) |
 | `-no-tlsx` | off | WEB stage: don't widen the discovered-domain pool with cert SAN/CN entries via tlsx (on by default — one TLS handshake per target) |

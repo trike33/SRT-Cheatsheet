@@ -22,13 +22,13 @@ dependency, `golang.org/x/term`, for the interactive `shell`'s line editor
 — unrelated to this policy, which is about not shelling out to *other
 recon tools*, not about the build staying stdlib-only forever.)
 
-**Four named ProjectDiscovery tools are the exceptions**, each kept as an
+**Seven named ProjectDiscovery tools are the exceptions**, each kept as an
 external call via the `runExternal` hook in `gotools/internal/pipeline/
 external.go` (looks the binary up on `PATH`, skips cleanly if it's missing
 — never aborts a run over an optional tool). Install any of them with
 [pdtm](https://github.com/projectdiscovery/pdtm), ProjectDiscovery's own
 tool manager (`go install -v github.com/projectdiscovery/pdtm/cmd/pdtm@latest`,
-then `pdtm -i vulnx,nuclei,cdncheck,tlsx`):
+then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx`):
 
 - **vulnx** — CVE lookups from a grabbed service/software version.
 - **nuclei** — the HOST stage's "easy wins" pass (default creds, common
@@ -36,8 +36,9 @@ then `pdtm -i vulnx,nuclei,cdncheck,tlsx`):
   template library natively wasn't worth it for this one step, so it's a
   generic, directly-invoked `nuclei` call instead — but unlike vulnx, it
   sends real probes at the service rather than querying a third-party
-  database, so it's **opt-in** (`options.easyWins`/`-easy-wins`, off by
-  default) and its traffic is kept deliberately bounded regardless (see
+  database, so its traffic is kept deliberately bounded (rate-limited,
+  intrusive templates excluded) and it can be disabled
+  (`options.easyWins:false`/`-no-easy-wins`; **on by default**) (see
   [pipeline.md](pipeline.md)'s classify-services step for the exact flags).
 - **cdncheck** — flags a HOST-stage IP as a known CDN/WAF/cloud provider.
   A local dataset lookup with no traffic to the target at all, so it's
@@ -50,6 +51,15 @@ then `pdtm -i vulnx,nuclei,cdncheck,tlsx`):
   force. One TLS handshake per target is the same order of traffic as
   `probe`'s own one request per target, so it's **on by default**
   (`options.tlsx`/`-no-tlsx` to disable).
+
+- **subfinder** — passive subdomain sources beyond crt.sh. **On by
+  default** (`options.subfinder`/`-no-subfinder`); third-party lookups
+  only, no traffic to the target.
+- **dnsx** — DNS brute force (`-d`/`-w`) with a second `-wd` pass that
+  drops wildcard answers, run when `options.subdomainsWordlist` is set;
+  also resolves alterx's permutations.
+- **alterx** — permutations of the discovered names, **opt-in**
+  (`options.permutations`/`-permutations`) since each one is a DNS query.
 
 **katana (active crawling) was evaluated for this list and deliberately
 NOT added.** In the sandbox this was developed in, a trivial local crawl
@@ -78,7 +88,7 @@ scope (IPs, or a pipeline JSON config's "host" list)
                                         web services -------------------->+--> hand off to WEB (below)
                                         other services -> "scan":
                                           - grab version -> check CVEs with vulnx
-                                          - run a native "easy wins" pass (default creds / common misconfigs)
+                                          - run an "easy wins" pass via nuclei (default creds / common misconfigs)
                                           - flag uncommon services for manual follow-up
                                             (e.g. BeanShell, rsync, Java RMI)
 ```
@@ -122,10 +132,10 @@ scope (IPs, or a pipeline JSON config's "host" list)
         misconfigurations. *(Implemented: a direct `nuclei` call --
         `-tags default-login,exposure,misconfig -etags dos,fuzz,intrusive`,
         rate-limited to `-rl 10 -c 3 -bs 1 -timeout 5 -mt 3m` so one
-        unattended pipeline step can't turn into an unbounded scan. Opt-in
-        via `options.easyWins`/`-easy-wins` (off by default) since, unlike
-        every other HOST step, it sends real probes at the service rather
-        than passive recon or a third-party lookup. Skipped cleanly if
+        unattended pipeline step can't turn into an unbounded scan. On by
+        default (`options.easyWins:false`/`-no-easy-wins` to disable);
+        unlike every other HOST step it sends real probes at the service
+        rather than passive recon or a third-party lookup. Skipped cleanly if
         `nuclei` isn't installed.)*
      3. Flag uncommon services for manual follow-up — e.g. an exposed
         BeanShell, rsync daemon, or Java RMI registry. *(Implemented:
@@ -171,7 +181,10 @@ scope (domains/URLs, or a pipeline JSON config's "web" list)
    gathering.)*
 3. **Gather endpoints/files**, both:
    - **Active**: crawl, robots.txt/sitemap-aware *(implemented: `srt
-     robots`, `srt dirlist`)*; brute force using random/generic wordlists
+     robots` fetches robots.txt and the sitemap(s) it declares or
+     `/sitemap.xml` — indexes and `.gz` followed, same-host URLs only —
+     and probes every path/URL; `srt dirlist`. A real link-following
+     crawler is not implemented — see katana above)*; brute force using random/generic wordlists
      *(implemented: `srt fuzz`)* **and** wordlists guessed from the
      engagement/app context — the target's own naming conventions,
      detected tech stack, anything source-derived (`srt relpaths` already

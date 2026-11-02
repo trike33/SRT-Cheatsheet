@@ -64,7 +64,7 @@ func openListener(t *testing.T) int {
 	return port
 }
 
-func TestHostStageEasyWinsOffByDefault(t *testing.T) {
+func TestHostStageEasyWinsOnByDefault(t *testing.T) {
 	port := openListener(t)
 	dir := t.TempDir()
 	cfg := &pipelineConfig{Host: []targetEntry{{Target: "127.0.0.1", Ports: strconv.Itoa(port)}}}
@@ -72,7 +72,23 @@ func TestHostStageEasyWinsOffByDefault(t *testing.T) {
 	steps := runHostStage(cfg, dir, true, "")
 	for _, s := range steps {
 		if s.Name == "nuclei" {
-			t.Fatalf("easyWins defaults to off, expected no nuclei step, got %+v", s)
+			return
+		}
+	}
+	t.Fatalf("easyWins defaults to on, expected a nuclei step, got %+v", steps)
+}
+
+func TestHostStageEasyWinsOffByOption(t *testing.T) {
+	port := openListener(t)
+	dir := t.TempDir()
+	disabled := false
+	cfg := &pipelineConfig{
+		Host:    []targetEntry{{Target: "127.0.0.1", Ports: strconv.Itoa(port)}},
+		Options: pipelineOptions{EasyWins: &disabled},
+	}
+	for _, s := range runHostStage(cfg, dir, true, "") {
+		if s.Name == "nuclei" {
+			t.Fatalf("options.easyWins=false, expected no nuclei step, got %+v", s)
 		}
 	}
 }

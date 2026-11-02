@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,4 +149,89 @@ func withFakeBinary(t *testing.T, name, script string) {
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
+}
+
+func TestDNSToolArgsShape(t *testing.T) {
+	if got := strings.Join(dnsxBruteArgs("a.test", "w.txt"), " "); !strings.Contains(got, "-d a.test") || !strings.Contains(got, "-w w.txt") || !strings.Contains(got, "-silent") {
+		t.Errorf("dnsxBruteArgs = %q", got)
+	}
+	if got := strings.Join(dnsxWildcardArgs("in.txt", "a.test"), " "); !strings.Contains(got, "-l in.txt") || !strings.Contains(got, "-wd a.test") {
+		t.Errorf("dnsxWildcardArgs = %q", got)
+	}
+	if got := strings.Join(alterxArgs("in.txt"), " "); !strings.Contains(got, "-limit") {
+		t.Errorf("alterx must cap its output, got %q", got)
+	}
+}
+
+// fakeDnsxFilter: a brute-force call (-w) answers two names, one a wildcard
+// hit; the -wd pass drops it, like the real tool's filtering.
+func fakeDnsxFilter() string {
+	return `case "$*" in
+  *" -wd "*) while [ $# -gt 0 ]; do [ "$1" = "-l" ] && f="$2"; shift; done; grep -v wild "$f" ;;
+  *" -w "*) printf 'real.a.test\nwild.a.test\n' ;;
+  *) printf 'perm-real.a.test\nwild2.a.test\n' ;;
+esac
+`
+}
+
+func TestDNSDiscoverDomainsBruteForceIsWildcardFiltered(t *testing.T) {
+	withFakeBinary(t, "subfinder", "echo passive.a.test\n")
+	withFakeBinary(t, "dnsx", fakeDnsxFilter())
+
+	cfg := &pipelineConfig{Options: pipelineOptions{SubdomainsWordlist: "w.txt"}}
+	names, steps := dnsDiscoverDomains(cfg, []string{"a.test"}, nil, t.TempDir())
+
+	for _, want := range []string{"passive.a.test", "real.a.test"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("names = %v, missing %q", names, want)
+		}
+	}
+	if slices.Contains(names, "wild.a.test") {
+		t.Errorf("wildcard hit survived the -wd pass: %v", names)
+	}
+	var got []string
+	for _, s := range steps {
+		got = append(got, s.Name)
+	}
+	if want := []string{"subfinder", "dnsx-brute", "dnsx-wildcard"}; !slices.Equal(got, want) {
+		t.Errorf("steps = %v, want %v", got, want)
+	}
+}
+
+func TestDNSDiscoverDomainsPermutationsOptIn(t *testing.T) {
+	withFakeBinary(t, "subfinder", "echo passive.a.test\n")
+	withFakeBinary(t, "alterx", "echo dev-passive.a.test\n")
+	withFakeBinary(t, "dnsx", fakeDnsxFilter())
+
+	// default: no alterx step
+	_, steps := dnsDiscoverDomains(&pipelineConfig{}, []string{"a.test"}, nil, t.TempDir())
+	for _, s := range steps {
+		if s.Name == "alterx" {
+			t.Fatalf("permutations must be off by default, got %+v", s)
+		}
+	}
+
+	on := true
+	cfg := &pipelineConfig{Options: pipelineOptions{Permutations: &on}}
+	names, steps := dnsDiscoverDomains(cfg, []string{"a.test"}, []string{"seed.a.test", "other.example"}, t.TempDir())
+	var got []string
+	for _, s := range steps {
+		got = append(got, s.Name)
+	}
+	if want := []string{"subfinder", "alterx", "dnsx-resolve", "dnsx-wildcard"}; !slices.Equal(got, want) {
+		t.Errorf("steps = %v, want %v", got, want)
+	}
+	if !slices.Contains(names, "perm-real.a.test") || slices.Contains(names, "wild2.a.test") {
+		t.Errorf("names = %v, want the resolved permutation without the wildcard hit", names)
+	}
+}
+
+func TestDNSDiscoverDomainsSubfinderOffByOption(t *testing.T) {
+	withFakeBinary(t, "subfinder", "echo should-not-appear.a.test\n")
+	off := false
+	cfg := &pipelineConfig{Options: pipelineOptions{Subfinder: &off}}
+	names, steps := dnsDiscoverDomains(cfg, []string{"a.test"}, nil, t.TempDir())
+	if len(names) != 0 || len(steps) != 0 {
+		t.Errorf("options.subfinder=false: got names %v steps %v", names, steps)
+	}
 }

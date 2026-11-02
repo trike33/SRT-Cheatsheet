@@ -124,6 +124,14 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		addDiscovered(s)
 	}
 
+	// --- 01e: subfinder / dnsx / alterx: more subdomain sources, each an
+	// optional external tool that skips cleanly when not installed.
+	dnsNames, dnsSteps := dnsDiscoverDomains(cfg, ds, discoveredAll, outDir)
+	steps = append(steps, dnsSteps...)
+	for _, s := range dnsNames {
+		addDiscovered(s)
+	}
+
 	discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
 	allDomains = append(allDomains, discoveredAll...)
 	allDomains = ioutil.DedupStrings(allDomains)
@@ -328,6 +336,69 @@ func tlsxWidenDomains(cfg *pipelineConfig, outDir string) (names []string, steps
 		names = append(names, mustLines(tlsxFile)...)
 	}
 	return names, steps
+}
+
+// dnsDiscoverDomains widens subdomain discovery with ProjectDiscovery's DNS
+// tools, per domain in ds:
+//
+//   - subfinder (options.subfinder, on by default): passive third-party
+//     sources only, no traffic to the target.
+//   - dnsx brute force (when options.subdomainsWordlist is set, same trigger
+//     as the native active brute force): resolves wordlist.domain, then a
+//     second dnsx pass with -wd drops names a wildcard record answered for,
+//     which the native brute force can't tell apart from real hosts.
+//   - alterx permutations (options.permutations, off by default): mutates
+//     the names found so far for that domain, resolves them with dnsx and
+//     wildcard-filters the result. Off by default because every
+//     permutation is a DNS query.
+//
+// known is the pool discovered so far (native subdomains + tlsx), the
+// permutation input. Returns the new names plus a step per call.
+func dnsDiscoverDomains(cfg *pipelineConfig, ds, known []string, outDir string) (names []string, steps []stepResult) {
+	wild := func(d, in, out string) []string {
+		steps = append(steps, runExternal("web", "dnsx-wildcard", d, "dnsx", dnsxWildcardArgs(in, d), out))
+		return mustLines(out)
+	}
+	for _, d := range ds {
+		safe := safeName(d)
+		var found []string
+		if cfg.Options.subfinderOrDefault(true) {
+			f := filepath.Join(outDir, "01e_subfinder_"+safe+".txt")
+			steps = append(steps, runExternal("web", "subfinder", d, "subfinder", subfinderArgs(d), f))
+			found = append(found, mustLines(f)...)
+		}
+		if cfg.Options.SubdomainsWordlist != "" {
+			brute := filepath.Join(outDir, "01e_dnsx_brute_"+safe+".txt")
+			steps = append(steps, runExternal("web", "dnsx-brute", d, "dnsx", dnsxBruteArgs(d, cfg.Options.SubdomainsWordlist), brute))
+			if len(mustLines(brute)) > 0 {
+				found = append(found, wild(d, brute, filepath.Join(outDir, "01e_dnsx_brute_"+safe+".filtered.txt"))...)
+			}
+		}
+		if cfg.Options.permutationsOrDefault(false) {
+			var seeds []string
+			for _, k := range append(append([]string(nil), known...), found...) {
+				if k == d || strings.HasSuffix(k, "."+d) {
+					seeds = append(seeds, k)
+				}
+			}
+			if len(seeds) > 0 {
+				seedFile := filepath.Join(outDir, "01e_alterx_seeds_"+safe+".txt")
+				altFile := filepath.Join(outDir, "01e_alterx_"+safe+".txt")
+				resolved := filepath.Join(outDir, "01e_alterx_resolved_"+safe+".txt")
+				if err := writeLinesFile(seedFile, ioutil.DedupStrings(seeds)); err == nil {
+					steps = append(steps, runExternal("web", "alterx", d, "alterx", alterxArgs(seedFile), altFile))
+					if len(mustLines(altFile)) > 0 {
+						steps = append(steps, runExternal("web", "dnsx-resolve", d, "dnsx", dnsxResolveArgs(altFile), resolved))
+						if len(mustLines(resolved)) > 0 {
+							found = append(found, wild(d, resolved, filepath.Join(outDir, "01e_alterx_filtered_"+safe+".txt"))...)
+						}
+					}
+				}
+			}
+		}
+		names = append(names, found...)
+	}
+	return ioutil.DedupStrings(names), steps
 }
 
 // filterDomainsInScope is the host<->web scope cross-link: when

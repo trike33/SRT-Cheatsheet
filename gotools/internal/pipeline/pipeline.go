@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "content-scan", "no-cdn-check", "no-tlsx"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "permutations"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -53,7 +53,10 @@ func Run(args []string) error {
 	resume := fs.Bool("resume", false, "continue an interrupted run in -o: skip steps already completed and resume portscan/fuzz mid-way (without it, a fresh run starts over)")
 	noDB := fs.Bool("no-db", false, "don't record this run's results in the project database (.srt/srt.db, see `srt results`)")
 	noDetect := fs.Bool("no-detect", false, "don't auto-detect *-in-scope / target_assets*.json in the current directory when no -c/-host-file/-web-scope is given")
-	easyWins := fs.Bool("easy-wins", false, "HOST stage: run a conservative nuclei default-login/misconfig/exposure pass on non-web open ports (off by default -- sends real exploitation-adjacent probes, not just passive recon; same as options.easyWins in a JSON config)")
+	_ = fs.Bool("easy-wins", false, "(deprecated no-op: the nuclei easy-wins pass is now on by default; use -no-easy-wins to disable)")
+	noEasyWins := fs.Bool("no-easy-wins", false, "HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default, rate-limited -- it sends real probes, not just passive recon; same as options.easyWins:false in a JSON config)")
+	noSubfinder := fs.Bool("no-subfinder", false, "WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default -- third-party lookups only, no traffic to the target; same as options.subfinder:false)")
+	permutations := fs.Bool("permutations", false, "WEB stage: generate alterx permutations of the discovered names and resolve them with dnsx (off by default -- multiplies DNS queries; same as options.permutations in a JSON config)")
 	contentScan := fs.Bool("content-scan", false, "WEB stage: fetch every merged URL (gau's output) and scan its body for secrets/credentials (sensitive -content) instead of just classifying by extension (off by default -- fetches every URL in the list, not just a string; same as options.contentScan in a JSON config)")
 	noCDNCheck := fs.Bool("no-cdn-check", false, "HOST stage: don't flag IPs behind a known CDN/WAF/cloud provider via cdncheck (on by default -- a local dataset lookup, no traffic to the target at all; same as options.cdnCheck:false in a JSON config)")
 	noTLSX := fs.Bool("no-tlsx", false, "WEB stage: don't widen the discovered-domain pool with each target's cert SAN/CN entries via tlsx (on by default -- one TLS handshake per target, same order of traffic as probe; same as options.tlsx:false in a JSON config)")
@@ -78,9 +81,17 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *easyWins {
+	if *noEasyWins {
+		disabled := false
+		cfg.Options.EasyWins = &disabled
+	}
+	if *noSubfinder {
+		disabled := false
+		cfg.Options.Subfinder = &disabled
+	}
+	if *permutations {
 		enabled := true
-		cfg.Options.EasyWins = &enabled
+		cfg.Options.Permutations = &enabled
 	}
 	if *contentScan {
 		enabled := true
@@ -325,6 +336,7 @@ func captureStdout(fn func() error) (string, error) {
 var pipelineStageOrder = map[string][]string{
 	"host": {"ipexpand", "resolve (reverse DNS)", "portscan", "classify services (web -> WEB stage handoff, uncommon -> flagged, bannered -> vulnx)"},
 	"web": {"domains", "scopecheck (only when \"host\" targets give it an IP scope to check)", "subdomains",
+		"subfinder / dnsx brute force + wildcard filter / alterx permutations (optional external tools)",
 		"scopecheck (same)", "probe", "gau", "sensitive", "params", "robots", "fuzz",
 		"snyk (only targets with snykUrl/snykVersion)"},
 }

@@ -217,3 +217,36 @@ func cdncheckArgs(ipListFile string) []string {
 func tlsxDiscoveryArgs(target string) []string {
 	return []string{"-u", target, "-san", "-cn", "-resp-only", "-silent", "-duc"}
 }
+
+// subfinderArgs builds the WEB stage's passive subdomain lookup for one
+// domain. -max-time/-timeout keep it well inside externalToolTimeout (its
+// own default is 10 minutes), -silent gives one name per line.
+func subfinderArgs(domain string) []string {
+	return []string{"-d", domain, "-silent", "-duc", "-max-time", "3", "-timeout", "20"}
+}
+
+// dnsxBruteArgs builds dnsx's subdomain brute force for one domain:
+// -d + -w (verified against dnsx's documented flags), -silent for one
+// resolved name per line. Rate/threads/retries are capped so one domain
+// can't flood the resolver. Wildcard filtering is a separate pass
+// (dnsxWildcardArgs) because dnsx documents -wd as taking a list input.
+func dnsxBruteArgs(domain, wordlist string) []string {
+	return []string{"-d", domain, "-w", wordlist, "-silent", "-duc", "-t", "50", "-rl", "300", "-retry", "1"}
+}
+
+// dnsxResolveArgs resolves a list of names (alterx's permutations).
+func dnsxResolveArgs(listFile string) []string {
+	return []string{"-l", listFile, "-silent", "-duc", "-t", "50", "-rl", "300", "-retry", "1"}
+}
+
+// dnsxWildcardArgs filters a list of resolved names against domain's
+// wildcard DNS (`-wd`), dropping the names a wildcard record answered for.
+func dnsxWildcardArgs(listFile, domain string) []string {
+	return []string{"-l", listFile, "-wd", domain, "-silent", "-duc"}
+}
+
+// alterxArgs generates permutations of the names in listFile. -limit caps
+// the explosion, since every result becomes a DNS query.
+func alterxArgs(listFile string) []string {
+	return []string{"-l", listFile, "-silent", "-duc", "-limit", "2000"}
+}
