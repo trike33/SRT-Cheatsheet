@@ -19,6 +19,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/robots"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/snyk"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/subdomains"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/validate"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/wordlists"
 )
 
@@ -302,6 +303,34 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	}
 	allURLs, allURLsFile = endpoints, endpointsFile
 
+	// --- 06c: validate -- re-probe every endpoint with native httpx-style
+	// requests and keep only real ones. Archived and sitemap URLs may be
+	// dead, and a soft-404 site answers 200 (or a redirect, or 403) for any
+	// path, so a status code alone proves nothing; `validate` fingerprints
+	// each host's not-found response and drops matches. sensitive/params
+	// then run over the valid list only.
+	if len(endpoints) > 0 && cfg.Options.validateOrDefault(true) {
+		validFile := filepath.Join(outDir, "06c_valid_endpoints.txt")
+		rejectedFile := filepath.Join(outDir, "06c_rejected.txt")
+		maxN := cfg.Options.ValidateMax
+		if maxN <= 0 {
+			maxN = 10000
+		}
+		vArgs := []string{"-l", endpointsFile, "-o", validFile, "-silent", "-rejected", rejectedFile,
+			"-max", strconv.Itoa(maxN),
+			"-timeout", cfg.Options.timeoutDuration(10 * time.Second).String(),
+			"-insecure=" + strconv.FormatBool(cfg.Options.insecureOrDefault(true)),
+		}
+		if cfg.Options.Concurrency > 0 {
+			vArgs = append(vArgs, "-c", strconv.Itoa(cfg.Options.Concurrency))
+		}
+		vs := runStep("web", "validate", "", validFile, func() error { return validate.Run(vArgs) })
+		steps = append(steps, vs)
+		if vs.Status == "ok" {
+			allURLs, allURLsFile = mustLines(validFile), validFile
+		}
+	}
+
 	// --- 03/04: sensitive + params over the merged endpoint list ---
 	if len(allURLs) == 0 {
 		steps = append(steps, skipStep("web", "sensitive", "", "no endpoints collected"))
@@ -536,16 +565,15 @@ func sensitiveArgsFor(cfg *pipelineConfig, allURLsFile, outDir string) (outFile 
 var robotsHitRe = regexp.MustCompile(`^(https?://\S+) \[(\d{3})\] \[\d+\]\s*$`)
 
 // collectEndpoints merges every endpoint source into one deduplicated list:
-// gau's archived URLs, the URLs `robots` probed (robots.txt paths plus
-// sitemap URLs) that answered 2xx/3xx/401/403 (i.e. something exists there),
-// and every `fuzz` hit (fuzz already filters its own matches). Order: gau
-// first, then robots, then fuzz.
+// the URLs `robots` probed (robots.txt paths plus sitemap URLs) that
+// answered 2xx/3xx/401/403, every `fuzz` hit, and gau's archived URLs.
+// Active hits come first so a cap on how many get validated drops archived
+// URLs first, never the ones an active step just saw.
 //
-// This does NOT yet separate real pages from soft-404s -- a site answering
-// 200 for anything makes every robots/sitemap line look like a hit. Making
-// that validation soft-404 aware is the next step (see ROADMAP.md).
+// Nothing here proves a URL is real -- that is the `validate` step's job
+// (soft-404 aware), which runs over this list next.
 func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string) []string {
-	out := append([]string(nil), gauURLs...)
+	var out []string
 	for _, l := range mustLines(robotsFile) {
 		m := robotsHitRe.FindStringSubmatch(strings.TrimSpace(ansiRe.ReplaceAllString(l, "")))
 		if m == nil {
@@ -565,6 +593,7 @@ func collectEndpoints(gauURLs []string, robotsFile string, fuzzFiles []string) [
 			}
 		}
 	}
+	out = append(out, gauURLs...)
 	return ioutil.DedupStrings(out)
 }
 

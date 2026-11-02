@@ -555,8 +555,8 @@ func TestCollectEndpointsMergesGauRobotsAndFuzz(t *testing.T) {
 	os.WriteFile(fz, []byte(`{"url":"https://a.test/backup.zip","status":200,"length":9,"words":1,"lines":1}`+"\nnot json\n"+`{"url":"https://a.test/pub","status":200}`+"\n"), 0o644)
 
 	got := collectEndpoints([]string{"https://a.test/old?id=1", "https://a.test/pub"}, robots, []string{fz, filepath.Join(dir, "missing.json")})
-	want := []string{"https://a.test/old?id=1", "https://a.test/pub", "https://a.test/admin", "https://a.test/news", "https://a.test/moved", "https://a.test/backup.zip"}
+	want := []string{"https://a.test/pub", "https://a.test/admin", "https://a.test/news", "https://a.test/moved", "https://a.test/backup.zip", "https://a.test/old?id=1"}
 	if !slices.Equal(got, want) {
-		t.Errorf("got %v\nwant %v (404/ERR dropped, duplicates collapsed, gau first)", got, want)
+		t.Errorf("got %v\nwant %v (404/ERR dropped, duplicates collapsed, active hits first, gau last)", got, want)
 	}
 }

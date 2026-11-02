@@ -397,6 +397,41 @@ cat live_hosts.txt | srt robots -color never
 
 ---
 
+## validate
+
+Re-probe candidate URLs and keep only the real ones. Many sites answer 200
+(or a redirect to `/login`, or a WAF 403) for any path, so a status code
+alone proves nothing: `validate` fetches random not-found paths per host
+(per first directory and extension — `/api/*` and `*.php` often differ from
+the root) to fingerprint what "not found" looks like there (status, size
+normalized for echoed paths, word count; the `Location` for redirects) and
+drops every URL that matches. It does not follow redirects, treats
+2xx/3xx/401/403 as candidates, and finally rejects groups of `-learn`
+(default 10) near-identical "valid" responses on one host that the
+calibration missed.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin/args | URL list |
+| `-probes` | `3` | random not-found paths per host/directory/extension class |
+| `-tol` | `5` | size tolerance around a not-found response, % |
+| `-learn` | `10` | reject groups of this many near-identical valid responses (0 = off) |
+| `-timeout` | `10s` | per-request timeout |
+| `-insecure` | `true` | skip TLS verification |
+| `-c` | `40` | concurrent requests |
+| `-max` | `0` | check at most this many URLs (0 = all) |
+| `-o` | stdout | write valid URLs here |
+| `-silent` | off | print only valid URLs |
+| `-json` | off | JSON line per URL, valid and rejected |
+| `-rejected` | — | write `reason<TAB>URL` for rejected URLs here |
+
+```bash
+srt validate -l candidates.txt -silent -o valid.txt -rejected why-not.txt
+cat gau.txt | srt validate -silent
+```
+
+---
+
 ## snyk
 
 Test a version against a Snyk package advisory page's affected ranges. Needs
@@ -613,6 +648,7 @@ Full guide in [pipeline.md](pipeline.md).
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: skip the conservative nuclei default-login/misconfig/exposure pass on non-web ports (on by default; it sends real probes). `-easy-wins` is a deprecated no-op. |
 | `-no-active-subdomains` | off | WEB stage: skip the default active DNS brute force of subdomains (embedded SecLists top-20000 list; or `options.subdomainsWordlist`) |
+| `-no-validate` | off | WEB stage: skip the soft-404-aware re-probe of merged endpoints (default on) |
 | `-no-fuzz` | off | WEB stage: skip directory/file brute force (default on; embedded `common.txt` unless a wordlist is configured) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default) |
 | `-permutations` | off | WEB stage: alterx permutations of discovered names, resolved with dnsx (opt-in) |

@@ -48,6 +48,7 @@ import (
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/snyk"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/subdomains"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/traceroute"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/validate"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/results"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/scope" // burphosts, burpscope
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/shell"

@@ -4,6 +4,21 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### `validate`: soft-404-aware endpoint validation (gaps 3, 4, 10)
+- New native command `srt validate` and a pipeline step (`06c`, on by
+  default, `-no-validate`): re-probes the merged endpoint list and keeps only
+  real resources. Fingerprints each host's not-found response with random
+  paths per (host, first directory, extension) — status, echo-normalized
+  size band, word count, and `Location` for redirects — and drops matches;
+  a second pass learns groups of 10+ near-identical hits calibration
+  missed. `sensitive`/`params` now run on the validated list, so extension
+  matches and `-content-scan` no longer waste requests on dead or soft-404
+  URLs. Endpoints are capped (`options.validateMax`, default 10000) with
+  archived URLs checked last.
+- Known limits: calibration is per first directory, not per every
+  directory; and the fingerprint is size/words based, so a soft-404 page
+  that embeds large random content could slip through to the learn pass.
+
 ### WEB pipeline: endpoint merge, reordered sensitive/params, default directory wordlist
 - `robots`/sitemap hits and `fuzz` hits now merge with gau's URLs into
   `06b_endpoints.txt`, and `sensitive`/`params` run over that list *after*
@@ -531,10 +546,12 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    no single "endpoints/directories/files" list to carry forward.
 2. ~~**Wrong order.**~~ *(done)* `sensitive`/`params` run *before* `robots`/`fuzz`, so
    they only ever see gau's archived URLs, never what the active steps found.
-3. **No re-probe of endpoints.** `probe` runs once on domains (recon on
+3. ~~**No re-probe of endpoints.**~~ *(done — `validate`)*  
+   *(original note:)* `probe` runs once on domains (recon on
    root). gau/robots/sitemap/fuzz URLs are never validated as a distinct
    step (`probe` already accepts URLs, so the plumbing exists).
-4. **No soft-404 handling outside `fuzz`.** `fuzz -ac` calibrates per
+4. ~~**No soft-404 handling outside `fuzz`.**~~ *(done — `validate`; `robots`' own green-on-200 output is unchanged)*  
+   *(original note:)* `fuzz -ac` calibrates per
    directory, but `probe` has none, and `robots` prints green for any 200
    (so the new sitemap URLs on a soft-404 site all look valid). The
    validation step needs a per-host random-path fingerprint (status, size,
@@ -558,7 +575,8 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
    fuzzing/guessing against valid endpoints, and automatic extraction of
    what the site declares itself (HTML forms/inputs, JS, OpenAPI/Swagger/
    GraphQL introspection).
-10. **Sensitive-info checks the wrong population.** The extension list is
+10. ~~**Sensitive-info checks the wrong population.**~~ *(done — runs on the validated list)*  
+    *(original note:)* The extension list is
     identical to your regex (and matches on the URL *path*, so a query
     string can't hide or fake a hit), but it runs on archived URLs without
     checking the file still exists, and `-content-scan` (off by default)

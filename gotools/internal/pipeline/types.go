@@ -62,6 +62,8 @@ type pipelineOptions struct {
 	Proxy              string `json:"proxy,omitempty"`
 	AutoExtensions     *bool  `json:"autoExtensions,omitempty"`     // fuzz -ext-auto for targets without explicit "extensions" (default true)
 	SubdomainsWordlist string `json:"subdomainsWordlist,omitempty"` // subdomain-label wordlist (e.g. www, api, dev); default: the embedded SecLists top-20000 list
+	Validate           *bool  `json:"validate,omitempty"`           // WEB stage: re-probe the merged endpoint list and keep only real ones, dropping soft-404s, before sensitive/params (default true)
+	ValidateMax        int    `json:"validateMax,omitempty"`        // WEB stage: check at most this many endpoints (default 10000; active-step hits come first, archived URLs last)
 	Fuzz               *bool  `json:"fuzz,omitempty"`               // WEB stage: directory/file brute force of the explicit web targets (default true; wordlist: per-target/options.wordlist, else the embedded SecLists common.txt)
 	SubdomainsActive   *bool  `json:"subdomainsActive,omitempty"`   // WEB stage: active DNS brute force of subdomains (default true; passive sources always run regardless)
 	EasyWins           *bool  `json:"easyWins,omitempty"`           // HOST stage: run nuclei's default-login/misconfig/exposure pass on non-web ports (default true; rate-limited and bounded -- set false to avoid sending probes beyond recon)
@@ -97,6 +99,13 @@ func (o pipelineOptions) easyWinsOrDefault(def bool) bool {
 		return def
 	}
 	return *o.EasyWins
+}
+
+func (o pipelineOptions) validateOrDefault(def bool) bool {
+	if o.Validate == nil {
+		return def
+	}
+	return *o.Validate
 }
 
 func (o pipelineOptions) fuzzOrDefault(def bool) bool {

@@ -34,6 +34,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-no-web-handoff` | off | don't auto-run the WEB stage against web services the HOST stage discovers |
 | `-no-easy-wins` | off | HOST stage: don't run the conservative nuclei default-login/misconfig/exposure pass on non-web open ports (on by default; same as `options.easyWins:false`). `-easy-wins` is accepted as a deprecated no-op. |
 | `-no-active-subdomains` | off | WEB stage: skip the active DNS brute force of subdomains (on by default, embedded SecLists top-20000 list; same as `options.subdomainsActive:false`) |
+| `-no-validate` | off | WEB stage: skip the soft-404-aware re-probe of the merged endpoints (on by default) |
 | `-no-fuzz` | off | WEB stage: skip directory/file brute force (on by default; embedded SecLists common.txt unless a wordlist is set) |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (same as `options.subfinder:false`) |
 | `-permutations` | off | WEB stage: alterx permutations of the discovered names, resolved with dnsx (same as `options.permutations`) |
@@ -96,6 +97,8 @@ exact Burp include/exclude rules, not just a flattened host list.
     "proxy": "",
     "subdomainsWordlist": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
     "fuzz": true,
+    "validate": true,
+    "validateMax": 10000,
     "easyWins": true,
     "subfinder": true,
     "permutations": false,
@@ -132,6 +135,10 @@ exact Burp include/exclude rules, not just a flattened host list.
   [Steps](#steps) below for exactly what it runs) — set it to `false`
   (or pass `-no-easy-wins`) for an engagement whose rules forbid probing
   beyond recon.
+- `options.validate` (also `-no-validate`; options-only) controls the
+  soft-404-aware re-probe of the merged endpoint list. **On by default** —
+  one request per endpoint (up to `options.validateMax`, default 10000) plus
+  a few calibration requests per host/directory/extension class.
 - `options.fuzz` (also `-no-fuzz` to disable; options-only) controls the
   directory/file brute force. **On by default**, with the embedded SecLists
   `common.txt` unless a `wordlist` is configured. It sends one request per
@@ -317,13 +324,24 @@ stage discovered and handed off (written to a `web/` subfolder of that
    (`options.fuzz:false`/`-no-fuzz` to disable). Wordlist: the target's
    `wordlist`, else `options.wordlist`, else the SecLists `common.txt`
    (~4.7k names) embedded in the binary.
-8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of gau's
-   archived URLs, every `robots`/sitemap URL that answered 2xx/3xx/401/403,
-   and every `fuzz` hit. It does not yet tell real pages from soft-404s (a
-   site that answers 200 for anything makes every robots/sitemap line look
-   valid) — see [ROADMAP.md](ROADMAP.md).
-9. `sensitive` + `params` — classify the merged endpoint list from step 8.
-   **Skipped** if it's empty. `sensitive` filters by extension by default;
+8. `merge-endpoints` — one deduplicated list (`06b_endpoints.txt`) of every
+   `robots`/sitemap URL that answered 2xx/3xx/401/403, every `fuzz` hit and
+   gau's archived URLs (active hits first).
+8b. `validate` (**on by default**, `options.validate:false`/`-no-validate`)
+   — re-probes every endpoint (native, no redirects followed) and keeps only
+   real ones: dead URLs, errors and **soft-404s** are dropped. Each host's
+   not-found behaviour is fingerprinted with random-path requests, per
+   first directory and extension (`/api/*` and `*.php` are often handled
+   differently from the root), and anything matching it — a catch-all 200
+   whose size wobbles with the echoed path, a redirect to `/login`, a WAF's
+   403 for everything — is rejected. A second pass rejects groups of 10+
+   near-identical "valid" responses on one host that calibration missed.
+   Writes `06c_valid_endpoints.txt` and `06c_rejected.txt` (reason + URL);
+   checks at most `options.validateMax` (default 10000) endpoints, archived
+   URLs last. Also available standalone as `srt validate`
+   ([commands.md](commands.md#validate)).
+9. `sensitive` + `params` — classify the **validated** endpoint list
+   (the merged one with `-no-validate`). **Skipped** if it's empty. `sensitive` filters by extension by default;
    with `options.contentScan`/`-content-scan` (off by default) it instead
    fetches every URL and scans the body for secrets (`sensitive -content`),
    writing `03_sensitive.json` instead of `03_sensitive.txt`.
@@ -363,6 +381,8 @@ it never aborts the run.
     02_gau_<domain>.txt      # one per domain + discovered subdomain
     02_all_urls.txt          # merged, deduped
     06b_endpoints.txt        # merged gau + robots/sitemap + fuzz
+    06c_valid_endpoints.txt  # the same, after validate (soft-404s dropped)
+    06c_rejected.txt         # reason<TAB>URL for everything validate dropped
     03_sensitive.txt         # 03_sensitive.json instead, with options.contentScan
     04_params.txt
     05_robots_<target>.txt
