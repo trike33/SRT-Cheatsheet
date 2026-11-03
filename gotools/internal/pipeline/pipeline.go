@@ -347,8 +347,12 @@ func assemblePipelineConfig(cfgPath, hostFile, webScope, name string) (*pipeline
 		if err != nil {
 			return nil, fmt.Errorf("-web-scope: %w", err)
 		}
+		wild := scope.BurpWildcardHosts(bs)
 		for _, h := range scope.BurpHosts(bs) {
-			cfg.Web = append(cfg.Web, targetEntry{Target: h, Scope: webScope})
+			// Subdomain discovery only for hosts the scope opened with a
+			// "*.host" rule; an exact-host rule ("host/*") doesn't allow it.
+			_, allowed := wild[targetHost(h)]
+			cfg.Web = append(cfg.Web, targetEntry{Target: h, Scope: webScope, NoSubdomains: !allowed})
 		}
 		if cfg.Options.Scope == "" {
 			cfg.Options.Scope = webScope

@@ -93,6 +93,7 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	// (below) and probe (next) operate on; robots/fuzz stay scoped to the
 	// explicit web targets, so discovering 50 subdomains doesn't silently
 	// blow up active traffic.
+	subAllowed, subNameOK := subdomainPolicy(cfg)
 	allDomains := append([]string(nil), ds...)
 	discovered := map[string]struct{}{}
 	var discoveredAll []string
@@ -109,6 +110,10 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	} else {
 		for _, d := range ds {
 			d := d
+			if !subAllowed(d) {
+				steps = append(steps, skipStep("web", "subdomains", d, "scope doesn't allow subdomains (no *.host rule)"))
+				continue
+			}
 			subFile := filepath.Join(outDir, "01b_subdomains_"+safeName(d)+".txt")
 			subArgs := []string{"-d", d, "-o", subFile}
 			// Active brute force is on by default. When dnsx is installed it
@@ -145,12 +150,25 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 
 	// --- 01e: subfinder / dnsx / alterx: more subdomain sources, each an
 	// optional external tool that skips cleanly when not installed.
-	dnsNames, dnsSteps := dnsDiscoverDomains(cfg, ds, discoveredAll, outDir)
+	var dsAllowed []string
+	for _, d := range ds {
+		if subAllowed(d) {
+			dsAllowed = append(dsAllowed, d)
+		}
+	}
+	dnsNames, dnsSteps := dnsDiscoverDomains(cfg, dsAllowed, discoveredAll, outDir)
 	steps = append(steps, dnsSteps...)
 	for _, s := range dnsNames {
 		addDiscovered(s)
 	}
 
+	var keptNames []string
+	for _, n := range discoveredAll {
+		if subNameOK(n) {
+			keptNames = append(keptNames, n)
+		}
+	}
+	discoveredAll = keptNames
 	discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
 	allDomains = append(allDomains, discoveredAll...)
 	allDomains = ioutil.DedupStrings(allDomains)
@@ -822,6 +840,59 @@ func dorkCredentials(opts pipelineOptions) (apiKey, cx string) {
 // already has a scheme is kept as-is (minus a trailing slash); a bare
 // domain or IP defaults to https://, matching srt's insecure-by-default
 // convention elsewhere (e.g. fuzz/robots/dirlist's -insecure=true default).
+// targetHost returns the bare hostname of a web target (scheme, port and
+// path stripped).
+func targetHost(target string) string {
+	t := target
+	if i := strings.Index(t, "://"); i >= 0 {
+		t = t[i+3:]
+	}
+	if i := strings.IndexAny(t, "/?#"); i >= 0 {
+		t = t[:i]
+	}
+	if i := strings.LastIndex(t, ":"); i >= 0 && !strings.Contains(t[i:], "]") {
+		t = t[:i]
+	}
+	return strings.ToLower(t)
+}
+
+// subdomainPolicy returns the hosts that may have subdomain discovery run
+// on them (any entry for the host not marked NoSubdomains) and whether a
+// name is allowed: the host itself always, a subdomain only under an
+// allowed host.
+func subdomainPolicy(cfg *pipelineConfig) (allowedHost func(string) bool, nameOK func(string) bool) {
+	allow := map[string]bool{}
+	for _, e := range cfg.Web {
+		h := targetHost(e.Target)
+		if h == "" {
+			continue
+		}
+		allow[h] = allow[h] || !e.NoSubdomains
+	}
+	allowedHost = func(d string) bool {
+		a, known := allow[strings.ToLower(d)]
+		return !known || a
+	}
+	nameOK = func(n string) bool {
+		n = strings.ToLower(n)
+		if _, known := allow[n]; known {
+			return true
+		}
+		for h, a := range allow {
+			if a && strings.HasSuffix(n, "."+h) {
+				return true
+			}
+		}
+		for h, a := range allow {
+			if !a && strings.HasSuffix(n, "."+h) {
+				return false
+			}
+		}
+		return true
+	}
+	return
+}
+
 func baseURL(target string) string {
 	if strings.Contains(target, "://") {
 		return strings.TrimSuffix(target, "/")

@@ -128,6 +128,28 @@ func BurpHosts(scope *BurpScope) []string {
 	return result
 }
 
+// BurpWildcardHosts returns the apex hosts (no scheme/path) that an enabled
+// include rule opens to subdomains -- the "*.example.com/*" rules, which
+// BurpHosts collapses to a bare apex. A host absent from this set was
+// scoped as the exact host only, so subdomain discovery must not run on it.
+func BurpWildcardHosts(scope *BurpScope) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, item := range scope.Target.Scope.Include {
+		if !item.Enabled {
+			continue
+		}
+		host := stripRegexChars(item.Host)
+		if !strings.HasPrefix(host, ".+") {
+			continue
+		}
+		host = strings.TrimPrefix(strings.TrimPrefix(host, ".+"), ".")
+		if host != "" {
+			out[host] = struct{}{}
+		}
+	}
+	return out
+}
+
 // runBurpScope ports WEB/domains-parser.py: pretty, colored include (green) and
 // exclude (red) path listing with wildcard-host collapsing.
 func runBurpScope(args []string) error {

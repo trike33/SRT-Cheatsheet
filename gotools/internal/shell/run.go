@@ -449,6 +449,7 @@ func (m shellModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		text := m.selectedText()
 		return m, func() tea.Msg {
 			os.Stdout.WriteString(ansi.SetSystemClipboard(text))
+			copyNative(text)
 			return nil
 		}
 	}
@@ -476,4 +477,28 @@ func (m shellModel) selectedText() string {
 		lines = append(lines, strings.TrimRight(plain, " "))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// copyNative also puts text on the system clipboard through whichever
+// clipboard tool is installed. OSC 52 (above) isn't honored by several
+// terminals -- GNOME Terminal among them -- so without this a selection
+// would highlight but never reach the clipboard. Best effort: silent when
+// no tool is available (OSC 52 may still have worked).
+func copyNative(text string) {
+	for _, c := range [][]string{
+		{"wl-copy"},
+		{"xclip", "-selection", "clipboard"},
+		{"xsel", "--clipboard", "--input"},
+		{"pbcopy"},
+	} {
+		path, err := exec.LookPath(c[0])
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(path, c[1:]...)
+		cmd.Stdin = strings.NewReader(text)
+		if cmd.Run() == nil {
+			return
+		}
+	}
 }

@@ -18,13 +18,17 @@ import (
 // carrying per-target overrides; UnmarshalJSON accepts both so a config file
 // can mix plain entries with ones that need extra settings.
 type targetEntry struct {
-	Target      string   `json:"target"`
-	Ports       string   `json:"ports,omitempty"`
-	Wordlist    string   `json:"wordlist,omitempty"`
-	Scope       string   `json:"scope,omitempty"`
-	Extensions  []string `json:"extensions,omitempty"`
-	SnykURL     string   `json:"snykUrl,omitempty"`
-	SnykVersion string   `json:"snykVersion,omitempty"`
+	Target   string `json:"target"`
+	Ports    string `json:"ports,omitempty"`
+	Wordlist string `json:"wordlist,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	// NoSubdomains marks a web entry whose scope doesn't allow subdomains
+	// (a Burp "host/*" rule, as opposed to "*.host/*"): no subdomain
+	// discovery runs for its host. Set by -web-scope; default false.
+	NoSubdomains bool     `json:"noSubdomains,omitempty"`
+	Extensions   []string `json:"extensions,omitempty"`
+	SnykURL      string   `json:"snykUrl,omitempty"`
+	SnykVersion  string   `json:"snykVersion,omitempty"`
 	// Excluded marks a "host" entry excluded-but-tracked, the way a
 	// Burp/program scope does: never actively probed (no portscan, no WEB
 	// hand-off), only reverse DNS + a route trace. See methodology.md.
