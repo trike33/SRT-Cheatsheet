@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/fuzzctl"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
@@ -81,6 +83,8 @@ type shellModel struct {
 
 	traffic     netx.Totals // session total across every command run
 	trafficFile string      // per-command handoff file the child writes to
+	fuzzDir     string      // per-command dir for the fuzz status/control files (see internal/fuzzctl)
+	peekFuzz    string      // fuzzDir of the command the live-results window watches
 	limits      netx.Limits // halt ceilings applied to each command via env
 	save        bool        // record each command's results in the project database
 	rate        float64     // req/s throttle applied to each command (0 = unlimited)
@@ -88,10 +92,15 @@ type shellModel struct {
 	notice      string      // transient info line (not an error) -- cleared on the next keystroke
 	lastRun     string      // last finished command's traffic summary -- persists in its own box
 
-	out       []string  // scrollback shown between the header and the prompt
-	sel       selection // mouse selection in the output area
-	outScroll int       // rows scrolled up from the newest output (0 = following)
-	run       *runState // the command currently running, if any
+	out       []string    // scrollback shown between the header and the prompt
+	sel       selection   // mouse selection in the output area
+	outScroll int         // rows scrolled up from the newest output (0 = following)
+	run       *runState   // the command currently running, if any
+	bgRuns    []*runState // commands sent to the background (Ctrl+Z), still running
+	jobSeq    int
+	peek      *peekView // the live-results window (Ctrl+R), when open
+	peekDir   string    // where the watched command's step files land
+	peekName  string
 	live      netx.Totals
 	liveAt    time.Time
 	liveRate  float64
@@ -108,6 +117,7 @@ type execDoneMsg struct {
 	sess      *sessionRec // non-nil for a tracked resumable command
 	stateFile string
 	dir       string // project the command ran in
+	rs        *runState
 }
 
 // execExitCode extracts a child's exit status (-1 if unknown).
@@ -158,9 +168,32 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		if m.peek != nil {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.peek.scroll += 3
+			case tea.MouseButtonWheelDown:
+				m.peek.scroll = max(m.peek.scroll-3, 0)
+			}
+			return m, nil
+		}
 		return m.handleMouse(msg)
 
+	case peekTickMsg:
+		if m.peek == nil {
+			return m, nil
+		}
+		m.peek.refresh()
+		return m, peekTick()
+
 	case outMsg:
+		if msg.rs != nil && msg.rs != m.run && msg.rs.bg {
+			msg.rs.buf = append(msg.rs.buf, msg.lines...)
+			if len(msg.rs.buf) > maxOutLines {
+				msg.rs.buf = msg.rs.buf[len(msg.rs.buf)-maxOutLines:]
+			}
+			return m, waitOutput(msg.rs)
+		}
 		m.sel = selection{}
 		m.appendCmdOut(msg.lines)
 		if m.run == nil {
@@ -176,11 +209,16 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case execDoneMsg:
+		if msg.rs != nil && msg.rs.bg && msg.rs != m.run {
+			m.finishBackground(msg)
+			return m, nil
+		}
 		m.lastErr = nil
 		if c := execExitCode(msg.err); c > 0 && c != 130 && c != 3 && (m.run == nil || m.run.errs == 0) {
 			m.errCount++ // failed without an "srt:" line of its own (e.g. a bad flag)
 		}
 		m.run, m.live, m.liveAt, m.liveRate = nil, netx.Totals{}, time.Time{}, 0
+		m.dropFuzzDir(msg.rs)
 		if c := execExitCode(msg.err); c > 0 {
 			m.appendOut(dimStyle(m.colorOn).Render(fmt.Sprintf("[%s exited with status %d]", msg.cmd, c)))
 		}
@@ -228,9 +266,28 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.lastErr = nil
 	m.notice = ""
 
+	if msg.Type == tea.KeyCtrlS && m.run != nil {
+		m.requestSkip()
+		return m, nil
+	}
+
+	if m.peek != nil {
+		if m.peekKey(msg, m.outHeight()) {
+			return m, nil
+		}
+	}
+
+	if msg.Type == tea.KeyCtrlR {
+		m.openPeek()
+		return m, peekTick()
+	}
+
 	if m.run != nil {
 		// A running command owns the prompt: only stop and scroll keys work.
 		switch msg.Type {
+		case tea.KeyCtrlZ:
+			m.sendToBackground()
+			return m, nil
 		case tea.KeyCtrlC:
 			m.run.interrupt()
 			m.notice = "stopping " + m.run.name + " (Ctrl+C again to kill)"
@@ -480,6 +537,11 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "sessions":
 		m.listSessions()
 		return m, nil
+	case "jobs":
+		m.listJobs()
+		return m, nil
+	case "fg":
+		return m.foreground(cmdArgs)
 	case "resume":
 		return m.resumeSession(cmdArgs)
 	case "traffic":
@@ -550,7 +612,7 @@ func (m *shellModel) applyColorCommand(args []string) {
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
 	names := append([]string{}, cli.Names()...)
-	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume", "save")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume", "save", "jobs", "fg")
 	sort.Strings(names)
 	return names
 }
@@ -607,6 +669,11 @@ func (m *shellModel) childEnv() []string {
 		f.Close()
 		m.trafficFile = f.Name()
 		env = append(env, netx.EnvTrafficFile+"="+m.trafficFile, netx.EnvQuietTraffic+"=1")
+	}
+	m.fuzzDir = ""
+	if d, err := os.MkdirTemp("", "srt-fuzz-*"); err == nil {
+		m.fuzzDir = d
+		env = append(env, fuzzctl.EnvStatus+"="+filepath.Join(d, "status.json"), fuzzctl.EnvControl+"="+filepath.Join(d, "control.json"))
 	}
 	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, store.EnvSave+"=") })
 	if m.save {

@@ -33,12 +33,21 @@ type runState struct {
 	errs  int           // error lines seen in its output
 
 	name      string
+	args      []string // the command's arguments, to find where its results go
+	id        int      // job number once sent to the background
+	bg        bool     // running in the background (Ctrl+Z)
+	buf       []string // output produced while in the background, replayed by `fg`
+	fuzzDir   string   // fuzz status/control dir (internal/fuzzctl)
+	traffic   string   // traffic handoff file, kept with the run while it's in the background
 	sess      *sessionRec
 	stateFile string
 	dir       string
 }
 
-type outMsg struct{ lines []string }
+type outMsg struct {
+	lines []string
+	rs    *runState
+}
 
 type tickMsg struct{}
 
@@ -57,7 +66,7 @@ func (rs *runState) begin() tea.Cmd {
 		c.Stdin, c.Stdout, c.Stderr = nil, pw, pw
 		setProcGroup(c)
 		if err := c.Start(); err != nil {
-			return execDoneMsg{cmd: rs.name, err: err, sess: rs.sess, stateFile: rs.stateFile, dir: rs.dir}
+			return execDoneMsg{cmd: rs.name, err: err, sess: rs.sess, stateFile: rs.stateFile, dir: rs.dir, rs: rs}
 		}
 		go func() {
 			err := c.Wait()
@@ -253,9 +262,9 @@ func waitOutput(rs *runState) tea.Cmd {
 	return func() tea.Msg {
 		batch, ok := <-rs.lines
 		if !ok {
-			return execDoneMsg{cmd: rs.name, err: <-rs.done, sess: rs.sess, stateFile: rs.stateFile, dir: rs.dir}
+			return execDoneMsg{cmd: rs.name, err: <-rs.done, sess: rs.sess, stateFile: rs.stateFile, dir: rs.dir, rs: rs}
 		}
-		return outMsg{batch}
+		return outMsg{batch, rs}
 	}
 }
 

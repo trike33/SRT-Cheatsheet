@@ -80,11 +80,13 @@ func (e *fuzzEngine) wafTrip(hb *hostBucket) {
 		hb.wafMu.Lock()
 		hb.wafHalted = true
 		hb.wafMu.Unlock()
+		e.sched.dropJobs(hb)
 		ioutil.Warn("WAF block suspected on %s (%d consecutive 403s): halting fuzz traffic to it and moving on", hb.name, e.wafThreshold)
 	case strikes > 1+wafMaxCooldowns:
 		hb.wafMu.Lock()
 		hb.wafHalted = true
 		hb.wafMu.Unlock()
+		e.sched.dropJobs(hb)
 		ioutil.Warn("%s is still blocking us after %d cooldowns: giving it up", hb.name, wafMaxCooldowns)
 	default:
 		e.wafCooldownHost(hb, "blocked again")

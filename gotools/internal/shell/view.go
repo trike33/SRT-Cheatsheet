@@ -311,6 +311,9 @@ func (m shellModel) View() string {
 	header := m.renderHeader()
 	bottom := m.renderBottom()
 	outH := max(height-lipgloss.Height(header)-lipgloss.Height(bottom), 3)
+	if m.peek != nil {
+		return header + "\n" + m.renderPeek(m.width, outH) + "\n" + bottom
+	}
 	return header + "\n" + m.renderOutput(m.width, outH) + "\n" + bottom
 }
 
@@ -320,7 +323,14 @@ func (m shellModel) renderBottom() string {
 	boxWidth := max(m.width-4, 20)
 	var content string
 	if m.run != nil {
-		content = dimStyle(m.colorOn).Render("running " + m.run.name + " — Ctrl+C stops it · PgUp/PgDn scroll")
+		content = dimStyle(m.colorOn).Render(m.runControlsHint())
+		if m.peek != nil {
+			hint := ""
+			if m.peek.sel < len(m.peek.entries) && m.peek.entries[m.peek.sel].kind == entryFuzzHost {
+				hint = "x stops fuzzing this host · "
+			}
+			content = dimStyle(m.colorOn).Render("live results — Esc closes · " + hint + "↑/↓ pick an entry · PgUp/PgDn scroll · Ctrl+S skips step · Ctrl+C stops")
+		}
 	} else {
 		content = promptStyle(m.colorOn).Render("srt> ") + m.renderHighlightedLine()
 	}
@@ -363,6 +373,9 @@ func (m shellModel) renderStatus() string {
 		colorState = "on"
 	}
 	left := fmt.Sprintf("color: %s · history: %d", colorState, len(m.history))
+	if n := len(m.bgRuns); n > 0 {
+		left += fmt.Sprintf(" · %d job(s) in background (jobs, fg)", n)
+	}
 	if m.notice != "" {
 		left = m.notice
 	}

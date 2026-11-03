@@ -52,6 +52,8 @@ var shellHelp = map[string]string{
 	"traffic":  "traffic\n\nShow the total request/byte traffic of this session.",
 	"limit":    "limit [rate <req/s>|off | bytes <size> | off]\n\nrate   throttle every command to N requests per second\nbytes  halt a command once it has moved this much traffic (e.g. 50MB)\noff    lift the limits",
 	"sessions": "sessions\n\nList interrupted, resumable commands.",
+	"jobs":     "jobs\n\nList commands sent to the background with Ctrl+Z.",
+	"fg":       "fg [n]\n\nBring a background job (the newest, or job n) back to the foreground; its buffered output is replayed.\n\nWhile a command runs: Ctrl+C stops it, Ctrl+S skips the current pipeline step, Ctrl+Z sends it to the background, Ctrl+R opens a live-results window (Esc closes it).",
 	"resume":   "resume [<id>]\n\nContinue an interrupted command from where it stopped.",
 	"save":     "save [on|off]\n\nWhether each command's results are recorded in the project database.",
 }

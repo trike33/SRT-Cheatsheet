@@ -123,6 +123,7 @@ type Sink struct {
 	runID int64
 	buf   []Record
 	count int
+	stop  chan struct{} // ends the periodic flusher
 }
 
 // current is the process-wide active run, nil when not saving.
@@ -152,8 +153,22 @@ func StartSink(name string, args []string) (*Sink, error) {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	s := &Sink{db: db, runID: id}
+	s := &Sink{db: db, runID: id, stop: make(chan struct{})}
 	current = s
+	// Flush on a timer too, not only every flushAt records, so another
+	// reader (the shell's live-results window) sees results as they come.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				s.flush()
+			case <-s.stop:
+				return
+			}
+		}
+	}()
 	halt.On(s.Close) // Ctrl+C / limit halt: flush what we have first
 	return s, nil
 }
@@ -202,6 +217,10 @@ func (s *Sink) Close() {
 	defer s.mu.Unlock()
 	if s.db == nil {
 		return
+	}
+	if s.stop != nil {
+		close(s.stop)
+		s.stop = nil
 	}
 	s.flushLocked()
 	s.db.Exec(`UPDATE runs SET ended_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), s.runID)

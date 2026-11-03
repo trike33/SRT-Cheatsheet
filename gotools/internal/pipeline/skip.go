@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"os"
+	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/fuzzctl"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/halt"
 	"golang.org/x/term"
 )
@@ -26,6 +28,34 @@ type skipListener struct {
 	requests chan struct{}
 	fd       int
 	oldState *term.State
+	done     chan struct{} // ends the control-file poller (shell mode)
+}
+
+// startControlSkipListener is the skip listener for a pipeline run by the
+// srt shell: there is no terminal on its stdin, so the shell asks for a skip
+// (Ctrl+S) through the fuzzctl control file, which is polled here.
+func startControlSkipListener(path string) *skipListener {
+	sl := &skipListener{requests: make(chan struct{}, 1), fd: -1, done: make(chan struct{})}
+	seen := fuzzctl.ReadControl(path).Skip
+	go func() {
+		t := time.NewTicker(250 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-sl.done:
+				return
+			case <-t.C:
+				if n := fuzzctl.ReadControl(path).Skip; n > seen {
+					seen = n
+					select {
+					case sl.requests <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	return sl
 }
 
 // startSkipListener installs the listener for one pipeline run, or returns
@@ -34,6 +64,9 @@ type skipListener struct {
 func startSkipListener() *skipListener {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
+		if p := os.Getenv(fuzzctl.EnvControl); p != "" {
+			return startControlSkipListener(p)
+		}
 		return nil
 	}
 	oldState, err := term.MakeRaw(fd)
@@ -72,13 +105,18 @@ func (sl *skipListener) read() {
 }
 
 func (sl *skipListener) restore() {
-	term.Restore(sl.fd, sl.oldState)
+	if sl.oldState != nil {
+		term.Restore(sl.fd, sl.oldState)
+	}
 }
 
 // stop restores the terminal's normal mode. Safe to call on a nil listener.
 func (sl *skipListener) stop() {
 	if sl == nil {
 		return
+	}
+	if sl.done != nil {
+		close(sl.done)
 	}
 	sl.restore()
 }

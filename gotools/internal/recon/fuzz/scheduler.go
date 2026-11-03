@@ -46,6 +46,13 @@ type hostBucket struct {
 	inflight    int
 	nextAllowed time.Time // earliest time this host may be hit again
 
+	// live status for the shell (see fuzzstatus.go).
+	base    string // first base URL template fuzzed on this host
+	planned atomic.Int64
+	stopped atomic.Bool // stopped by the user from the shell
+	hitMu   sync.Mutex
+	hits    []string
+
 	// WAF-block guard (see wafguard.go).
 	wafMu        sync.Mutex
 	consec403    int           // consecutive 403 responses
@@ -157,6 +164,21 @@ func (s *scheduler) hostBucket(name string) *hostBucket {
 		s.order = append(s.order, hb)
 	}
 	return hb
+}
+
+// lookup returns the bucket for a host name, or nil if none exists yet.
+func (s *scheduler) lookup(name string) *hostBucket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.byNm[name]
+}
+
+// dropJobs discards a host's queued work (it was stopped or blocked), so the
+// run doesn't spend its per-host pacing draining jobs that would no-op.
+func (s *scheduler) dropJobs(hb *hostBucket) {
+	s.mu.Lock()
+	hb.jobs = nil
+	s.mu.Unlock()
 }
 
 func (s *scheduler) addFeeder()  { s.mu.Lock(); s.feeders++; s.mu.Unlock() }

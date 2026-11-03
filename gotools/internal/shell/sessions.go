@@ -109,8 +109,14 @@ func (m shellModel) launch(cmdName string, cmdArgs []string, resuming bool) (tea
 	}
 
 	rs := newRun(m.cmdFor(cmdName, runArgs))
-	rs.name, rs.sess, rs.stateFile, rs.dir = cmdName, sess, stateFile, cwd
+	rs.name, rs.sess, rs.stateFile, rs.dir, rs.args = cmdName, sess, stateFile, cwd, cmdArgs
 	m.run = rs
+	rs.fuzzDir, m.fuzzDir = m.fuzzDir, ""
+	m.peekFuzz = rs.fuzzDir
+	m.peekName, m.peekDir = cmdName, ""
+	if cmdName == "pipeline" {
+		m.peekDir = pipelineOutDir(cwd, cmdArgs)
+	}
 	return m, tea.Batch(rs.begin(), tick())
 }
 
@@ -180,5 +186,6 @@ func (m shellModel) launchRaw(line string) (tea.Model, tea.Cmd) {
 	rs := newRun(c)
 	rs.name, rs.dir = strings.Fields(line)[0], cwd
 	m.run = rs
+	m.peekName, m.peekDir, m.peekFuzz = rs.name, "", ""
 	return m, tea.Batch(rs.begin(), tick())
 }

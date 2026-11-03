@@ -149,7 +149,7 @@ func expandWord(word string, exts []string) []string {
 func (e *fuzzEngine) process(hj hostJob) {
 	j := hj.job
 	// Fast no-op once the deadline fired or the target was abandoned.
-	if e.stopped() || e.baseDead(j.base) || hj.hb.wafIsHalted() {
+	if e.stopped() || e.baseDead(j.base) || hj.hb.halted() {
 		return
 	}
 
@@ -208,6 +208,7 @@ func (e *fuzzEngine) process(hj hostJob) {
 	if e.matcher.show(meta) && !e.softFiltered(j.base, j.word, meta) {
 		e.matchCount.Add(1)
 		hj.hb.matches.Add(1)
+		hj.hb.addHit(fmt.Sprintf("%d %7db  %s", meta.Status, meta.Size, target))
 		e.emit(target, meta)
 
 		if e.recursion && (e.maxDepth == 0 || j.depth < e.maxDepth) && e.looksLikeDir(target, loc, meta, j.word, j.base) {

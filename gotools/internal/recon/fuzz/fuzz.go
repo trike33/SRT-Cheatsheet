@@ -20,6 +20,7 @@ import (
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/fuzzctl"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/scope"
@@ -207,46 +208,50 @@ func Run(args []string) error {
 	defer globalLimiter.close()
 
 	eng := &fuzzEngine{
-		client:       client,
-		matcher:      m,
-		scope:        sc,
-		method:       *method,
-		headers:      hdrs,
-		body:         *body,
-		ua:           *ua,
-		delay:        *delay,
-		jitter:       *jitter,
-		retries:      *retries,
-		recursion:    *recursion,
-		maxDepth:     *depth,
-		words:        words,
-		exts:         exts,
-		extAuto:      *extAuto,
-		wordsAuto:    *wordsAuto,
-		cm:           cm,
-		jsonOut:      *jsonOut,
-		silent:       *silent,
-		visited:      map[string]struct{}{},
-		workerCount:  max(1, *conc),
-		randomAgent:  *randomAgent,
-		maxTime:      *maxTime,
-		maxErrors:    *maxErrors,
-		wafThreshold: *wafThreshold,
-		baseErrors:   map[string]int{},
-		deadBases:    map[string]struct{}{},
-		perHostIval:  perHostIval,
-		perHostConc:  *hostConc,
-		gLimiter:     globalLimiter,
-		autocal:      *ac,
-		acTol:        *acTol,
-		acLearn:      *acLearn,
-		cal:          map[string]*calibData{},
-		hlRe:         hlRe,
-		autoThrottle: *autoThrottle,
-		adaptiveConc: *adaptiveConc,
-		mutateCase:   *mutateCase,
-		summaryOn:    *summaryFlag,
-		statusCounts: map[int]int64{},
+		client:        client,
+		matcher:       m,
+		scope:         sc,
+		method:        *method,
+		headers:       hdrs,
+		body:          *body,
+		ua:            *ua,
+		delay:         *delay,
+		jitter:        *jitter,
+		retries:       *retries,
+		recursion:     *recursion,
+		maxDepth:      *depth,
+		words:         words,
+		exts:          exts,
+		extAuto:       *extAuto,
+		wordsAuto:     *wordsAuto,
+		cm:            cm,
+		jsonOut:       *jsonOut,
+		silent:        *silent,
+		visited:       map[string]struct{}{},
+		workerCount:   max(1, *conc),
+		randomAgent:   *randomAgent,
+		maxTime:       *maxTime,
+		maxErrors:     *maxErrors,
+		wafThreshold:  *wafThreshold,
+		wordlistNames: append([]string(nil), wordlists...),
+		statusPath:    envPath(fuzzctl.EnvStatus),
+		controlPath:   envPath(fuzzctl.EnvControl),
+		userStops:     map[string]bool{},
+		baseErrors:    map[string]int{},
+		deadBases:     map[string]struct{}{},
+		perHostIval:   perHostIval,
+		perHostConc:   *hostConc,
+		gLimiter:      globalLimiter,
+		autocal:       *ac,
+		acTol:         *acTol,
+		acLearn:       *acLearn,
+		cal:           map[string]*calibData{},
+		hlRe:          hlRe,
+		autoThrottle:  *autoThrottle,
+		adaptiveConc:  *adaptiveConc,
+		mutateCase:    *mutateCase,
+		summaryOn:     *summaryFlag,
+		statusCounts:  map[int]int64{},
 	}
 
 	// Resume state: load prior progress and open the file for appends.
@@ -307,6 +312,12 @@ type fuzzEngine struct {
 	randomAgent bool
 	maxTime     time.Duration
 	maxErrors   int
+
+	wordlistNames []string // -w files, for the shell's status view
+	statusPath    string   // fuzzctl status file (empty = not under the shell)
+	controlPath   string   // fuzzctl control file
+	stopMu        sync.Mutex
+	userStops     map[string]bool // hosts the shell asked to stop
 
 	wafThreshold int // consecutive 403s that count as a WAF block (0 = off)
 
@@ -425,6 +436,27 @@ func (e *fuzzEngine) run(bases []string) {
 	// paths before any real fuzzing starts, so the engine knows what a miss
 	// actually looks like here (and auto-enables -ac for a host that doesn't
 	// 404 cleanly) rather than finding out from the first page of "hits".
+	// Hosts the shell already asked to skip (a stop issued during an earlier
+	// target of the same pipeline) never get preflighted or fuzzed.
+	e.loadControl()
+	var live []string
+	for _, b := range bases {
+		hb := e.sched.hostBucket(hostOf(b))
+		if hb.base == "" {
+			hb.base = b
+		}
+		if e.userStopped(hb.name) {
+			hb.stopped.Store(true)
+			continue
+		}
+		live = append(live, b)
+	}
+	bases = live
+	stopStatus := make(chan struct{})
+	statusDone := make(chan struct{})
+	go func() { e.statusLoop(stopStatus); close(statusDone) }()
+	defer func() { close(stopStatus); <-statusDone }()
+
 	e.preflightCheck(bases)
 
 	// Seed a feeder per base, grouped by host so the scheduler can interleave
@@ -433,6 +465,9 @@ func (e *fuzzEngine) run(bases []string) {
 	hosts := map[string]struct{}{}
 	for _, b := range bases {
 		hb := e.sched.hostBucket(hostOf(b))
+		if hb.base == "" {
+			hb.base = b
+		}
 		hosts[hb.name] = struct{}{}
 		e.wafPreflight(hb, b)
 		e.startFeeder(hb, b, 0, "")
@@ -513,9 +548,11 @@ func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int, parentBase str
 	if len(extraWords) > 0 {
 		allWords = append(append([]string{}, e.words...), extraWords...)
 	}
-	e.planned.Add(int64(len(allWords) * mult * (1 + len(exts))))
+	n := int64(len(allWords) * mult * (1 + len(exts)))
+	e.planned.Add(n)
+	hb.planned.Add(n)
 	for _, w := range allWords {
-		if e.stopped() || e.baseDead(base) || hb.wafIsHalted() {
+		if e.stopped() || e.baseDead(base) || hb.halted() {
 			return
 		}
 		for _, mw := range e.mutateWord(w) {
