@@ -414,11 +414,22 @@ stage discovered and handed off (written to a `web/` subfolder of that
    hosts); with `options.permutations`/`-permutations` (off by default),
    **alterx** permutes the names found so far and dnsx resolves and
    wildcard-filters them. Results join the same discovered-names pool.
+   Every name any of steps 3/3b/3b2 hands back is checked against
+   `options.scope` (the Burp scope file, when one is configured) the
+   moment it's discovered, not afterward: a name the scope's `exclude`
+   rules carve out of an otherwise-wildcarded host (e.g. `*.example.com`
+   included, `admin.example.com` excluded), or one that's simply
+   unrelated (another brand on a shared TLS cert, a stale archive entry),
+   is dropped right there — it never reaches `probe`/`gau`/`fuzz`/step 3c
+   below, and isn't counted in any of 3/3b/3b2's own "found N" step
+   detail. A `subdomain discovery: dropped N name(s) excluded by the
+   scope...` warning is printed when this drops anything. With no
+   `options.scope` configured, nothing is dropped here.
 3c. `scopecheck` again — the newly discovered subdomains (step 3) and
-   tlsx names (step 3b) together go through the same host-scope filter
-   before being merged into the domain list, matching `playbook.md`'s
-   "subdomains ... kept in scope, then probed." Same skip/fail-open
-   behavior as step 2.
+   tlsx names (step 3b), already filtered by the Burp web scope above, go
+   through the same **host-IP** scope filter before being merged into the
+   domain list, matching `playbook.md`'s "subdomains ... kept in scope,
+   then probed." Same skip/fail-open behavior as step 2.
 4. `probe` — recon-on-root (title/status/content-length/`Server`/tech-detect)
    for every domain and discovered subdomain. **Skipped** if none exist.
    With `options.activeOnSubdomains`/`-active-on-subdomains` (**off by

@@ -95,11 +95,36 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 	// explicit web targets, so discovering 50 subdomains doesn't silently
 	// blow up active traffic.
 	subAllowed, subNameOK := subdomainPolicy(cfg)
+
+	// Burp scope (when the run has one) is authoritative for discovered
+	// names, enforced right here at discovery time rather than in a
+	// trailing pass once every source has already run: a cert SAN, passive
+	// lookup, or brute-force hit can hand back a name the scope's exclude
+	// rules carve out of a wildcard include (or an unrelated domain
+	// entirely, e.g. another brand on a shared cert), and it's dropped the
+	// moment it's found -- never folded into discoveredAll, counted in any
+	// step's own "found N" detail, or passed on to the next discovery
+	// source as a seed. filterDomainsInScope (the *host IP* scope,
+	// separate from this *web* scope) still runs its own pass below.
+	var burpScope *scope.Matcher
+	if cfg.Options.Scope != "" {
+		if m, err := scope.LoadScopeMatcher(cfg.Options.Scope); err == nil {
+			burpScope = m
+		}
+	}
+	var excludedByScope int
 	allDomains := append([]string(nil), ds...)
 	discovered := map[string]struct{}{}
 	var discoveredAll []string
 	addDiscovered := func(s string) {
 		if _, dup := discovered[s]; dup {
+			return
+		}
+		if !subNameOK(s) {
+			return
+		}
+		if !burpScopeAllows(burpScope, s) {
+			excludedByScope++
 			return
 		}
 		discovered[s] = struct{}{}
@@ -163,26 +188,12 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		addDiscovered(s)
 	}
 
-	// Burp scope (when the run has one) is authoritative for discovered
-	// names: a cert SAN or passive source can hand back unrelated domains
-	// (other brands on a shared cert), which must not reach gau/probe.
-	var burpScope *scope.Matcher
-	if cfg.Options.Scope != "" {
-		if m, err := scope.LoadScopeMatcher(cfg.Options.Scope); err == nil {
-			burpScope = m
-		}
+	// addDiscovered above already dropped every name the Burp scope's
+	// exclude rules (or the subdomain policy) ruled out, as each source
+	// handed it back -- only the separate host-IP scope check remains.
+	if excludedByScope > 0 {
+		ioutil.Warn("subdomain discovery: dropped %d name(s) excluded by the scope before probe/gau/fuzz", excludedByScope)
 	}
-	var keptNames []string
-	for _, n := range discoveredAll {
-		if !subNameOK(n) {
-			continue
-		}
-		if burpScope != nil && !burpScope.InScope("https://"+n+"/") {
-			continue
-		}
-		keptNames = append(keptNames, n)
-	}
-	discoveredAll = keptNames
 	discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)
 	allDomains = append(allDomains, discoveredAll...)
 	allDomains = ioutil.DedupStrings(allDomains)
@@ -870,6 +881,18 @@ func subdomainPolicy(cfg *pipelineConfig) (allowedHost func(string) bool, nameOK
 		return true
 	}
 	return
+}
+
+// burpScopeAllows reports whether a bare discovered hostname (no scheme,
+// path, or port) is admitted by scope -- nil admits everything, matching
+// plain scope.Matcher.InScope semantics for "https://<name>/" (the scheme
+// and root path a brand-new discovered name doesn't have yet, but doesn't
+// need: Burp's host regex never includes the port, and an include/exclude
+// rule scoped to a specific path would ordinarily let a bare host through
+// here and get enforced later, at the URL level, by urlInScopeFilter once
+// an actual path is known).
+func burpScopeAllows(m *scope.Matcher, name string) bool {
+	return m == nil || m.InScope("https://"+name+"/")
 }
 
 // urlInScopeFilter returns the gate every URL found by a passive or crawling

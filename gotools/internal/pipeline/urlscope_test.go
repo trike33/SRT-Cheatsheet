@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/scope"
 )
 
 const urlScopeBurp = `{"target":{"scope":{"include":[
@@ -40,5 +42,37 @@ func TestURLInScopeFilter(t *testing.T) {
 	open := urlInScopeFilter(&pipelineConfig{Web: []targetEntry{{Target: "a.test"}}})
 	if !open("https://anything.else/x") {
 		t.Error("with no scope configured nothing should be filtered")
+	}
+}
+
+// wildcardExcludeBurp includes *.example.com wholesale but carves one exact
+// subdomain back out -- the shape runWebStage's discovery-time filtering
+// (burpScopeAllows, via addDiscovered) exists for: admin.example.com must
+// never reach probe/gau/fuzz even though the wildcard rule that admitted
+// www/blog/etc. would otherwise cover it too.
+const wildcardExcludeBurp = `{"target":{"scope":{"include":[
+{"enabled":true,"protocol":"any","host":"^.+\\.example\\.com$","file":"^/.*$"},
+{"enabled":true,"protocol":"any","host":"^example\\.com$","file":"^/.*$"}
+],"exclude":[{"enabled":true,"protocol":"any","host":"^admin\\.example\\.com$","file":"^/.*$"}]}}}`
+
+func TestBurpScopeAllowsDropsExcludedSubdomain(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "scope.json")
+	os.WriteFile(p, []byte(wildcardExcludeBurp), 0o600)
+	m, err := scope.LoadScopeMatcher(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"www.example.com":   true,
+		"blog.example.com":  true,
+		"admin.example.com": false, // carved out by the exclude rule
+		"example.com":       true,
+	} {
+		if got := burpScopeAllows(m, name); got != want {
+			t.Errorf("burpScopeAllows(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if !burpScopeAllows(nil, "anything.at.all") {
+		t.Error("a nil matcher (no scope configured) should admit everything")
 	}
 }
