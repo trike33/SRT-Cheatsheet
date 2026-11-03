@@ -354,6 +354,17 @@ Running log of what's shipped and what's queued, newest first.
   a skip not stopping that step's traffic right away. A true per-step kill
   (the heavier option this bullet also offered) is still open if the
   background traffic/log-misattribution turns out to matter in practice.
+- **Follow-up: `runExternal` steps now actually get killed on skip**, not
+  just abandoned. `runStep` grew a `runStepKillable` variant that takes an
+  optional `kill func()`, called before it stops waiting on `fn`;
+  `runExternal` passes its own `externalToolTimeout` context's `cancel`,
+  so `exec.CommandContext`'s process is `SIGKILL`'d the same way the
+  existing hung-tool timeout already kills it. This covers every external
+  tool (`nuclei`, `cdncheck`, `tlsx`, `subfinder`, `dnsx`, `alterx`,
+  `uncover`, `katana`, `vulnx`) without touching any native command --
+  those still have no cancellation context threaded through them, so a
+  skip on `fuzz`/`portscan`/`probe`/etc. remains abandon-not-kill, same as
+  above. `stepResult.Detail` says which happened for a given skipped step.
 - Mechanism: `golang.org/x/term.MakeRaw` puts stdin in raw mode for the
   run's duration (same dependency `shell` already uses, just not its
   bubbletea-pane approach — a linear pipeline run has no screen to manage),
@@ -1038,14 +1049,16 @@ so they aren't lost:
 - **Auto-detect and send payloads** — close the loop from recon
   (parameters, tech-detect) to actually firing payloads at likely-vulnerable
   targets.
-- **Skip the current pipeline step with a *true* kill, not just an
-  abandon** — the keyboard-shortcut skip shipped above (see Shipped) stops
-  *waiting* on a step but doesn't stop *it*: the abandoned goroutine keeps
-  running (and sending traffic) until it finishes on its own, since there's
-  no cancellation context threaded through `runStep`/`runExternal`/the
-  native steps (`fuzz`, `portscan`, `validate` would each need to honour a
-  context and save resumable state the way they do for the global halt,
-  see `internal/halt`). Worth doing only if that lingering background
+- **Skip the current pipeline step with a *true* kill for native steps
+  too** — `runExternal` steps (`nuclei`, `cdncheck`, `tlsx`, `subfinder`,
+  `dnsx`, `alterx`, `uncover`, `katana`, `vulnx`) are now actually killed
+  on skip (see Shipped, `runStepKillable`), but the native-Go steps
+  (`fuzz`, `portscan`, `probe`, `validate`, ...) still only abandon: the
+  goroutine keeps running (and sending traffic) until it finishes on its
+  own, since there's no cancellation context threaded through them
+  (`fuzz`/`portscan`/`validate` would each need to honour a context and
+  save resumable state the way they do for the global halt, see
+  `internal/halt`). Worth doing only if that lingering background
   traffic/log-misattribution turns out to matter in practice; also open:
   the same shortcut inside `shell`'s own output pane (a dedicated key
   binding there, since raw-stdin reading isn't `shell`'s model).

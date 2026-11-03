@@ -1,8 +1,11 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestVulnxProductRecognizesCommonBanners(t *testing.T) {
@@ -51,6 +54,34 @@ func TestVulnxSearchArgsFallsBackToFreeText(t *testing.T) {
 	want := []string{"search", "--json", "--silent", "--limit", "5", "Some Unidentified Service 1.2.3"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestRunExternalKillsProcessOnSkip locks in that a user skip during a
+// runExternal step actually terminates the real OS process (via the
+// context cancel func threaded through runStepKillable) instead of just
+// abandoning it to finish on its own, as a native in-process step would.
+// Without the fix, this would block for the full 10s sleep.
+func TestRunExternalKillsProcessOnSkip(t *testing.T) {
+	old := activeSkip
+	sl := &skipListener{requests: make(chan struct{}, 1), fd: -1}
+	sl.requests <- struct{}{} // pre-fire: looks skipped from the first select
+	activeSkip = sl
+	defer func() { activeSkip = old }()
+
+	outFile := filepath.Join(t.TempDir(), "out.txt")
+	start := time.Now()
+	sr := runExternal("web", "sleeptest", "", "sleep", []string{"10"}, outFile)
+	elapsed := time.Since(start)
+
+	if sr.Status != "skipped" {
+		t.Fatalf("Status = %q, want skipped", sr.Status)
+	}
+	if !strings.Contains(sr.Detail, "killed") {
+		t.Errorf("Detail = %q, want it to mention the process was killed", sr.Detail)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("runExternal took %v, want well under the 10s sleep -- the process was not actually killed", elapsed)
 	}
 }
 

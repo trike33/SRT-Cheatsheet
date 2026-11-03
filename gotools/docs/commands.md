@@ -248,6 +248,7 @@ wappalyzer-equivalent). Covers the methodology's "recon on root" step.
 | `-c` | `40` | concurrent probes |
 | `-o` | stdout | output file |
 | `-json` | off | JSON lines instead of a table |
+| `-color` | `auto` | color the table output: `auto`\|`always`\|`never` (ignored with `-json`); status 2xx/3xx/4xx/5xx in green/cyan/yellow/red, detected tech in magenta, a failed probe's whole row in red |
 
 A bare host (no scheme) tries `https://` then falls back to `http://`.
 
@@ -867,6 +868,7 @@ run, `-history` is every observation.
 | `-run` / `-history` | one run / all observations |
 | `-limit` | max rows |
 | `-json` / `-keys` / `-count` | JSON lines / bare keys (pipe-friendly) / just the number |
+| `-color` | color the default table: `auto`\|`always`\|`never` (ignored with `-json`/`-keys`/`-count`); each `-kind` value gets its own color (consistent run to run) so a mixed-kind result set reads as visually grouped, `STATUS` is colored the same way `probe`'s own table is, and the extra-data `INFO` column is dimmed |
 
 ```bash
 srt results -kind port -host 10.0.0.5
@@ -878,7 +880,8 @@ srt results -run 3 -count
 ### runs
 
 `srt runs` lists saved runs (id, start time, record count, the command line);
-`-n` limits how many, `-json` for machine output.
+`-n` limits how many, `-json` for machine output, `-color` (`auto`\|`always`\|`never`)
+highlights an unfinished run's `(unfinished)` marker in yellow.
 
 ### export
 

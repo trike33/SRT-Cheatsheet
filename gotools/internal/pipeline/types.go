@@ -285,6 +285,17 @@ type manifest struct {
 // and otherwise reports "ok". Steps that need to report "skipped" return that
 // stepResult directly instead of going through runStep.
 func runStep(kind, name, target, output string, fn func() error) stepResult {
+	return runStepKillable(kind, name, target, output, fn, nil)
+}
+
+// runStepKillable is runStep plus an optional kill func: when the user skips
+// the step (activeSkip fires), kill is called before runStep stops waiting on
+// fn, so a caller that owns a real OS process (runExternal's exec.Command,
+// via its context's cancel func) can actually terminate it instead of just
+// letting it run unobserved in the background. kill may be nil, in which
+// case this behaves exactly like the plain runStep above: fn has no process
+// to kill, so the step is abandoned, not killed.
+func runStepKillable(kind, name, target, output string, fn func() error, kill func()) stepResult {
 	key := stepKey(kind, name, target, output)
 	if activeCheckpoint != nil && activeCheckpoint.has(key) {
 		if _, statErr := os.Stat(output); output == "" || statErr == nil {
@@ -301,21 +312,32 @@ func runStep(kind, name, target, output string, fn func() error) stepResult {
 	select {
 	case err = <-done:
 	case <-activeSkip.skipChan():
-		// The step keeps running in a goroutine we no longer wait on --
-		// any traffic/work it already started continues in the background
-		// until it finishes on its own; we just stop blocking on it. Its
-		// own Warn() output may land in a later step's captured warnings
-		// instead of this one's, since the capture target has moved on by
-		// then -- a cosmetic side effect of abandoning rather than killing it.
+		// If the caller gave us a way to actually kill what's running
+		// (runExternal's exec.Command, via its context cancel func), do
+		// that now. Without one, fn has no OS process behind it -- it's a
+		// goroutine making native Go calls -- so there's nothing to kill;
+		// it keeps running unwaited-on, and any traffic/work it already
+		// started continues in the background until it finishes on its
+		// own. Either way its own Warn() output may land in a later
+		// step's captured warnings instead of this one's, since the
+		// capture target has moved on by then.
 		warnings := stopCapture()
-		reason := "user pressed '" + string(skipKey) + "' while it was running; abandoned, not killed -- it may still be finishing in the background"
+		var reason, detail string
+		if kill != nil {
+			kill()
+			reason = "user pressed '" + string(skipKey) + "' while it was running; the process was killed"
+			detail = "skipped by user keypress while running; the underlying process was killed"
+		} else {
+			reason = "user pressed '" + string(skipKey) + "' while it was running; abandoned, not killed -- it may still be finishing in the background"
+			detail = "skipped by user keypress while running; the step was abandoned, not killed, and may still be finishing in the background"
+		}
 		reportStep(name, target, "skipped: "+reason, warnings)
 		recordUserSkip(key, kind, name, target, reason)
 		return stepResult{
 			Kind: kind, Name: name, Target: target, Output: output,
 			Duration: time.Since(start).Round(time.Millisecond).String(),
 			Status:   "skipped",
-			Detail:   "skipped by user keypress while running; the step was abandoned, not killed, and may still be finishing in the background",
+			Detail:   detail,
 		}
 	}
 	warnings := stopCapture()

@@ -6,18 +6,64 @@ package colorout
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
 
-// ANSI colors used by the robots and burpscope commands.
+// ANSI colors used by the robots and burpscope commands, and by any other
+// command's hand-built, column-aligned table (see PadWrap: it pads a cell to
+// its column width *before* adding a color's escape bytes, so a table never
+// has to care how long any given color code is, or whether every cell in a
+// column is colored the same way).
 const (
-	Reset  = "\033[0m"
-	Red    = "\033[91m"
-	Green  = "\033[92m"
-	Yellow = "\033[93m"
-	Cyan   = "\033[36m"
+	Reset   = "\033[0m"
+	Red     = "\033[91m"
+	Green   = "\033[92m"
+	Yellow  = "\033[93m"
+	Blue    = "\033[94m"
+	Magenta = "\033[95m"
+	Cyan    = "\033[36m"
+	Gray    = "\033[90m"
 )
+
+// Palette is a small set of visually distinct colors for tagging an
+// arbitrary category string (e.g. results' "kind" column) consistently,
+// without hand-maintaining a fixed mapping for every value that might show
+// up. See PaletteColor.
+var Palette = []string{Cyan, Magenta, Blue, Yellow, Green}
+
+// PaletteColor deterministically maps s to one of Palette's colors: the same
+// s always gets the same color (in this run and the next), and different
+// values are spread across the palette so a table with several different
+// kinds/categories in one column reads as visually grouped at a glance.
+func PaletteColor(s string) string {
+	var h uint32
+	for i := 0; i < len(s); i++ {
+		h = h*31 + uint32(s[i])
+	}
+	return Palette[h%uint32(len(Palette))]
+}
+
+// StatusColor returns the color an HTTP status code should be shown in,
+// loosely matching the convention curl/httpx-style tools already use: 2xx
+// green (success), 3xx cyan (redirect), 4xx yellow (client error), 5xx red
+// (server error). Anything else (0, or an out-of-range code) returns "" --
+// Wrap and PadWrap both treat an empty code as "leave it uncolored".
+func StatusColor(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return Green
+	case status >= 300 && status < 400:
+		return Cyan
+	case status >= 400 && status < 500:
+		return Yellow
+	case status >= 500 && status < 600:
+		return Red
+	default:
+		return ""
+	}
+}
 
 // Mode decides whether to emit ANSI escapes.
 type Mode int
@@ -55,12 +101,28 @@ func (m Mode) Enabled() bool {
 	}
 }
 
-// Wrap colorizes s with code when enabled, else returns it unchanged.
+// Wrap colorizes s with code when enabled, else returns it unchanged. An
+// empty code is always left unwrapped, color enabled or not.
 func (m Mode) Wrap(code, s string) string {
-	if !m.Enabled() {
+	if code == "" || !m.Enabled() {
 		return s
 	}
 	return code + s + Reset
+}
+
+// PadWrap left-pads/truncates s to width (plain, uncolored -- just like
+// fmt.Sprintf("%-*s", width, s)) and *then* wraps the padded result in code.
+// Padding before coloring, rather than after, is what matters here: it's
+// what a hand-built table (or any fixed-width column) needs to stay aligned
+// once some of its cells are colored and others aren't -- pad first so the
+// visible width is already correct, then color never has to touch the
+// column math again.
+func (m Mode) PadWrap(code, s string, width int) string {
+	padded := s
+	if w := len([]rune(s)); w < width {
+		padded = s + strings.Repeat(" ", width-w)
+	}
+	return m.Wrap(code, padded)
 }
 
 // Frames animates a live-progress glyph, the same braille cycle Claude's own

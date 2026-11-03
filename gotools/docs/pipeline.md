@@ -79,13 +79,19 @@ that — also saved to the results database as a `pipeline_skip` record
 `data` column: `srt results -kind pipeline_skip` lists every step a run
 was told to abandon.
 
-This abandons the step, it doesn't kill it: whatever request(s) it already
-started keep running in the background until they finish on their own —
-there's no per-step cancellation in `srt`, only process-wide. In practice
-that means a little extra traffic you didn't wait for, and occasionally one
-of that step's own log lines landing in the next step's warning count
-instead of its own. `Ctrl+C` is unaffected and still halts the entire
-pipeline immediately, same as always.
+What this does depends on what the step is running. For a step that shells
+out to an external tool (`nuclei`, `cdncheck`, `tlsx`, `subfinder`, `dnsx`,
+`alterx`, `uncover`, `katana`, `vulnx`), skipping actually **kills** that
+process (`SIGKILL`, same as the existing hung-tool safety timeout) — it
+stops immediately, no extra traffic. For a step implemented natively in Go
+(`fuzz`, `probe`, `portscan`, `resolve`, `gau`, `dork`, ...) there's no OS
+process to kill, so it's still an abandon: whatever request(s) it already
+started keep running in the background until they finish on their own. In
+that case, expect a little extra traffic you didn't wait for, and
+occasionally one of that step's own log lines landing in the next step's
+warning count instead of its own. `manifest.json`'s `"detail"` field for the
+skipped step says which of the two happened. `Ctrl+C` is unaffected and
+still halts the entire pipeline immediately, same as always.
 
 Piped/non-interactive runs (CI, `-dry-run`, stdin redirected from a file)
 never touch stdin for this, so there's nothing to configure to disable it.

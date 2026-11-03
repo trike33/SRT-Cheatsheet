@@ -11,12 +11,13 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
@@ -121,7 +122,7 @@ func Run(args []string) error {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "PERFORMANCE", Names: []string{"timeout", "insecure", "c"}},
-			{Title: "OUTPUT", Names: []string{"o", "json"}},
+			{Title: "OUTPUT", Names: []string{"o", "json", "color"}},
 		})
 	}
 	in := fs.String("l", "", "target list: URLs or bare hosts (default: stdin, else the project db's domain/subdomain records -- see -from)")
@@ -131,9 +132,11 @@ func Run(args []string) error {
 	conc := fs.Int("c", 40, "concurrent probes")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
+	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	cm := colorout.ParseMode(*colorFlag)
 	defer ioutil.StartHeartbeat("probe")()
 
 	targets, _, err := fb.Resolve(*in, fs.Args())
@@ -177,17 +180,81 @@ func Run(args []string) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TARGET\tSTATUS\tLENGTH\tSERVER\tTECH\tTITLE")
-	for _, r := range results {
+	printTable(w, results, cm)
+	return nil
+}
+
+// printTable renders results as a column-aligned, optionally colorized
+// table: status 2xx/3xx/4xx/5xx in green/cyan/yellow/red, detected tech in
+// magenta, and a failed probe's whole row in red so it stands out from the
+// successes around it. Column widths are computed from the plain
+// (uncolored) text first, then colored via Mode.PadWrap -- padding before
+// coloring is what keeps every column aligned regardless of which cells
+// end up colored (see colorout.PadWrap).
+func printTable(w io.Writer, results []Result, cm colorout.Mode) {
+	type row struct {
+		target, status, length, server, tech, title string
+		err                                         bool
+		code                                        int
+	}
+	rows := make([]row, len(results))
+	for i, r := range results {
 		if r.Err != "" {
-			fmt.Fprintf(tw, "%s\t-\t-\t-\t-\t[ERR] %s\n", r.Target, r.Err)
+			rows[i] = row{target: r.Target, status: "-", length: "-", server: "-", tech: "-", title: "[ERR] " + r.Err, err: true}
 			continue
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%s\t%s\t%s\n",
-			r.URL, r.Status, r.Length, r.Server, strings.Join(r.Tech, ","), r.Title)
+		rows[i] = row{
+			target: r.URL, status: strconv.Itoa(r.Status), length: strconv.Itoa(r.Length),
+			server: r.Server, tech: strings.Join(r.Tech, ","), title: r.Title, code: r.Status,
+		}
 	}
-	return tw.Flush()
+
+	headers := []string{"TARGET", "STATUS", "LENGTH", "SERVER", "TECH"}
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = len([]rune(h))
+	}
+	for _, r := range rows {
+		cells := []string{r.target, r.status, r.length, r.server, r.tech}
+		for i, c := range cells {
+			if n := len([]rune(c)); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+
+	fmt.Fprintln(w, strings.Join([]string{
+		pad(headers[0], widths[0]), pad(headers[1], widths[1]), pad(headers[2], widths[2]),
+		pad(headers[3], widths[3]), pad(headers[4], widths[4]), "TITLE",
+	}, "  "))
+
+	for _, r := range rows {
+		statusColor := colorout.StatusColor(r.code)
+		techColor := colorout.Magenta
+		titleColor := ""
+		if r.err {
+			statusColor, techColor, titleColor = colorout.Red, colorout.Red, colorout.Red
+		} else if r.tech == "" {
+			techColor = ""
+		}
+		fmt.Fprintln(w, strings.Join([]string{
+			cm.PadWrap("", r.target, widths[0]),
+			cm.PadWrap(statusColor, r.status, widths[1]),
+			cm.PadWrap("", r.length, widths[2]),
+			cm.PadWrap("", r.server, widths[3]),
+			cm.PadWrap(techColor, r.tech, widths[4]),
+			cm.Wrap(titleColor, r.title),
+		}, "  "))
+	}
+}
+
+// pad is the plain (never colored) left-pad used for header cells, which
+// are never wrapped in a color code so they need no PadWrap.
+func pad(s string, width int) string {
+	if n := len([]rune(s)); n < width {
+		return s + strings.Repeat(" ", width-n)
+	}
+	return s
 }
 
 // One tries https:// then http:// for a bare host (matching srt's

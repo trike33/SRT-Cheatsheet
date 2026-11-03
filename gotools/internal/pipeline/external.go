@@ -53,15 +53,18 @@ var externalToolTimeout = 5 * time.Minute // var (not const) so tests can lower 
 // pipeline run — an uninstalled optional tool should never abort an
 // engagement. The process is killed if it's still running after
 // externalToolTimeout, so a hung or unexpectedly slow tool can't stall the
-// run indefinitely either.
+// run indefinitely either, and it's killed the same way if the user presses
+// skipKey while it's running — unlike a native Go step, an external tool is
+// a real OS process, so a user skip doesn't just stop waiting on it, it
+// terminates it (see runStepKillable).
 func runExternal(kind, name, target, bin string, args []string, outFile string) stepResult {
 	if _, err := exec.LookPath(bin); err != nil {
 		return skipStep(kind, name, target, "external tool \""+bin+"\" not found on PATH")
 	}
-	return runStep(kind, name, target, outFile, func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), externalToolTimeout)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), externalToolTimeout)
+	defer cancel()
 
+	return runStepKillable(kind, name, target, outFile, func() error {
 		cmd := exec.CommandContext(ctx, bin, args...)
 		out, err := os.Create(outFile)
 		if err != nil {
@@ -77,11 +80,14 @@ func runExternal(kind, name, target, bin string, args []string, outFile string) 
 				ioutil.Warn("%s: %s", bin, l)
 			}
 		}
-		if ctx.Err() == context.DeadlineExceeded {
+		switch ctx.Err() {
+		case context.DeadlineExceeded:
 			return fmt.Errorf("killed after exceeding the %s safety timeout (hung or unexpectedly slow)", externalToolTimeout)
+		case context.Canceled:
+			return fmt.Errorf("killed: user skipped this step")
 		}
 		return runErr
-	})
+	}, cancel)
 }
 
 // vulnxProductPatterns recognizes a banner shape well enough to pull out a
