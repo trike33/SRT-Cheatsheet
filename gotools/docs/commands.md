@@ -368,7 +368,9 @@ export SRT_GOOGLE_API_KEY=... SRT_GOOGLE_CSE_ID=...
 srt dork -d example.com -search -o hits.txt
 ```
 
-Getting an API key/engine ID: [developers.google.com/custom-search/v1/overview](https://developers.google.com/custom-search/v1/overview).
+Getting an API key/engine ID: [developers.google.com/custom-search/v1/overview](https://developers.google.com/custom-search/v1/overview),
+or run [`config.sh`](../../config.sh) from the repo root for a guided
+walkthrough (also covers `SRT_CHAOS_API_KEY` and `uncover`'s per-engine keys).
 Free tier: 100 queries/day — one `srt dork -search` over 6 domain categories
 (no `-name`) costs 6 of those. Past the free tier, every query is **billed**
 (roughly $5 per 1,000 queries).

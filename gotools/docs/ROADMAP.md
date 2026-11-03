@@ -4,6 +4,44 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### `config.sh`: guided setup for the optional API keys
+- **New repo-root script** alongside `install.sh`/`update.sh`/`uninstall.sh`
+  — a guided wizard for the API keys `dork -search` and `pipeline`'s
+  `options.uncover`/chaos source can use (`SRT_GOOGLE_API_KEY`/
+  `SRT_GOOGLE_CSE_ID`, `SRT_CHAOS_API_KEY`, and uncover's `SHODAN_API_KEY`/
+  `CENSYS_API_TOKEN`+`CENSYS_ORGANIZATION_ID`/`FOFA_EMAIL`+`FOFA_KEY`).
+  Every one of these is already off by default and skips cleanly without a
+  key (see gap 11 and gap 12 below); `config.sh` is only for turning them
+  on, never required to use `srt` at all.
+- For each credential: prints what it unlocks, a short signup/setup
+  walkthrough with the real URLs, shows what's already configured
+  (masked), and prompts to set it. Values are written to `~/.config/srt/env`
+  (mode 600) and that file is hooked into `~/.bashrc`/`~/.zshrc`/
+  `~/.profile` (whichever exist) so new shells pick them up automatically.
+  `./config.sh --status` shows current state without prompting;
+  `./config.sh --set NAME=VALUE` / `--unset NAME` / `--unset-all` work
+  non-interactively for scripting. Refuses to run under `sudo` by a real
+  user (would write into root's `$HOME` instead of theirs) but allows
+  running as root directly (a container has no other user to redirect to).
+- Prompts read from `/dev/tty` directly rather than stdin, the same
+  `curl | bash`-safe pattern `install.sh`/`update.sh`/`uninstall.sh` rely
+  on for their own confirmations. **A real finding while verifying, not
+  assumed**: `[ -r /dev/tty ]` is not a reliable way to detect "no
+  controlling terminal" — its permission-bit check can report true even
+  when an actual `read` from `/dev/tty` would fail with `ENXIO` (confirmed
+  live in this project's own dev sandbox, which has no controlling
+  terminal at all); an actual open attempt (`: < /dev/tty`) is what
+  reliably catches it, which is what the script uses instead, falling
+  back to a clean non-interactive error rather than hanging or spamming
+  `/dev/tty: No such device or address`.
+- Verified live end to end, not just a syntax check: `--set`/`--status`/
+  `--unset`/`--unset-all` round-tripped correctly against an isolated test
+  `$HOME`; the interactive wizard was driven under a real pty (Python's
+  `pty.fork`, not a canned input redirect, which doesn't reach `/dev/tty`
+  the way a real terminal does) and correctly prompted, hid secret input
+  (`read -s`), saved the answered credential, skipped the declined ones,
+  and hooked the shell profile.
+
 ### chaos / uncover wired in (gap 11)
 - **chaos**: subfinder already has a `chaos` passive subdomain source —
   verified against a real `subfinder` v2.17.0 binary (`subfinder -ls`

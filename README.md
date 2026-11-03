@@ -34,6 +34,11 @@ current version and points here. Update an existing install this way instead:
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
 ```
 
+Want `srt dork -search` to actually run queries, or `pipeline`'s
+`options.uncover`/chaos subdomain source to have something to query with? Run
+`./config.sh` for a guided wizard through getting and setting those API keys —
+everything it configures is optional, `srt` works fully without any of it.
+
 [`legacy/`](legacy/) holds the original Python scripts the project started
 as, kept for reference only — unmaintained, fully superseded by `srt`.
 

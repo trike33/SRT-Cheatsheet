@@ -56,6 +56,9 @@ script specifically). Update the same way later: swap `install.sh` for
 `update.sh` in that command (it takes `--local-build` too).
 Uninstall with `uninstall.sh` the same way (`--purge` also deletes the
 `--local-build` clone).
+`./config.sh` is a guided wizard for the optional API keys `dork -search`
+and `pipeline`'s `options.uncover`/chaos source can use — nothing in `srt`
+needs it, it's only for turning those on.
 Windows: grab `srt-windows-amd64.exe` from
 [Releases](https://github.com/trike33/SRT-Cheatsheet/releases/latest) directly.
 
