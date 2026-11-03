@@ -51,7 +51,7 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-active-on-subdomains` | off | WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (same as `options.activeOnSubdomains`) |
 | `-active-on-subdomains-max` | `20` | with `-active-on-subdomains`: cap to this many live discovered subdomains, first-confirmed first (same as `options.activeOnSubdomainsMax`) |
 | `-no-context-words` | off | WEB stage: don't add `fuzz -words-auto`'s curated per-host words, or engagement-name words, to the fuzz wordlist (same as `options.contextWords:false`) |
-| `-chaos-key` | `$SRT_CHAOS_API_KEY` | WEB stage: API key for subfinder's `chaos` passive subdomain source (same as `options.chaosAPIKey`) |
+| `-chaos-key` | `$SRT_CHAOS_API_KEY`, then `$PDCP_API_KEY` | WEB stage: API key for subfinder's `chaos` passive subdomain source (same as `options.chaosAPIKey`) |
 | `-uncover` | off | HOST stage: seed additional host targets from a Shodan/Censys/etc. search before `ipexpand` (same as `options.uncover`) |
 | `-uncover-query` | — | with `-uncover`: the search query, e.g. `org:"Acme Corp"` (same as `options.uncoverQuery`) |
 | `-uncover-engines` | `shodan` | with `-uncover`: comma list of `uncover -e` engine(s) to query (same as `options.uncoverEngines`) |

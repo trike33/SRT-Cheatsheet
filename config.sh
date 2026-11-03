@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Interactive setup for the API keys srt's optional, opt-in steps use:
-# Google Custom Search (srt dork -search) and ProjectDiscovery's chaos +
-# uncover (subfinder's chaos source, pipeline's options.uncover). Every one
+# Google Custom Search (srt dork -search), ProjectDiscovery's single PDCP
+# key (subfinder's chaos source) and uncover's search engines
+# (pipeline's options.uncover). Every one
 # of these is off by default and skips cleanly without a key -- this script
 # is only for turning them on, never required to use srt itself.
 #
@@ -77,7 +78,7 @@ done
 # name|VAR[,VAR2]|description
 CREDENTIALS=(
   "Google Custom Search (srt dork -search)|SRT_GOOGLE_API_KEY,SRT_GOOGLE_CSE_ID"
-  "chaos (subfinder's chaos subdomain source)|SRT_CHAOS_API_KEY"
+  "ProjectDiscovery Cloud Platform (chaos; one key for all PD tools)|PDCP_API_KEY"
   "Shodan (uncover -e shodan, pipeline's options.uncover)|SHODAN_API_KEY"
   "Censys (uncover -e censys)|CENSYS_API_TOKEN,CENSYS_ORGANIZATION_ID"
   "FOFA (uncover -e fofa)|FOFA_EMAIL,FOFA_KEY"
@@ -111,7 +112,13 @@ configured() {
       return
     fi
   fi
-  printf '%s' "${!name:-}"
+  v="${!name:-}"
+  # PDCP_API_KEY: `vulnx auth` / pdtm-installed PD tools keep the same key
+  # in ~/.pdcp/credentials.yaml, so an already-authenticated machine counts.
+  if [ -z "$v" ] && [ "$name" = "PDCP_API_KEY" ] && [ -f "$HOME/.pdcp/credentials.yaml" ]; then
+    v="$(sed -n 's/^[[:space:]-]*api-key:[[:space:]]*"\{0,1\}\([^"[:space:]]*\).*$/\1/p' "$HOME/.pdcp/credentials.yaml" | head -1)"
+  fi
+  printf '%s' "$v"
 }
 
 set_var() {
@@ -285,13 +292,17 @@ run_wizard() {
     "      copy its Search engine ID (cx)"
 
   guided_credential \
-    "chaos (ProjectDiscovery, subfinder's chaos subdomain source)" \
-    "SRT_CHAOS_API_KEY" \
-    "Adds chaos's subdomain dataset to the WEB stage's passive subdomain" \
-    "discovery (subfinder already has this source built in -- it just" \
-    "needs a key). Setup:" \
-    "1. https://chaos.projectdiscovery.io/ -- sign up (free)" \
-    "2. Copy your API key from the dashboard"
+    "ProjectDiscovery Cloud Platform (PDCP_API_KEY -- chaos, and any other PD tool)" \
+    "PDCP_API_KEY" \
+    "One key covers all ProjectDiscovery tools. srt uses it for chaos's" \
+    "subdomain dataset in the WEB stage's passive subdomain discovery" \
+    "(subfinder already has this source built in -- it just needs a key)." \
+    "vulnx needs the same key; if it is already authenticated here" \
+    "(~/.pdcp/credentials.yaml) that key is detected and shown below." \
+    "The older SRT_CHAOS_API_KEY still works and takes precedence if set." \
+    "Setup:" \
+    "1. https://cloud.projectdiscovery.io/ -- sign up (free)" \
+    "2. Copy your API key from your profile / API key page"
 
   guided_credential \
     "Shodan (uncover -e shodan -- pipeline's options.uncover scope-seeding)" \

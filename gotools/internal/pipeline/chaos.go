@@ -10,12 +10,42 @@ import (
 // to, matching dork's SRT_-prefixed env var convention.
 const EnvChaosAPIKey = "SRT_CHAOS_API_KEY"
 
+// EnvPDCPAPIKey is ProjectDiscovery's single Cloud Platform key, shared by
+// all PD tools (chaos included); used when EnvChaosAPIKey is unset.
+const EnvPDCPAPIKey = "PDCP_API_KEY"
+
 // chaosAPIKey resolves options.chaosAPIKey, falling back to EnvChaosAPIKey.
 func chaosAPIKey(opts pipelineOptions) string {
 	if opts.ChaosAPIKey != "" {
 		return opts.ChaosAPIKey
 	}
-	return os.Getenv(EnvChaosAPIKey)
+	if k := os.Getenv(EnvChaosAPIKey); k != "" {
+		return k
+	}
+	if k := os.Getenv(EnvPDCPAPIKey); k != "" {
+		return k
+	}
+	return pdcpCredentialsKey()
+}
+
+// pdcpCredentialsKey reads the api-key vulnx/pdtm store in
+// ~/.pdcp/credentials.yaml (same PDCP key); "" if absent or unparseable.
+func pdcpCredentialsKey() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".pdcp", "credentials.yaml"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimLeft(strings.TrimSpace(line), "- ")
+		if v, ok := strings.CutPrefix(line, "api-key:"); ok {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
 }
 
 // chaosProviderConfig writes a subfinder provider-config.yaml containing
