@@ -69,7 +69,7 @@ func Run(args []string) error {
 			{Title: "TRAFFIC CONTROL", Names: []string{
 				"X", "H", "d", "ua", "proxy", "c", "rate", "rate-global", "hc", "adaptive-conc",
 				"delay", "jitter", "timeout", "retries", "insecure", "random-agent", "auto-throttle",
-				"maxtime", "maxerrors",
+				"maxtime", "maxerrors", "waf-403",
 			}},
 			{Title: "MATCHERS / FILTERS", Names: []string{
 				"mc", "fc", "ms", "fs", "mw", "fw", "ml", "fl", "mr", "fr", "ac", "ac-tol", "ac-learn",
@@ -111,6 +111,8 @@ func Run(args []string) error {
 	randomAgent := fs.Bool("random-agent", false, "rotate a random browser User-Agent per request")
 	maxTime := fs.Duration("maxtime", 0, "overall deadline; stop the whole run after this long (0 = none)")
 	maxErrors := fs.Int("maxerrors", 0, "abort a target after this many consecutive request errors (0 = never; good for dead hosts)")
+
+	wafThreshold := fs.Int("waf-403", wafDefaultThreshold, "WAF guard: after this many consecutive 403s from one host, halt traffic to it and move on; if it blocks again, cool down 5 minutes (live countdown) before resuming (0 = off)")
 
 	// Matchers / filters.
 	mc := fs.String("mc", "200-299,301,302,307,308,401,403,405,500", "match HTTP codes (or 'all')")
@@ -229,6 +231,7 @@ func Run(args []string) error {
 		randomAgent:  *randomAgent,
 		maxTime:      *maxTime,
 		maxErrors:    *maxErrors,
+		wafThreshold: *wafThreshold,
 		baseErrors:   map[string]int{},
 		deadBases:    map[string]struct{}{},
 		perHostIval:  perHostIval,
@@ -304,6 +307,8 @@ type fuzzEngine struct {
 	randomAgent bool
 	maxTime     time.Duration
 	maxErrors   int
+
+	wafThreshold int // consecutive 403s that count as a WAF block (0 = off)
 
 	// multi-host scheduling.
 	perHostIval  time.Duration // 0 = unlimited
@@ -429,6 +434,7 @@ func (e *fuzzEngine) run(bases []string) {
 	for _, b := range bases {
 		hb := e.sched.hostBucket(hostOf(b))
 		hosts[hb.name] = struct{}{}
+		e.wafPreflight(hb, b)
 		e.startFeeder(hb, b, 0, "")
 	}
 	if len(hosts) > 1 {
@@ -509,7 +515,7 @@ func (e *fuzzEngine) feed(hb *hostBucket, base string, depth int, parentBase str
 	}
 	e.planned.Add(int64(len(allWords) * mult * (1 + len(exts))))
 	for _, w := range allWords {
-		if e.stopped() || e.baseDead(base) {
+		if e.stopped() || e.baseDead(base) || hb.wafIsHalted() {
 			return
 		}
 		for _, mw := range e.mutateWord(w) {

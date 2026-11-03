@@ -103,7 +103,9 @@ func Run(args []string) error {
 			defer func() { <-sem }()
 			a, d, declared, err := parseRobots(client, base)
 			var sm []string
-			if err == nil && !*noSitemap {
+			// Sitemaps are looked up even when robots.txt is missing: a
+			// site with no robots.txt can still serve /sitemap.xml.
+			if !*noSitemap {
 				sm = fetchSitemapURLs(client, base, declared, *sitemapMax)
 			}
 			fetchedAll[i] = fetched{a, d, sm, err}
@@ -123,9 +125,18 @@ func Run(args []string) error {
 	}()
 	for i, base := range bases {
 		f := fetchedAll[i]
+		if n := countSitemapFiles(f.sitemap); n > 0 {
+			ioutil.Warn("%s: found %d sitemap file(s), %d page URL(s)", base, n, len(f.sitemap)-n)
+		}
 		if f.err != nil {
 			ioutil.Warn("%s: %v", base, f.err)
 			unreachable++
+			if len(f.sitemap) == 0 {
+				continue
+			}
+			fmt.Println(cm.Wrap(colorout.Cyan, "--- "+base+" ---"))
+			fmt.Println(cm.Wrap(colorout.Cyan, "[Sitemap]"))
+			probePaths(client, base, f.sitemap, cm, *conc)
 			continue
 		}
 		fmt.Println(cm.Wrap(colorout.Cyan, "--- "+base+" ---"))
@@ -172,8 +183,8 @@ func parseRobots(client *http.Client, base string) (allow, disallow, sitemaps []
 }
 
 const (
-	maxSitemapFiles = 25       // sitemap files fetched per base (index recursion included)
-	maxSitemapDepth = 2        // sitemap index -> sitemap -> (no deeper)
+	maxSitemapFiles = 50       // sitemap files fetched per base (index recursion included)
+	maxSitemapDepth = 3        // sitemap -> index -> index -> sitemap (no deeper)
 	maxSitemapBytes = 10 << 20 // per file, after decompression
 )
 
@@ -187,9 +198,11 @@ type sitemapDoc struct {
 	} `xml:"sitemap"`
 }
 
-// fetchSitemapURLs collects page URLs from the sitemaps robots.txt declared
-// (or /sitemap.xml when it declared none), following sitemap indexes a
-// couple of levels deep. Only URLs on base's own host are kept -- a sitemap
+// fetchSitemapURLs collects the sitemap files themselves (so a found
+// /sitemap.xml is reported, not just its contents) and the page URLs in
+// them. It starts from the sitemaps robots.txt declared plus the
+// conventional /sitemap.xml and /sitemap_index.xml, and follows sitemap
+// indexes (an index listing further indexes/sitemaps) several levels deep. Only URLs on base's own host are kept -- a sitemap
 // can list anything, and this must not probe hosts outside the target.
 // Returns at most max URLs, deduplicated, in discovery order.
 func fetchSitemapURLs(client *http.Client, base string, declared []string, max int) []string {
@@ -200,10 +213,7 @@ func fetchSitemapURLs(client *http.Client, base string, declared []string, max i
 	if err != nil {
 		return nil
 	}
-	queue := declared
-	if len(queue) == 0 {
-		queue = []string{"/sitemap.xml"}
-	}
+	queue := append(append([]string(nil), declared...), "/sitemap.xml", "/sitemap_index.xml")
 	type item struct {
 		u     string
 		depth int
@@ -217,7 +227,8 @@ func fetchSitemapURLs(client *http.Client, base string, declared []string, max i
 	seenMaps := map[string]bool{}
 	seenURLs := map[string]bool{}
 	var out []string
-	for fetched := 0; len(work) > 0 && fetched < maxSitemapFiles && len(out) < max; {
+	pages := 0 // page URLs collected (sitemap files don't count against max)
+	for fetched := 0; len(work) > 0 && fetched < maxSitemapFiles && len(out) < max+maxSitemapFiles; {
 		it := work[0]
 		work = work[1:]
 		if seenMaps[it.u] {
@@ -229,6 +240,10 @@ func fetchSitemapURLs(client *http.Client, base string, declared []string, max i
 		if !ok {
 			continue
 		}
+		if !seenURLs[it.u] {
+			seenURLs[it.u] = true
+			out = append(out, it.u) // the sitemap file itself
+		}
 		if it.depth < maxSitemapDepth {
 			for _, sm := range doc.Sitemaps {
 				if abs, err := joinURL(it.u, strings.TrimSpace(sm.Loc)); err == nil && sameHost(abs, b) {
@@ -237,13 +252,17 @@ func fetchSitemapURLs(client *http.Client, base string, declared []string, max i
 			}
 		}
 		for _, u := range doc.URLs {
+			if pages >= max {
+				break
+			}
 			loc := strings.TrimSpace(u.Loc)
 			if loc == "" || seenURLs[loc] || !sameHost(loc, b) {
 				continue
 			}
 			seenURLs[loc] = true
 			out = append(out, loc)
-			if len(out) >= max {
+			pages++
+			if pages >= max {
 				break
 			}
 		}
@@ -358,4 +377,19 @@ func joinURL(base, ref string) (string, error) {
 		return "", err
 	}
 	return b.ResolveReference(r).String(), nil
+}
+
+// countSitemapFiles counts the entries fetchSitemapURLs returned that are
+// sitemap files themselves rather than page URLs (.xml / .xml.gz paths).
+func countSitemapFiles(urls []string) int {
+	n := 0
+	for _, u := range urls {
+		if p, err := url.Parse(u); err == nil {
+			l := strings.ToLower(p.Path)
+			if strings.HasSuffix(l, ".xml") || strings.HasSuffix(l, ".xml.gz") {
+				n++
+			}
+		}
+	}
+	return n
 }

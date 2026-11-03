@@ -149,7 +149,7 @@ func expandWord(word string, exts []string) []string {
 func (e *fuzzEngine) process(hj hostJob) {
 	j := hj.job
 	// Fast no-op once the deadline fired or the target was abandoned.
-	if e.stopped() || e.baseDead(j.base) {
+	if e.stopped() || e.baseDead(j.base) || hj.hb.wafIsHalted() {
 		return
 	}
 
@@ -180,6 +180,7 @@ func (e *fuzzEngine) process(hj hostJob) {
 	e.reqCount.Add(1)
 	hj.hb.reqs.Add(1)
 	e.recordResult(j.base, true)
+	e.wafObserve(hj.hb, meta.Status)
 
 	if e.summaryOn {
 		e.statusMu.Lock()
@@ -482,6 +483,7 @@ func (e *fuzzEngine) progress(stop <-chan struct{}) {
 				fmt.Fprintf(&b, "  %s=%d/%d(%.0f/s)", shortHost(hb.name), hb.matches.Load(), reqs, rate)
 				shown++
 			}
+			b.WriteString(e.wafStatusFragment())
 			// Overwrite truncates to the terminal's width, so the line can
 			// never wrap -- a wrapped line is what breaks the \r-overwrite
 			// trick: \r then only returns to the start of the last wrapped

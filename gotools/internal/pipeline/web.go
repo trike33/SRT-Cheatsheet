@@ -23,6 +23,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/snyk"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/subdomains"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/validate"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/scope"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/wordlists"
 )
 
@@ -162,11 +163,24 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		addDiscovered(s)
 	}
 
+	// Burp scope (when the run has one) is authoritative for discovered
+	// names: a cert SAN or passive source can hand back unrelated domains
+	// (other brands on a shared cert), which must not reach gau/probe.
+	var burpScope *scope.Matcher
+	if cfg.Options.Scope != "" {
+		if m, err := scope.LoadScopeMatcher(cfg.Options.Scope); err == nil {
+			burpScope = m
+		}
+	}
 	var keptNames []string
 	for _, n := range discoveredAll {
-		if subNameOK(n) {
-			keptNames = append(keptNames, n)
+		if !subNameOK(n) {
+			continue
 		}
+		if burpScope != nil && !burpScope.InScope("https://"+n+"/") {
+			continue
+		}
+		keptNames = append(keptNames, n)
 	}
 	discoveredAll = keptNames
 	discoveredAll, steps = filterDomainsInScope(discoveredAll, hostScopeFile, outDir, "subdomains", steps)

@@ -41,10 +41,16 @@ type scheduler struct {
 }
 
 type hostBucket struct {
-	name         string
-	jobs         []fuzzJob
-	inflight     int
-	nextAllowed  time.Time     // earliest time this host may be hit again
+	name        string
+	jobs        []fuzzJob
+	inflight    int
+	nextAllowed time.Time // earliest time this host may be hit again
+
+	// WAF-block guard (see wafguard.go).
+	wafMu        sync.Mutex
+	consec403    int           // consecutive 403 responses
+	wafHalted    bool          // given up on for this run
+	pausedUntil  time.Time     // on cooldown until then
 	throttleIval time.Duration // adaptive backoff added on 429/503 (auto-throttle)
 
 	// live stats for the per-host progress line.
@@ -273,6 +279,14 @@ func (s *scheduler) pickLocked() (hostJob, bool, time.Duration) {
 		hb := s.order[(s.rr+k)%n]
 		if len(hb.jobs) == 0 {
 			continue
+		}
+		if !s.stop.Load() {
+			if d := hb.wafPausedFor(); d > 0 {
+				if minWait == 0 || d < minWait {
+					minWait = d
+				}
+				continue
+			}
 		}
 		if capN := hb.effCap(s.perHostConc, s.adaptiveConc); capN > 0 && hb.inflight >= capN {
 			continue
