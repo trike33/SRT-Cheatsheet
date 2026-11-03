@@ -98,6 +98,49 @@ func TestAssemblePipelineConfigNoSourcesErrors(t *testing.T) {
 	}
 }
 
+func TestRunAllowsUncoverFlagsAloneWithNoOtherSource(t *testing.T) {
+	// -uncover -uncover-query with no -c/-host-file/-web-scope at all must
+	// not hit "no targets" -- Run()'s own bypass (pipeline.go) handles
+	// what assemblePipelineConfig alone can't see yet (CLI flags merge
+	// after it runs). -dry-run keeps this from doing anything beyond
+	// resolving the config and printing the plan.
+	if err := Run([]string{"-kind", "host", "-uncover", "-uncover-query", `org:"test"`, "-dry-run"}); err != nil {
+		t.Fatalf("Run: %v, want success (uncover alone is a legitimate target source)", err)
+	}
+}
+
+func TestRunStillErrorsWithNoTargetsAndNoUncover(t *testing.T) {
+	if err := Run([]string{"-dry-run"}); err == nil {
+		t.Error("expected an error: no -c/-host-file/-web-scope and no -uncover")
+	}
+}
+
+func TestAssemblePipelineConfigAllowsEmptyWithUncoverConfigured(t *testing.T) {
+	dir := t.TempDir()
+	jsonCfg := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(jsonCfg, []byte(`{"options":{"uncover":true,"uncoverQuery":"org:test"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := assemblePipelineConfig(jsonCfg, "", "", "")
+	if err != nil {
+		t.Fatalf("assemblePipelineConfig: %v, want success -- options.uncover+uncoverQuery alone seeds the HOST scope", err)
+	}
+	if len(cfg.Host) != 0 || len(cfg.Web) != 0 {
+		t.Errorf("cfg.Host=%v cfg.Web=%v, want both empty (uncover seeds them at runtime)", cfg.Host, cfg.Web)
+	}
+}
+
+func TestAssemblePipelineConfigUncoverWithoutQueryStillErrors(t *testing.T) {
+	dir := t.TempDir()
+	jsonCfg := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(jsonCfg, []byte(`{"options":{"uncover":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := assemblePipelineConfig(jsonCfg, "", "", ""); err == nil {
+		t.Error("expected an error: options.uncover is on but uncoverQuery is empty, so there's really nothing to seed from")
+	}
+}
+
 func TestAssemblePipelineConfigHostFileOnly(t *testing.T) {
 	dir := t.TempDir()
 	hostFile := filepath.Join(dir, "hosts.txt")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,8 +221,16 @@ func tlsxDiscoveryArgs(target string) []string {
 // subfinderArgs builds the WEB stage's passive subdomain lookup for one
 // domain. -max-time/-timeout keep it well inside externalToolTimeout (its
 // own default is 10 minutes), -silent gives one name per line.
-func subfinderArgs(domain string) []string {
-	return []string{"-d", domain, "-silent", "-duc", "-max-time", "3", "-timeout", "20"}
+// providerConfig, when non-empty, is passed as -pc (verified against the
+// real CLI: -pc/-provider-config, default
+// "$XDG_CONFIG_HOME/subfinder/provider-config.yaml") -- see
+// chaosProviderConfig (gap 11's chaos half).
+func subfinderArgs(domain, providerConfig string) []string {
+	args := []string{"-d", domain, "-silent", "-duc", "-max-time", "3", "-timeout", "20"}
+	if providerConfig != "" {
+		args = append(args, "-pc", providerConfig)
+	}
+	return args
 }
 
 // dnsxBruteArgs builds dnsx's subdomain brute force for one domain:
@@ -248,6 +257,69 @@ func dnsxWildcardArgs(listFile, domain string) []string {
 // the explosion, since every result becomes a DNS query.
 func alterxArgs(listFile string) []string {
 	return []string{"-l", listFile, "-silent", "-duc", "-limit", "2000"}
+}
+
+// uncoverEngineEnvVars maps an `uncover -e` engine name to the env var(s)
+// it needs an API key/token in. Verified against uncover v1.2.1's own
+// sources/provider.go (LoadProviderKeysFromEnv) -- these are the exact
+// names `uncover` itself already reads, not srt's invention, so a key an
+// operator already has set for using `uncover` by hand keeps working here
+// with no extra config. A nil value (shodan-idb) means no key is needed at
+// all -- it's Shodan's free InternetDB lookup, keyed by IP/CIDR rather
+// than a free-text query, so it doesn't fit options.uncoverQuery's
+// "seed hosts from a search" use case and isn't offered as a default
+// engine, but is still usable via -uncover-engines.
+var uncoverEngineEnvVars = map[string][]string{
+	"shodan":     {"SHODAN_API_KEY"},
+	"shodan-idb": nil,
+	"fofa":       {"FOFA_EMAIL", "FOFA_KEY"},
+	"censys":     {"CENSYS_API_TOKEN", "CENSYS_ORGANIZATION_ID"},
+	"quake":      {"QUAKE_TOKEN"},
+	"hunter":     {"HUNTER_API_KEY"},
+	"zoomeye":    {"ZOOMEYE_API_KEY"},
+	"netlas":     {"NETLAS_API_KEY"},
+	"criminalip": {"CRIMINALIP_API_KEY"},
+	"publicwww":  {"PUBLICWWW_API_KEY"},
+	"hunterhow":  {"HUNTERHOW_API_KEY"},
+	"google":     {"GOOGLE_API_KEY", "GOOGLE_API_CX"},
+	"odin":       {"ODIN_API_KEY"},
+	"binaryedge": {"BINARYEDGE_API_KEY"},
+	"onyphe":     {"ONYPHE_API_KEY"},
+	"driftnet":   {"DRIFTNET_API_KEY"},
+	"greynoise":  {"GREYNOISE_API_KEY"},
+	"daydaymap":  {"DAYDAYMAP_API_KEY"},
+	"nerdydata":  {"NERDYDATA_API_KEY"},
+}
+
+// uncoverEngineHasKey reports whether every env var engine's provider needs
+// is set. An unrecognized engine name reports false rather than guessing --
+// better to skip it than silently pass it through to a real invocation
+// that `uncover` itself would then reject.
+func uncoverEngineHasKey(engine string) bool {
+	envs, known := uncoverEngineEnvVars[engine]
+	if !known {
+		return false
+	}
+	for _, e := range envs {
+		if os.Getenv(e) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// uncoverArgs builds a scope-seeding uncover call (gap 11): -f ip gives a
+// bare IP per line, the same shape ipexpand/portscan already expect from a
+// "host" config entry (verified against the real CLI: -f/-field accepts
+// ip, port, host, or a colon-joined combination -- "ip" alone is exactly
+// what's needed here, not uncover's own default "ip:port"). -silent drops
+// its banner/progress; -duc skips its own per-run update check.
+func uncoverArgs(query string, engines []string, limit int) []string {
+	args := []string{"-q", query, "-e", strings.Join(engines, ","), "-f", "ip", "-silent", "-duc"}
+	if limit > 0 {
+		args = append(args, "-l", strconv.Itoa(limit))
+	}
+	return args
 }
 
 // katanaArgs builds the WEB stage's crawl of one target. Every flag exists

@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words", "dork", "dork-api-key", "dork-cx", "dork-max-daily"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words", "dork", "dork-api-key", "dork-cx", "dork-max-daily", "chaos-key", "uncover", "uncover-query", "uncover-engines", "uncover-limit"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -74,6 +74,11 @@ func Run(args []string) error {
 	dorkAPIKey := fs.String("dork-api-key", "", "with -dork: Google Custom Search API key (default: $SRT_GOOGLE_API_KEY; same as options.dorkAPIKey)")
 	dorkCX := fs.String("dork-cx", "", "with -dork: Google Programmable Search Engine ID (default: $SRT_GOOGLE_CSE_ID; same as options.dorkCX)")
 	dorkMaxDaily := fs.Int("dork-max-daily", 0, "with -dork: hard cap on Custom Search queries per API key per UTC day, tracked across every dork/pipeline run on this machine (default: the free tier's own limit, 100 -- lower it, don't raise it, unless you've deliberately enabled billing; same as options.dorkMaxDaily)")
+	chaosKey := fs.String("chaos-key", "", "WEB stage: API key for subfinder's \"chaos\" passive subdomain source (default: $"+EnvChaosAPIKey+"; same as options.chaosAPIKey)")
+	uncoverFlag := fs.Bool("uncover", false, "HOST stage: seed additional host targets from a Shodan/Censys/etc. search via `uncover` before ipexpand (off by default; needs -uncover-query and a key for the chosen engine(s); same as options.uncover in a JSON config)")
+	uncoverQuery := fs.String("uncover-query", "", "with -uncover: the search query, e.g. 'org:\"Acme Corp\"' (engine-specific syntax; same as options.uncoverQuery)")
+	uncoverEngines := fs.String("uncover-engines", "", "with -uncover: comma list of `uncover -e` engine(s) to query (default: shodan; same as options.uncoverEngines)")
+	uncoverLimit := fs.Int("uncover-limit", 0, "with -uncover: cap on results (default: uncover's own default, 100; same as options.uncoverLimit)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -93,7 +98,16 @@ func Run(args []string) error {
 
 	cfg, err := assemblePipelineConfig(*cfgPath, *hostFile, *webScope, *name)
 	if err != nil {
-		return err
+		// -uncover -uncover-query alone (no -c/-host-file/-web-scope) is a
+		// legitimate "seed the whole HOST scope from a search query"
+		// invocation; assemblePipelineConfig can't know that yet since
+		// -uncover/-uncover-query are CLI flags merged below, not part of
+		// what it itself was given.
+		if *uncoverFlag && *uncoverQuery != "" && *cfgPath == "" && *hostFile == "" && *webScope == "" {
+			cfg = &pipelineConfig{Name: *name}
+		} else {
+			return err
+		}
 	}
 	if *noEasyWins {
 		disabled := false
@@ -168,6 +182,26 @@ func Run(args []string) error {
 	}
 	if *dorkMaxDaily > 0 {
 		cfg.Options.DorkMaxDaily = *dorkMaxDaily
+	}
+	if *chaosKey != "" {
+		cfg.Options.ChaosAPIKey = *chaosKey
+	}
+	if *uncoverFlag {
+		enabled := true
+		cfg.Options.Uncover = &enabled
+	}
+	if *uncoverQuery != "" {
+		cfg.Options.UncoverQuery = *uncoverQuery
+	}
+	if *uncoverEngines != "" {
+		for _, e := range strings.Split(*uncoverEngines, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				cfg.Options.UncoverEngines = append(cfg.Options.UncoverEngines, e)
+			}
+		}
+	}
+	if *uncoverLimit > 0 {
+		cfg.Options.UncoverLimit = *uncoverLimit
 	}
 
 	kinds, err := resolveKinds(*kindFlag, cfg)
@@ -325,7 +359,12 @@ func assemblePipelineConfig(cfgPath, hostFile, webScope, name string) (*pipeline
 		cfg.Name = name
 	}
 
-	if len(cfg.Host) == 0 && len(cfg.Web) == 0 {
+	// options.uncover + options.uncoverQuery (set from a -c config's own
+	// JSON at this point, not yet from -uncover/-uncover-query CLI flags --
+	// see Run()'s own bypass for that case) seeds the whole HOST scope
+	// from a search query, so an otherwise-empty config is legitimate, not
+	// a mistake.
+	if len(cfg.Host) == 0 && len(cfg.Web) == 0 && !(cfg.Options.uncoverOrDefault(false) && cfg.Options.UncoverQuery != "") {
 		return nil, ioutil.ErrMissing("no targets: pass -c <config.json>, -host-file <file>, and/or -web-scope <burp.json> (or run from a directory containing *-in-scope / target_assets.json)")
 	}
 	return cfg, nil

@@ -599,12 +599,24 @@ func dnsDiscoverDomains(cfg *pipelineConfig, ds, known []string, outDir string) 
 		steps = append(steps, runExternal("web", "dnsx-wildcard", d, "dnsx", dnsxWildcardArgs(in, d), out))
 		return mustLines(out)
 	}
+	// gap 11 (chaos half): subfinder already has a "chaos" passive source,
+	// it just needs a key in its provider config. Resolved once, outside
+	// the per-domain loop, since every subfinder call this stage makes
+	// shares the same key.
+	var chaosProviderFile string
+	if key := chaosAPIKey(cfg.Options); key != "" {
+		var cerr error
+		chaosProviderFile, cerr = chaosProviderConfig(key, outDir)
+		if cerr != nil {
+			steps = append(steps, stepResult{Kind: "web", Name: "chaos-provider-config", Status: "error", Detail: cerr.Error()})
+		}
+	}
 	for _, d := range ds {
 		safe := safeName(d)
 		var found []string
 		if cfg.Options.subfinderOrDefault(true) {
 			f := filepath.Join(outDir, "01e_subfinder_"+safe+".txt")
-			steps = append(steps, runExternal("web", "subfinder", d, "subfinder", subfinderArgs(d), f))
+			steps = append(steps, runExternal("web", "subfinder", d, "subfinder", subfinderArgs(d, chaosProviderFile), f))
 			found = append(found, mustLines(f)...)
 		}
 		if wl := subdomainWordlist(cfg, outDir); wl != "" {

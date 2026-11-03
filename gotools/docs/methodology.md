@@ -54,7 +54,11 @@ then `pdtm -i vulnx,nuclei,cdncheck,tlsx,subfinder,dnsx,alterx,katana`):
 
 - **subfinder** — passive subdomain sources beyond crt.sh. **On by
   default** (`options.subfinder`/`-no-subfinder`); third-party lookups
-  only, no traffic to the target.
+  only, no traffic to the target. Includes **chaos** (gap 11) once
+  `options.chaosAPIKey`/`-chaos-key` gives it a key (falls back to
+  `$SRT_CHAOS_API_KEY`); subfinder already supports chaos as a source, it
+  just needs one in its provider config, which `pipeline` writes for the
+  run.
 - **dnsx** — DNS brute force (`-d`/`-w`) with a second `-wd` pass that
   drops wildcard answers, run by default (embedded SecLists top-20000 list, or `options.subdomainsWordlist`);
   also resolves alterx's permutations.
@@ -96,7 +100,13 @@ scope (IPs, or a pipeline JSON config's "host" list)
 
 1. **Scope**: a list of IPs/CIDRs, or the `host` section of a `pipeline`
    JSON config (see [pipeline.md](pipeline.md)). Splits into **included**
-   and **excluded** the way a Burp/program scope does.
+   and **excluded** the way a Burp/program scope does. *(Scope-building
+   from a search query rather than a known IP list is also implemented,
+   gap 11: `options.uncover`/`-uncover` seeds additional host targets via
+   `uncover` (github.com/projectdiscovery/uncover) before anything else
+   runs, e.g. `-uncover-query 'org:"Acme Corp"'` against Shodan/Censys/etc.
+   Off by default, needs a key for the chosen engine(s) — clean skip
+   otherwise, see [pipeline.md](pipeline.md).)*
 2. **Excluded hosts are never actively touched.** The only information
    gathered about them is passive: a reverse DNS lookup and a route trace.
    *(Implemented: a `pipeline` `host` entry with `"excluded": true` skips

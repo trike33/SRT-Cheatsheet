@@ -17,7 +17,8 @@ import (
 // runHostStage runs the HOST methodology (docs/methodology.md) against
 // config.Host entries, writing output under outDir ("<outputDir>/host/"):
 //
-//	ipexpand -> resolve (reverse DNS, informational) -> portscan
+//	uncover (options.uncover, off by default, scope-building -- gap 11)
+//	  -> ipexpand -> resolve (reverse DNS, informational) -> portscan
 //	  -> cdncheck (options.cdnCheck, on by default): flag IPs behind a
 //	     known CDN/WAF/cloud provider -- informational, a local dataset
 //	     lookup with no traffic to the target
@@ -43,7 +44,23 @@ import (
 // services off to -- see runWebStage's own doc comment for what it does.
 func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScopeFile string) []stepResult {
 	var steps []stepResult
-	if len(cfg.Host) == 0 {
+
+	// --- 00b: uncover (gap 11, scope-building) -- options.uncover/
+	// -uncover, off by default. Seeds additional host targets from a
+	// Shodan/Censys/etc. search before anything else, so they flow
+	// through ipexpand/portscan below exactly like an explicit "host"
+	// entry. Runs even with no explicit cfg.Host at all (an "uncover-only"
+	// config, seeding the whole HOST scope from just a query) -- note
+	// that still needs -kind host (or host,web) explicitly, since
+	// pipeline's own auto-kind-detection keys off cfg.Host being
+	// non-empty.
+	var uncovered []string
+	if cfg.Options.uncoverOrDefault(false) {
+		var us []stepResult
+		uncovered, us = runUncoverSeed(cfg, outDir)
+		steps = append(steps, us...)
+	}
+	if len(cfg.Host) == 0 && len(uncovered) == 0 {
 		return steps
 	}
 
@@ -55,6 +72,9 @@ func runHostStage(cfg *pipelineConfig, outDir string, webHandoff bool, hostScope
 		} else {
 			included = append(included, e)
 		}
+	}
+	for _, h := range uncovered {
+		included = append(included, targetEntry{Target: h})
 	}
 	steps = append(steps, runExcludedHosts(excluded, outDir)...)
 	if len(included) == 0 {

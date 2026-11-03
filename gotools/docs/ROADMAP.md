@@ -4,6 +4,78 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### chaos / uncover wired in (gap 11)
+- **chaos**: subfinder already has a `chaos` passive subdomain source —
+  verified against a real `subfinder` v2.17.0 binary (`subfinder -ls`
+  lists `chaos *`, and its `pkg/runner/config.go` loads a plain
+  `sourceName: [keys...]` YAML provider config). `options.chaosAPIKey`/
+  `-chaos-key` (falls back to `$SRT_CHAOS_API_KEY`) writes a dedicated
+  `chaos_provider_config.yaml` for the run's `subfinder -pc` calls
+  (`internal/pipeline/chaos.go`) rather than touching the operator's own
+  `~/.config/subfinder/provider-config.yaml` — meaning any *other* source
+  keys in that file (securitytrails, etc.) don't apply to this
+  invocation specifically; documented rather than attempting a merge,
+  since subfinder's config format has no stable Go library here to parse
+  against. No key: unchanged behavior, exactly as before this shipped.
+- **uncover** (github.com/projectdiscovery/uncover), HOST stage, gap 11's
+  "scope-building" half: `options.uncover`/`-uncover` (off by default)
+  seeds additional host targets from a Shodan/Censys/etc. search
+  (`options.uncoverQuery`/`-uncover-query`, e.g. `org:"Acme Corp"`) before
+  `ipexpand`, so discovered hosts flow through the rest of the HOST stage
+  exactly like an explicit target — even with `cfg.Host`/`cfg.Web`
+  otherwise completely empty (a config that's just `options.uncover` +
+  `options.uncoverQuery` is legitimate; `-kind host` must still be passed
+  explicitly, since `pipeline`'s own auto-`-kind` detection keys off the
+  config's `host`/`web` lists, not its options). `-f ip` (verified
+  against the real CLI) gives bare IPs, the exact shape a "host" config
+  entry already is.
+  - **Per-engine keys need no srt-side key management at all**: verified
+    against uncover v1.2.1's own `sources/provider.go` that it already
+    reads standard per-engine env vars itself (`SHODAN_API_KEY`,
+    `FOFA_EMAIL`+`FOFA_KEY`, `CENSYS_API_TOKEN`+
+    `CENSYS_ORGANIZATION_ID`, ... — 18 engines, full list in
+    `internal/pipeline/external.go`'s `uncoverEngineEnvVars`), so a key an
+    operator already has set up for using `uncover` by hand just works
+    here. srt checks those same env vars itself before invoking (rather
+    than parsing uncover's own fatal-error text, which a real
+    no-credentials run was confirmed to print: `could not run
+    enumeration: ... requires keys but no keys were found`, exit 1) —
+    **cleanly skipped**, naming the missing engine(s), when none of the
+    requested engines has a key, or `options.uncoverQuery` is empty.
+  - **`shodan-idb`** (Shodan's free InternetDB lookup, keyed by IP/CIDR
+    rather than a free-text search) needs no key at all — confirmed
+    against uncover's source (`sources/agent/shodanidb/shodan.go`:
+    `https://internetdb.shodan.io/%s`, no auth) — but doesn't fit
+    `options.uncoverQuery`'s "seed hosts from a search" shape, so it's
+    not a default engine; still usable via `options.uncoverEngines`.
+  - **A real sandbox-network finding, not assumed**: every host this
+    feature's live queries would hit (`internetdb.shodan.io`,
+    `chaos.projectdiscovery.io`, `dns.projectdiscovery.io`) is blocked in
+    this project's own dev sandbox, same as most external hosts here —
+    but invoking subfinder's `chaos` source specifically (with a dummy
+    key, to see what happens) **hung** rather than failing fast the way
+    every other subfinder source already shipped does through this
+    sandbox's proxy (confirmed: the default subfinder call with no
+    `-s chaos` completes in seconds, same command with `-s chaos` didn't
+    finish in 20s+ and had to be killed). Not a defect in this feature —
+    outside this sandbox, `chaos.projectdiscovery.io` is a normal public
+    HTTPS API — but genuinely not independently live-verified beyond
+    that, flagged here rather than presented as checked, per this
+    project's "verify, don't just trust docs" norm. `runExternal`'s
+    existing hard 5-minute wall-clock timeout (added after the earlier
+    katana-hang finding) still bounds the worst case either way.
+- Verified live end to end, not just unit tests: a bare `srt pipeline
+  -kind host -uncover -uncover-query 'org:"test"'` with no API key
+  configured produced exactly the expected clean-skip step and manifest
+  entry; the same command with `SHODAN_API_KEY` set and a fake `uncover`
+  binary on `PATH` correctly seeded a host, which then flowed all the way
+  through real `ipexpand`/`resolve`/`portscan` (and on into the WEB
+  stage's own web-handoff) with `cfg.Host` completely empty the whole
+  time.
+- See [pipeline.md's host stage, step
+  0](pipeline.md#host-stage--outputdirhost) and
+  [methodology.md](methodology.md)'s HOST "Scope" entry.
+
 ### `resolve -type`: CNAME/MX/NS/TXT record collection
 - **`srt resolve` can now collect `cname`/`mx`/`ns`/`txt` records**
   alongside its existing forward (A/AAAA) and reverse (PTR, `-reverse`)
@@ -828,10 +900,11 @@ methodology.md's External-tool policy.
   Cloud Platform API key for the CLI to work at all (not just
   rate-limited-without-one like `vulnx`), which is real adoption friction
   for a default-on or even default-off pipeline step — would need its own
-  config field for the key and a clear skip when it's absent.
-- **`uncover`** — aggregates Shodan/Censys/etc. searches for exposed
-  assets matching a query. Needs per-engine API keys to do anything useful,
-  same friction as `asnmap`; lower priority than the above.
+  config field for the key and a clear skip when it's absent. Still open
+  (not the same tool as `uncover` below, which is shipped).
+- ~~**`uncover`**~~ — done, see Shipped (gap 11): aggregates Shodan/
+  Censys/etc. searches for exposed assets matching a query, wired into
+  the HOST stage as `options.uncover`/`-uncover`.
 
 ### WEB pipeline: target flow and gaps (investigated, not started)
 
@@ -897,12 +970,13 @@ dnsx/alterx) -> tlsx -> `probe` (roots only) -> `gau` -> `sensitive` +
     checking the file still exists, and `-content-scan` (off by default)
     fetches every URL including dead ones and soft-404 pages. Both should
     run over the validated list only.
-11. **chaos / uncover not wired.** Both need a ProjectDiscovery/engine API
-    key. chaos is a subdomain source (subfinder can use it once a chaos key
-    is in its provider config — worth documenting before adding a tool);
-    uncover (Shodan/Censys/...) seeds hosts/IPs from a query and belongs at
-    scope-building, with a config field for keys and a clean skip when
-    absent.
+11. ~~**chaos / uncover not wired.**~~ *(done — see Shipped:
+    `options.chaosAPIKey`/`options.uncover`)* *(original note:)* Both need
+    a ProjectDiscovery/engine API key. chaos is a subdomain source
+    (subfinder can use it once a chaos key is in its provider config —
+    worth documenting before adding a tool); uncover (Shodan/Censys/...)
+    seeds hosts/IPs from a query and belongs at scope-building, with a
+    config field for keys and a clean skip when absent.
 12. ~~**Google dorking**~~ *(done — see Shipped: `srt dork` +
     `options.dork`)*.
 

@@ -51,6 +51,11 @@ srt pipeline -c engagement.json -kind host,web -o ./out
 | `-active-on-subdomains` | off | WEB stage: also run robots/fuzz/katana against probe-confirmed-live discovered subdomains, not just the explicit web targets (same as `options.activeOnSubdomains`) |
 | `-active-on-subdomains-max` | `20` | with `-active-on-subdomains`: cap to this many live discovered subdomains, first-confirmed first (same as `options.activeOnSubdomainsMax`) |
 | `-no-context-words` | off | WEB stage: don't add `fuzz -words-auto`'s curated per-host words, or engagement-name words, to the fuzz wordlist (same as `options.contextWords:false`) |
+| `-chaos-key` | `$SRT_CHAOS_API_KEY` | WEB stage: API key for subfinder's `chaos` passive subdomain source (same as `options.chaosAPIKey`) |
+| `-uncover` | off | HOST stage: seed additional host targets from a Shodan/Censys/etc. search before `ipexpand` (same as `options.uncover`) |
+| `-uncover-query` | — | with `-uncover`: the search query, e.g. `org:"Acme Corp"` (same as `options.uncoverQuery`) |
+| `-uncover-engines` | `shodan` | with `-uncover`: comma list of `uncover -e` engine(s) to query (same as `options.uncoverEngines`) |
+| `-uncover-limit` | `100` | with `-uncover`: cap on results (same as `options.uncoverLimit`) |
 | `-dork` | off | WEB stage: Google dorking -- generate (and, with credentials, run) dork queries per target domain + engagement name (same as `options.dork`) |
 | `-dork-api-key`, `-dork-cx` | `$SRT_GOOGLE_API_KEY`/`$SRT_GOOGLE_CSE_ID` | with `-dork`: Google Custom Search API key / Programmable Search Engine ID (same as `options.dorkAPIKey`/`options.dorkCX`) |
 | `-dork-max-daily` | `100` | with `-dork`: hard cap on Custom Search queries per API key per UTC day, tracked across every run on this machine (same as `options.dorkMaxDaily`; see [commands.md](commands.md#dork)) |
@@ -267,6 +272,28 @@ pipeline to run.
 Targets are grouped by their effective `ports` value so each distinct port
 spec only runs once:
 
+0. `uncover` (github.com/projectdiscovery/uncover), **gap 11,
+   scope-building**, only with `options.uncover`/`-uncover` (off by
+   default) — seeds additional host targets from a Shodan/Censys/etc.
+   search (`options.uncoverQuery`/`-uncover-query`, e.g. `org:"Acme
+   Corp"`) before anything else, so they flow through every step below
+   exactly like an explicit `host` entry. Works even with no explicit
+   `host`/`web` targets at all — a config that's just
+   `{"options":{"uncover":true,"uncoverQuery":"..."}}` is legitimate, but
+   still needs `-kind host` (or `host,web`) explicitly, since auto-`-kind`
+   detection only looks at the config's own `host`/`web` lists. **Cleanly
+   skipped**, naming what's missing, if `options.uncoverQuery` is empty or
+   none of `options.uncoverEngines`' engines (default `shodan`) has a key
+   configured — checked via the same environment variables `uncover`
+   itself reads (`SHODAN_API_KEY`, `FOFA_EMAIL`+`FOFA_KEY`,
+   `CENSYS_API_TOKEN`+`CENSYS_ORGANIZATION_ID`, ...; see
+   [ROADMAP.md](ROADMAP.md) gap 11 for the full engine/env-var list), so a
+   key already set up for using `uncover` by hand keeps working with no
+   extra srt config. `options.uncoverLimit`/`-uncover-limit` caps results
+   (default: `uncover`'s own default, 100). `uncover` itself isn't a
+   separate `srt` subcommand -- it's driven straight from this step, the
+   same as `vulnx`/`nuclei`/`cdncheck`/`tlsx`/`katana`/`subfinder`/`dnsx`/
+   `alterx` all are.
 1. `ipexpand` — expand CIDRs/IPs into a unique IP list.
 2. `resolve -reverse` — reverse DNS lookup per IP, informational (the
    methodology's "DNS check" for included hosts).
@@ -360,7 +387,12 @@ stage discovered and handed off (written to a `web/` subfolder of that
    isn't installed.
 3b2. `subfinder` / `dnsx` / `alterx` (ProjectDiscovery), per domain, each
    skipped cleanly if not installed: **subfinder** (on by default,
-   `-no-subfinder`) adds passive sources; **dnsx** (unless active brute
+   `-no-subfinder`) adds passive sources -- including **chaos** (gap 11)
+   once `options.chaosAPIKey`/`-chaos-key` (or `$SRT_CHAOS_API_KEY`) gives
+   it a key: subfinder already has a `chaos` source, it just needs one in
+   its provider config, which this writes for the run (see
+   [ROADMAP.md](ROADMAP.md) gap 11 for what that does and doesn't touch of
+   subfinder's own default config); **dnsx** (unless active brute
    force is disabled) brute-forces `<word>.<domain>` and a second `dnsx -wd` pass
    drops wildcard answers (the native brute force can't tell those from real
    hosts); with `options.permutations`/`-permutations` (off by default),
