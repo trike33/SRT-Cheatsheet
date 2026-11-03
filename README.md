@@ -27,7 +27,8 @@ curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install
 cd gotools && make build && ./srt help
 ```
 
-Update an existing install the same way:
+`install.sh` won't reinstall over an existing `srt` — it just prints the
+current version and points here. Update an existing install this way instead:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash

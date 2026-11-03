@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Updates an existing srt install -- re-runs install.sh fresh each time (no
 # local version cache), so this is always "whatever's latest right now."
-# By default that is the latest GitHub Release binary; with --local-build it
-# pulls the repo clone and recompiles instead (see install.sh for details,
-# including SRT_SRC_DIR and PREFIX).
+# install.sh itself refuses to reinstall over an existing srt (it just
+# prints the current version and points here); this script forces past
+# that (SRT_INSTALL_FORCE=1) since forcing past it is the whole point of
+# update.sh. By default that is the latest GitHub Release binary; with
+# --local-build it pulls the repo clone and recompiles instead (see
+# install.sh for details, including SRT_SRC_DIR and PREFIX).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
@@ -85,7 +88,9 @@ if [ -x "$BIN_PATH" ]; then
 fi
 echo "Current: ${old_version}" >&2
 
-curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/install.sh" | bash -s -- "${args[@]}"
+# install.sh now short-circuits ("already installed, run update.sh") when
+# srt is already present -- that's exactly this script, so force it through.
+curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/install.sh" | SRT_INSTALL_FORCE=1 bash -s -- "${args[@]}"
 
 new_version="$("$BIN_PATH" version 2>/dev/null | head -1)"
 echo "Updated: ${old_version} -> ${new_version:-unknown}" >&2

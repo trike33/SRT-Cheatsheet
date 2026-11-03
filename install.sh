@@ -7,6 +7,11 @@
 #   ./install.sh --local-build            # clone + compile instead (needs git, Go 1.24+)
 #   curl -fsSL .../install.sh | bash -s -- --local-build
 #   sudo ./install.sh --with-pd           # also install vulnx/nuclei/cdncheck/tlsx/subfinder/dnsx/alterx/katana via pdtm
+#   sudo ./install.sh --force             # reinstall even if srt is already at $PREFIX/bin
+#
+# If srt is already installed at $PREFIX/bin, this prints its version and
+# exits without touching it -- run update.sh to actually update, or pass
+# --force to reinstall/repair in place from here.
 #
 # --with-pd installs (building pdtm with Go if missing) the ProjectDiscovery
 # tools the pipeline can use, as the invoking user (SUDO_USER), not root.
@@ -21,16 +26,22 @@ set -euo pipefail
 REPO="trike33/SRT-Cheatsheet"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME="srt"
+BIN_PATH="${PREFIX}/bin/${BIN_NAME}"
 SRC_DIR="${SRT_SRC_DIR:-$HOME/.local/src/SRT-Cheatsheet}"
 LOCAL_BUILD=0
 WITH_PD=0
+# update.sh re-invokes this script and needs it to actually (re)install even
+# though srt is already present -- SRT_INSTALL_FORCE is how it says so
+# without the user having to pass --force themselves.
+FORCE="${SRT_INSTALL_FORCE:-0}"
 
 for arg in "$@"; do
   case "$arg" in
     --local-build) LOCAL_BUILD=1 ;;
     --with-pd) WITH_PD=1 ;;
+    --force) FORCE=1 ;;
     -h | --help)
-      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -39,6 +50,15 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$FORCE" -ne 1 ] && [ -x "$BIN_PATH" ]; then
+  current="$("$BIN_PATH" version 2>/dev/null | head -1)"
+  echo "srt is already installed: ${current:-unknown version} (${BIN_PATH})" >&2
+  echo "To update, run update.sh:" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/update.sh | sudo bash" >&2
+  echo "Or reinstall in place here with: $0 --force" >&2
+  exit 0
+fi
 
 # --- ProjectDiscovery tools (opt-in), managed through pdtm -------------------
 # Duplicated in install.sh / update.sh / uninstall.sh on purpose: each one has
@@ -86,9 +106,9 @@ pd_run() {
 # Installs $1 to ${PREFIX}/bin/srt and reports the version.
 install_bin() {
   install -d "${PREFIX}/bin"
-  install -m 0755 "$1" "${PREFIX}/bin/${BIN_NAME}"
-  echo "Installed to ${PREFIX}/bin/${BIN_NAME}" >&2
-  "${PREFIX}/bin/${BIN_NAME}" version
+  install -m 0755 "$1" "$BIN_PATH"
+  echo "Installed to ${BIN_PATH}" >&2
+  "$BIN_PATH" version
   case ":${PATH}:" in
     *":${PREFIX}/bin:"*) ;;
     *) echo "note: ${PREFIX}/bin is not on your PATH -- add: export PATH=\"${PREFIX}/bin:\$PATH\"" >&2 ;;

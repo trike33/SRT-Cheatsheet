@@ -49,7 +49,11 @@ Go 1.24+ toolchain and installs to `$PREFIX/bin` (default `/usr/local`; use
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/install.sh | sudo bash -s -- --local-build
 ```
 
-Update the same way later: swap `install.sh` for `update.sh` in that command (it takes `--local-build` too).
+Already have `srt` installed? `install.sh` won't reinstall over it — it
+prints the current version and tells you to run `update.sh` instead
+(`install.sh --force` reinstalls/repairs in place if you really want that
+script specifically). Update the same way later: swap `install.sh` for
+`update.sh` in that command (it takes `--local-build` too).
 Uninstall with `uninstall.sh` the same way (`--purge` also deletes the
 `--local-build` clone).
 Windows: grab `srt-windows-amd64.exe` from
