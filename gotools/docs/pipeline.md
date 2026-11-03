@@ -195,6 +195,16 @@ exact Burp include/exclude rules, not just a flattened host list.
   `common.txt` unless a `wordlist` is configured. It sends one request per
   word (times the auto-detected extensions) to each explicit web target;
   `options.rate`/`concurrency` bound it.
+- `options.manualFuzz` (also `-no-manual-fuzz` to disable; options-only)
+  controls *how* fuzz picks its targets. **On by default**: instead of
+  brute-forcing every target automatically, the run pauses and lets you
+  cherrypick — see "the fuzz step: manual cherrypick" below. Automatically
+  falls back to the old automatic behavior whenever there's no terminal to
+  prompt on (`-dry-run`, a config run from CI, the `srt shell`).
+  `options.fuzzDirsWordlist`/`fuzzFilesWordlist` (also
+  `-fuzz-dirs-wordlist`/`-fuzz-files-wordlist`) override the two default
+  wordlists the prompts offer (SecLists' `raft-medium-directories.txt`/
+  `raft-medium-files.txt`).
 - `options.subfinder` (also `-no-subfinder`; options-only) adds
   [subfinder](https://github.com/projectdiscovery/subfinder)'s passive
   sources to subdomain discovery. **On by default** — third-party lookups
@@ -451,10 +461,15 @@ stage discovered and handed off (written to a `web/` subfolder of that
 6. `robots` — per target, fetch `robots.txt` and probe its paths, plus the
    same-host URLs of the sitemap(s) it declares (or `/sitemap.xml`), capped
    at 100 per target.
-7. `fuzz` — directory/file brute force per target, **on by default**
-   (`options.fuzz:false`/`-no-fuzz` to disable). Wordlist: the target's
-   `wordlist`, else `options.wordlist`, else the SecLists `common.txt`
-   (~4.7k names) embedded in the binary. `options.contextWords`/
+7. `fuzz` — directory/file brute force, **on by default**
+   (`options.fuzz:false`/`-no-fuzz` to disable). By default
+   (`options.manualFuzz`, see below) this is an interactive two-round
+   cherrypick over probe's results rather than every target automatically;
+   `-no-manual-fuzz` (or no terminal to prompt on) falls back to brute-
+   forcing every target automatically, one call per target. Wordlist in
+   that automatic path: the target's `wordlist`, else `options.wordlist`,
+   else the SecLists `common.txt` (~4.7k names) embedded in the binary.
+   `options.contextWords`/
    `-no-context-words` (**on by default**, gap 7) adds `fuzz -words-auto`
    (curated per-host words from its detected tech stack/page title, capped
    at 40/host, reusing step 6's -ext-auto probe when that's also on) plus,

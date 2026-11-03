@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,6 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/dork"
-	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/fuzz"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/gau"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/paramdiscover"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/recon/probe"
@@ -242,20 +242,35 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		steps = append(steps, skipStep("web", "gau", "", "no domains extracted from targets (bare-IP targets skip gau/sensitive/params, which key off a resolvable domain)"))
 	} else {
 		seen := map[string]struct{}{}
+		inScopeURL := urlInScopeFilter(cfg)
+		outOfScope := 0
 		for _, d := range allDomains {
 			d := d
 			gauFile := filepath.Join(outDir, "02_gau_"+safeName(d)+".txt")
 			gauTimeout := cfg.Options.timeoutDuration(90 * time.Second).String()
+			gauArgs := []string{"-d", d, "-o", gauFile, "-timeout", gauTimeout}
+			// gau's -sub pulls archived URLs from every subdomain of d; only
+			// ask for them when the scope allows subdomains of this host.
+			if subAllowed(d) {
+				gauArgs = append(gauArgs, "-sub")
+			}
 			steps = append(steps, runStep("web", "gau", d, gauFile, func() error {
-				return gau.Run([]string{"-d", d, "-sub", "-o", gauFile, "-timeout", gauTimeout})
+				return gau.Run(gauArgs)
 			}))
 			for _, l := range mustLines(gauFile) {
 				if _, dup := seen[l]; dup {
 					continue
 				}
+				if !inScopeURL(l) {
+					outOfScope++
+					continue
+				}
 				seen[l] = struct{}{}
 				allURLs = append(allURLs, l)
 			}
+		}
+		if outOfScope > 0 {
+			ioutil.Warn("gau: dropped %d archived URL(s) outside the scope", outOfScope)
 		}
 		if err := writeLinesFile(allURLsFile, allURLs); err != nil {
 			steps = append(steps, stepResult{Kind: "web", Name: "merge-urls", Status: "error", Detail: err.Error()})
@@ -370,79 +385,29 @@ func runWebStage(cfg *pipelineConfig, outDir string, hostScopeFile string) []ste
 		}
 	}
 
-	for _, e := range fuzzTargets {
-		if e.Target == "" {
-			continue
-		}
-		if !cfg.Options.fuzzOrDefault(true) {
-			steps = append(steps, skipStep("web", "fuzz", e.Target, "disabled (options.fuzz:false / -no-fuzz)"))
-			continue
-		}
-		wordlist := resolveWordlist(e, cfg.Options)
-		if wordlist == "" {
-			// No wordlist configured: fall back to the common.txt embedded
-			// in the binary rather than skipping the step.
-			var werr error
-			if wordlist, werr = wordlists.DirectoriesFile(outDir); werr != nil {
-				steps = append(steps, skipStep("web", "fuzz", e.Target, "embedded wordlist: "+werr.Error()))
-				continue
-			}
-		}
-
-		fuzzFile := filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json")
-		args := []string{"-u", fuzzURL(e.Target), "-w", wordlist, "-json", "-o", fuzzFile}
-		if nameWordsFile != "" {
-			args = append(args, "-w", nameWordsFile)
-		}
-
-		targetScope := e.Scope
-		if targetScope == "" {
-			targetScope = cfg.Options.Scope
-		}
-		if targetScope != "" {
-			args = append(args, "-scope", targetScope)
-		}
-		for _, ext := range e.Extensions {
-			args = append(args, "-e", ext)
-		}
-		if len(e.Extensions) == 0 && cfg.Options.autoExtensionsOrDefault(true) {
-			args = append(args, "-ext-auto") // tech-detect hints + live verification
-		}
-		if cfg.Options.contextWordsOrDefault(true) {
-			args = append(args, "-words-auto") // per-host tech-stack/title words, gap 7
-		}
-		if cfg.Options.Concurrency > 0 {
-			args = append(args, "-c", strconv.Itoa(cfg.Options.Concurrency))
-		}
-		if cfg.Options.Rate > 0 {
-			args = append(args, "-rate", strconv.Itoa(cfg.Options.Rate))
-		}
-		if cfg.Options.RateGlobal > 0 {
-			args = append(args, "-rate-global", strconv.Itoa(cfg.Options.RateGlobal))
-		}
-		args = append(args, "-timeout", cfg.Options.timeoutDuration(10*time.Second).String())
-		args = append(args, "-insecure="+strconv.FormatBool(cfg.Options.insecureOrDefault(true)))
-		if cfg.Options.Proxy != "" {
-			args = append(args, "-proxy", cfg.Options.Proxy)
-		}
-
-		args = append(args, resumeStateArgs(fuzzFile)...)
-		steps = append(steps, runStep("web", "fuzz", e.Target, fuzzFile, func() error {
-			return fuzz.Run(args)
-		}))
-	}
+	fuzzSteps, fuzzFiles := runFuzzStage(cfg, outDir, fuzzTargets, nameWordsFile)
+	steps = append(steps, fuzzSteps...)
 
 	// --- 06b: merge every endpoint source into one list (gau's archived
 	// URLs + robots/sitemap hits + fuzz hits), then 03/04: sensitive +
 	// params over that merged list -- so they see what the active steps
 	// found, not just what Wayback remembers.
-	var fuzzFiles []string
-	for _, e := range fuzzTargets {
-		if e.Target != "" {
-			fuzzFiles = append(fuzzFiles, filepath.Join(outDir, "06_fuzz_"+safeName(e.Target)+".json"))
-		}
-	}
 	endpoints := collectEndpoints(append(allURLs, dorkURLs...), filepath.Join(outDir, "05_robots.txt"), fuzzFiles, crawled)
+	// Last gate before the validate/sensitive/params steps send real
+	// requests to these: nothing from any source may be out of scope.
+	{
+		inScopeURL := urlInScopeFilter(cfg)
+		kept := endpoints[:0:0]
+		for _, u := range endpoints {
+			if inScopeURL(u) {
+				kept = append(kept, u)
+			}
+		}
+		if n := len(endpoints) - len(kept); n > 0 {
+			ioutil.Warn("endpoints: dropped %d URL(s) outside the scope before validation", n)
+		}
+		endpoints = kept
+	}
 	endpointsFile := filepath.Join(outDir, "06b_endpoints.txt")
 	if len(endpoints) > 0 {
 		if err := writeLinesFile(endpointsFile, endpoints); err != nil {
@@ -905,6 +870,53 @@ func subdomainPolicy(cfg *pipelineConfig) (allowedHost func(string) bool, nameOK
 		return true
 	}
 	return
+}
+
+// urlInScopeFilter returns the gate every URL found by a passive or crawling
+// source (gau, katana, dorks, sitemaps, fuzz) must pass before it can join
+// the endpoint list -- which later steps (validate, sensitive, params,
+// param-discover) send real requests to. A URL passes when its host is
+// allowed by the subdomain policy (an exact-host scope rule never admits a
+// subdomain) and, when any Burp scope file is configured (pipeline-wide or
+// per target), some scope file's include/exclude rules admit it. With no
+// scope information at all it admits everything, as before.
+func urlInScopeFilter(cfg *pipelineConfig) func(string) bool {
+	_, nameOK := subdomainPolicy(cfg)
+	var matchers []*scope.Matcher
+	seen := map[string]bool{}
+	load := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		if m, err := scope.LoadScopeMatcher(path); err == nil {
+			matchers = append(matchers, m)
+		} else {
+			ioutil.Warn("scope %s: %v (not used to filter discovered URLs)", path, err)
+		}
+	}
+	load(cfg.Options.Scope)
+	for _, e := range cfg.Web {
+		load(e.Scope)
+	}
+	return func(raw string) bool {
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" {
+			return false
+		}
+		if !nameOK(u.Hostname()) {
+			return false
+		}
+		if len(matchers) == 0 {
+			return true
+		}
+		for _, m := range matchers {
+			if m.InScope(raw) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func baseURL(target string) string {

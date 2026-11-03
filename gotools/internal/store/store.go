@@ -126,13 +126,25 @@ type Sink struct {
 	stop  chan struct{} // ends the periodic flusher
 }
 
-// current is the process-wide active run, nil when not saving.
-var current *Sink
+// current is the process-wide active run, nil when not saving. currentMu
+// guards it: a recon package's own goroutine can call store.CurrentSink()
+// at any time, including after the pipeline step that started it considers
+// itself done (a skipped/abandoned pipeline step keeps running in the
+// background -- see pipeline.runStep -- and most recon packages save
+// results as they go, not just at the end).
+var (
+	currentMu sync.Mutex
+	current   *Sink
+)
 
 // CurrentSink returns the active sink, or nil if nothing is being saved.
 // Sink's methods are nil-safe, so `store.CurrentSink().Add(rec)` is always
 // a valid call, saving every call site a nil check.
-func CurrentSink() *Sink { return current }
+func CurrentSink() *Sink {
+	currentMu.Lock()
+	defer currentMu.Unlock()
+	return current
+}
 
 const flushAt = 200
 
@@ -154,9 +166,16 @@ func StartSink(name string, args []string) (*Sink, error) {
 	}
 	id, _ := res.LastInsertId()
 	s := &Sink{db: db, runID: id, stop: make(chan struct{})}
+	currentMu.Lock()
 	current = s
+	currentMu.Unlock()
 	// Flush on a timer too, not only every flushAt records, so another
 	// reader (the shell's live-results window) sees results as they come.
+	// stopCh is captured once, by value, rather than read as s.stop on
+	// every loop iteration -- Close() reassigns s.stop (to nil, under
+	// s.mu) once it's done with it, and reading that field directly here
+	// would race with that write.
+	stopCh := s.stop
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
@@ -164,7 +183,7 @@ func StartSink(name string, args []string) (*Sink, error) {
 			select {
 			case <-t.C:
 				s.flush()
-			case <-s.stop:
+			case <-stopCh:
 				return
 			}
 		}
@@ -198,6 +217,14 @@ func (s *Sink) flushLocked() {
 	if len(s.buf) == 0 {
 		return
 	}
+	if s.db == nil {
+		// Closed already (see Close()): a recon package's own goroutine --
+		// still finishing a real request after its pipeline step was
+		// skipped/abandoned -- added these after the fact. Nothing to
+		// flush them to any more; drop them rather than panic on a nil DB.
+		s.buf = s.buf[:0]
+		return
+	}
 	if err := insertRecords(s.db, s.runID, s.buf); err != nil {
 		ioutil.Warn("saving results: %v", err)
 	} else {
@@ -226,6 +253,11 @@ func (s *Sink) Close() {
 	s.db.Exec(`UPDATE runs SET ended_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), s.runID)
 	s.db.Close()
 	s.db = nil
+	currentMu.Lock()
+	if current == s {
+		current = nil
+	}
+	currentMu.Unlock()
 	ioutil.Warn("saved %d record(s) to %s (run %d)", s.count, DBPath(), s.runID)
 }
 

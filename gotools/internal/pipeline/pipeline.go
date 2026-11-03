@@ -37,7 +37,7 @@ func Run(args []string) error {
 	fs.Usage = func() {
 		cli.PrintGroupedUsage(fs, []cli.UsageSection{
 			{Title: "INPUT", Names: []string{"c", "host-file", "web-scope", "name", "kind"}},
-			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words", "dork", "dork-api-key", "dork-cx", "dork-max-daily", "chaos-key", "uncover", "uncover-query", "uncover-engines", "uncover-limit"}},
+			{Title: "EXECUTION", Names: []string{"dry-run", "no-web-handoff", "resume", "no-db", "no-detect", "easy-wins", "no-easy-wins", "content-scan", "no-cdn-check", "no-tlsx", "no-subfinder", "no-active-subdomains", "no-fuzz", "no-manual-fuzz", "fuzz-dirs-wordlist", "fuzz-files-wordlist", "no-validate", "no-crawl", "permutations", "param-discover", "param-discover-max", "param-discover-top", "active-on-subdomains", "active-on-subdomains-max", "no-context-words", "dork", "dork-api-key", "dork-cx", "dork-max-daily", "chaos-key", "uncover", "uncover-query", "uncover-engines", "uncover-limit"}},
 			{Title: "OUTPUT", Names: []string{"o", "color"}},
 		})
 	}
@@ -58,6 +58,9 @@ func Run(args []string) error {
 	noSubfinder := fs.Bool("no-subfinder", false, "WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default -- third-party lookups only, no traffic to the target; same as options.subfinder:false)")
 	noActiveSubdomains := fs.Bool("no-active-subdomains", false, "WEB stage: skip the active DNS brute force of subdomains (on by default, using the embedded SecLists top-20000 list or options.subdomainsWordlist; same as options.subdomainsActive:false)")
 	noFuzz := fs.Bool("no-fuzz", false, "WEB stage: skip directory/file brute force (fuzz) of the web targets (on by default, using the target's/options.wordlist or the embedded SecLists common.txt; same as options.fuzz:false)")
+	noManualFuzz := fs.Bool("no-manual-fuzz", false, "WEB stage: skip the interactive cherrypick fuzz flow and brute-force every target automatically instead, no prompts (cherrypick is on by default and needs a terminal -- it already falls back to this automatically for -dry-run/CI/the srt shell; same as options.manualFuzz:false)")
+	fuzzDirsWordlist := fs.String("fuzz-dirs-wordlist", "", "WEB stage: the manual-fuzz cherrypick prompts' \"directories\" default wordlist (default: SecLists' raft-medium-directories.txt; same as options.fuzzDirsWordlist)")
+	fuzzFilesWordlist := fs.String("fuzz-files-wordlist", "", "WEB stage: the manual-fuzz cherrypick prompts' \"files\" default wordlist (default: SecLists' raft-medium-files.txt; same as options.fuzzFilesWordlist)")
 	noValidate := fs.Bool("no-validate", false, "WEB stage: skip re-probing the merged endpoint list for soft-404s (on by default -- one request per endpoint plus a few calibration requests per host; sensitive/params then run on the unvalidated list; same as options.validate:false)")
 	noCrawl := fs.Bool("no-crawl", false, "WEB stage: skip the katana crawl of the web targets (on by default; depth 3, 3-minute cap, same host only; skipped if katana isn't installed; same as options.crawl:false)")
 	permutations := fs.Bool("permutations", false, "WEB stage: generate alterx permutations of the discovered names and resolve them with dnsx (off by default -- multiplies DNS queries; same as options.permutations in a JSON config)")
@@ -124,6 +127,16 @@ func Run(args []string) error {
 	if *noFuzz {
 		disabled := false
 		cfg.Options.Fuzz = &disabled
+	}
+	if *noManualFuzz {
+		disabled := false
+		cfg.Options.ManualFuzz = &disabled
+	}
+	if *fuzzDirsWordlist != "" {
+		cfg.Options.FuzzDirsWordlist = *fuzzDirsWordlist
+	}
+	if *fuzzFilesWordlist != "" {
+		cfg.Options.FuzzFilesWordlist = *fuzzFilesWordlist
 	}
 	if *noActiveSubdomains {
 		disabled := false

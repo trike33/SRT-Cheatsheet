@@ -93,6 +93,9 @@ type pipelineOptions struct {
 	UncoverQuery          string   `json:"uncoverQuery,omitempty"`          // HOST stage: the search query for options.uncover, e.g. `org:"Acme Corp"` (engine-specific syntax)
 	UncoverEngines        []string `json:"uncoverEngines,omitempty"`        // HOST stage: which `uncover -e` engine(s) to query (default ["shodan"]); each needs its own API key -- see ROADMAP.md gap 11 for the full list/env vars
 	UncoverLimit          int      `json:"uncoverLimit,omitempty"`          // HOST stage: cap on results per options.uncover run (default: uncover's own default, 100)
+	ManualFuzz            *bool    `json:"manualFuzz,omitempty"`            // WEB stage: interactive two-round cherrypick fuzz (pick hosts + a wordlist from probe's results, then pick which of those to recurse into) instead of brute-forcing every target automatically (default true; falls back to the old automatic behavior when stdin isn't a terminal, e.g. -dry-run/CI/the srt shell)
+	FuzzDirsWordlist      string   `json:"fuzzDirsWordlist,omitempty"`      // WEB stage: the manual-fuzz cherrypick prompts' "directories" default wordlist (default: SecLists' raft-medium-directories.txt)
+	FuzzFilesWordlist     string   `json:"fuzzFilesWordlist,omitempty"`     // WEB stage: the manual-fuzz cherrypick prompts' "files" default wordlist (default: SecLists' raft-medium-files.txt)
 }
 
 // timeoutDuration parses Timeout, defaulting to def when unset or invalid.
@@ -225,6 +228,13 @@ func (o pipelineOptions) insecureOrDefault(def bool) bool {
 		return def
 	}
 	return *o.Insecure
+}
+
+func (o pipelineOptions) manualFuzzOrDefault(def bool) bool {
+	if o.ManualFuzz == nil {
+		return def
+	}
+	return *o.ManualFuzz
 }
 
 // pipelineConfig is the top-level shape of a -c <file>.json pipeline input.

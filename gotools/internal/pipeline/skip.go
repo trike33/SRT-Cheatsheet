@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/fuzzctl"
@@ -29,6 +30,14 @@ type skipListener struct {
 	fd       int
 	oldState *term.State
 	done     chan struct{} // ends the control-file poller (shell mode)
+	// rfile is a dup of fd that read()'s loop actually reads from (nil in
+	// shell/control-file mode, fd < 0). Reading from a dup rather than
+	// os.Stdin directly lets pause() force that blocked read to return (by
+	// closing the dup) without touching the real stdin fd, so a second
+	// reader -- the manual-fuzz cherrypick prompts -- can safely take over
+	// os.Stdin right after, with no race between the two for the next byte
+	// typed. A bare os.Stdin.Read, once blocked, can't be cancelled at all.
+	rfile *os.File
 }
 
 // startControlSkipListener is the skip listener for a pipeline run by the
@@ -74,8 +83,23 @@ func startSkipListener() *skipListener {
 		return nil
 	}
 	sl := &skipListener{requests: make(chan struct{}, 1), fd: fd, oldState: oldState}
-	go sl.read()
+	sl.dupAndRead()
 	return sl
+}
+
+// dupAndRead duplicates sl.fd into sl.rfile and starts read() reading from
+// it, so a later pause() can retire that exact fd without disturbing the
+// real stdin fd. Falls back to reading os.Stdin directly (the old,
+// un-pausable behavior) if the dup fails, which should never happen in
+// practice.
+func (sl *skipListener) dupAndRead() {
+	dfd, err := syscall.Dup(sl.fd)
+	if err != nil {
+		sl.rfile = nil
+	} else {
+		sl.rfile = os.NewFile(uintptr(dfd), "stdin-skip")
+	}
+	go sl.read()
 }
 
 // read is the raw-mode stdin loop. Raw mode disables the terminal's own
@@ -84,9 +108,13 @@ func startSkipListener() *skipListener {
 // and replicates halt.InstallHandler's usual SIGINT behavior so Ctrl+C
 // keeps halting the whole run exactly as before.
 func (sl *skipListener) read() {
+	rf := sl.rfile
+	if rf == nil {
+		rf = os.Stdin
+	}
 	buf := make([]byte, 1)
 	for {
-		n, err := os.Stdin.Read(buf)
+		n, err := rf.Read(buf)
 		if err != nil || n == 0 {
 			return
 		}
@@ -108,6 +136,10 @@ func (sl *skipListener) restore() {
 	if sl.oldState != nil {
 		term.Restore(sl.fd, sl.oldState)
 	}
+	if sl.rfile != nil {
+		sl.rfile.Close() // unblocks read()'s pending Read so that goroutine exits
+		sl.rfile = nil
+	}
 }
 
 // stop restores the terminal's normal mode. Safe to call on a nil listener.
@@ -119,6 +151,38 @@ func (sl *skipListener) stop() {
 		close(sl.done)
 	}
 	sl.restore()
+}
+
+// pause temporarily restores normal (cooked, echoing) stdin mode and retires
+// the skip-key listener's own reader, so pipeline code can safely read
+// line-based input from the user -- the manual-fuzz cherrypick prompts are
+// the only caller. It returns a resume func that re-enters raw mode and
+// restarts skip-key detection; callers must call it exactly once, after
+// they're done reading, even on an error path (defer it).
+//
+// A nil listener, or one with no real terminal to pause (fd < 0: the srt
+// shell's control-file mode, which has no terminal on this process's stdin
+// at all), is a no-op in both directions -- callers in that situation must
+// not attempt interactive prompts in the first place.
+func (sl *skipListener) pause() func() {
+	if sl == nil || sl.fd < 0 {
+		return func() {}
+	}
+	sl.restore()
+	return func() {
+		oldState, err := term.MakeRaw(sl.fd)
+		if err != nil {
+			return
+		}
+		sl.oldState = oldState
+		sl.dupAndRead()
+	}
+}
+
+// interactive reports whether sl has a real terminal a caller could pause()
+// to read line-based prompts from (nil or shell/control-file mode: no).
+func (sl *skipListener) interactive() bool {
+	return sl != nil && sl.fd >= 0
 }
 
 // skipChan returns the channel a select waits on to abandon the current

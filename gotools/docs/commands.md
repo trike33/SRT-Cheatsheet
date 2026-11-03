@@ -805,7 +805,9 @@ Full guide in [pipeline.md](pipeline.md).
 | `-no-active-subdomains` | off | WEB stage: skip the default active DNS brute force of subdomains (embedded SecLists top-20000 list; or `options.subdomainsWordlist`) |
 | `-no-crawl` | off | WEB stage: skip the katana crawl (default on; skipped if katana isn't installed) |
 | `-no-validate` | off | WEB stage: skip the soft-404-aware re-probe of merged endpoints (default on) |
-| `-no-fuzz` | off | WEB stage: skip directory/file brute force (default on; embedded `common.txt` unless a wordlist is configured) |
+| `-no-fuzz` | off | WEB stage: skip directory/file brute force entirely (default on) |
+| `-no-manual-fuzz` | off | WEB stage: skip the interactive cherrypick fuzz flow, brute-force every target automatically instead (cherrypick is on by default, needs a terminal, and already falls back to this for `-dry-run`/CI/the `srt shell`) |
+| `-fuzz-dirs-wordlist` / `-fuzz-files-wordlist` | SecLists `raft-medium-directories.txt` / `raft-medium-files.txt` | the manual-fuzz cherrypick prompts' two default wordlists |
 | `-no-subfinder` | off | WEB stage: don't add subfinder's passive sources to subdomain discovery (on by default) |
 | `-permutations` | off | WEB stage: alterx permutations of discovered names, resolved with dnsx (opt-in) |
 | `-content-scan` | off | WEB stage: fetch every merged URL and scan its body for secrets instead of just classifying by extension (opt-in) |
