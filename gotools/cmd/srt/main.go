@@ -37,8 +37,12 @@ import (
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/pipeline"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/ftp"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/ldap"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/mssql"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/rdp"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/smb"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/ssh"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/telnet"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/vnc"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dirlist"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dork"
@@ -109,6 +113,7 @@ func applyGlobalFlags() {
 var structuredSaveCommands = map[string]bool{
 	"portscan": true, "fuzz": true, "probe": true, "pipeline": true,
 	"ftp": true, "telnet": true, "smb": true, "ldap": true,
+	"ssh": true, "mssql": true, "vnc": true, "rdp": true,
 }
 
 // dbCommands read the database, so they are never run "with -save".

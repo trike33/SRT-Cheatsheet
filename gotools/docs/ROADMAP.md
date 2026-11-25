@@ -4,6 +4,102 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Protocol clients: four more protocols -- `ssh`, `mssql`, `vnc`, `rdp`
+Beyond the original roadmap's four (`ftp`/`telnet`/`smb`/`ldap`), each a
+login/credential check only, following the same read-only, never-writes-
+deletes-or-executes convention. All four were tested against **real**
+server implementations installed in this environment, not only hand-rolled
+fake servers -- the strongest confidence level anything in this roadmap has
+had so far, and it caught two real bugs before they shipped (see below).
+
+- **`ssh`** wraps `golang.org/x/crypto/ssh`, Go's own client *and server*
+  implementation of the protocol. Its tests drive the real client against
+  that same library's server side -- genuine protocol-level testing, not a
+  stand-in. Every target is tried with no credentials at all first (the
+  `"none"` method, which the client always sends regardless of what's
+  configured -- RFC 4252; a server that accepts it outright needs no
+  password, flagged `no-auth`), then `-u`/`-p` and `-key` (a private key
+  file, its own passphrase coming from `-p`). The banner is read over a
+  *separate* throwaway connection: `NewClientConn` always returns a nil
+  `Conn` on any handshake failure (confirmed by reading its source), with
+  no public way to recover the version strings it already read, so the
+  usual case -- the first, anonymous attempt being rejected -- would
+  otherwise lose the banner entirely. Never opens a shell or runs a
+  command.
+- **`mssql`** wraps `microsoft/go-mssqldb`, the official driver. A
+  `"DOMAIN\user"` username (built automatically from `-u`+`-d`) activates
+  the driver's own built-in NTLM provider with no extra flag -- confirmed
+  by reading the driver's own `auth_unix.go`/`ntlm.go` rather than guessed.
+  `-H` isn't supported (the NTLM provider takes a password only). A
+  successful login runs `SELECT @@VERSION` and a bounded `sys.databases`
+  list; `xp_cmdshell` and every other execution-capable stored procedure
+  are never called. **Real bug caught by testing**: a hand-built
+  `msdsn.Config` left `Protocols` empty, which the driver's
+  `dialConnection` silently treats as "no protocol configured" --
+  returning `(nil, nil)` instead of an error -- and the caller then
+  panics on a nil `net.Conn` two calls deeper. This would have crashed on
+  *every* real invocation; caught by `TestProbeConnectionRefused` failing
+  with a panic instead of a clean error, fixed by setting `Protocols:
+  []string{"tcp"}` explicitly.
+- **`vnc`** is hand-rolled (RFC 6143): no maintained Go VNC library exists,
+  every option found is an abandoned fork of `mitchellh/go-vnc`. Supports
+  exactly the two security types every real deployment uses -- `None`
+  (`no-auth`) and VNC Authentication (the classic bit-reversed-DES
+  challenge-response, `-p`); anything else (Tight/VeNCrypt/TLS) is a
+  `banner` Finding naming what was offered, not a failure. Tested against
+  a **real TigerVNC server** (`tigervnc-standalone-server`, installed and
+  run locally for this), both with and without a password configured.
+  **Real bug caught by testing, and a real server behavior worth
+  documenting**: `protocols.Creds.Attempts()` requires a `-u` to produce
+  any non-anonymous credential at all, which silently dropped a bare `-p`
+  with no `-u` -- the natural way to invoke this command, since VNC has no
+  username. Fixed with a new `protocols.Creds.RawPasswords()` for
+  protocols with no username concept. Separately (not a bug): hammering
+  one TigerVNC server with a failed password immediately before a correct
+  one made the *correct* one fail too, "broken pipe" -- TigerVNC throttles
+  a client after recent failures, closing the next connection before the
+  handshake can finish. The test suite works around this by giving the
+  wrong-password and right-password cases their own server instances;
+  `vnc.go`'s own doc comment carries the warning for real usage, and this
+  package does not add an inter-attempt delay to paper over a target's own
+  throttle.
+- **`rdp`** is deliberately scoped down, not a full login check: no
+  maintained Go library for RDP's NLA (CredSSP) exists that's verified
+  against real Windows servers -- every option is either abandoned or
+  explicitly describes itself as unfinished -- and hand-rolling CredSSP
+  (SPNEGO wrapping NTLM/Kerberos inside TLS) with no live Windows RDP
+  server to verify it against was judged too much unverified binary-
+  protocol surface to ship. Instead, this reports only the X.224
+  Connection Request/Confirm security-protocol negotiation (MS-RDPBCGR
+  2.2.1.1/2.2.1.2) -- which layer the server offers (plain RDP Standard
+  Security, TLS, or CredSSP/NLA) and whether legacy, unencrypted RDP
+  Standard Security still works as a fallback -- never attempting a
+  login. The exact byte layout (TPKT header, X.224 CC TPDU, RDP_NEG_RSP/
+  RDP Negotiation Failure) was confirmed empirically against a **real
+  `xrdp` server** (installed locally), not derived from the spec alone --
+  `learn.microsoft.com` isn't reachable from this environment to read
+  MS-RDPBCGR directly. **Real bug caught this way**: an off-by-one in the
+  X.224 fixed-part length (treating the 1-byte class-option field as part
+  of the *following* negotiation structure instead of the fixed header)
+  made every real response unparseable ("unrecognized negotiation
+  structure type 0x0"); caught immediately by testing against the live
+  server, before any canned-bytes unit test was even written. The
+  negotiation-failure path (requesting plain RDP against an `xrdp`
+  instance reconfigured to require TLS) was also captured live and
+  confirmed to arrive in the same TCP segment as a trailing Disconnect
+  Request PDU, which the reader must stop short of (it reads exactly its
+  own TPKT-declared length) rather than choke on.
+- Every one of the four new result kinds (`ssh`, `mssql`, `vnc`, `rdp`)
+  follows the same severity/Record convention as the original four.
+- **Explicitly deferred, by the user's own choice, not an oversight**:
+  real command execution (service/WMI/scheduled-task-based — the actual
+  psexec/wmiexec/atexec equivalents `jfjallid/go-smb`'s `dcerpc` package
+  also exposes), an NTLM relay listener, and DCSync-style hash dumping.
+  Asked about directly (this doc's own "Risks" section had already
+  flagged exactly this fork in the road as needing confirmation before
+  building); the answer was to add protocol breadth instead, which is
+  what this entry is.
+
 ### Protocol clients: `smb` gains local-SAM enumeration via MS-SAMR
 - **`-local-enum`** (on by default): after a successful session, lists
   the target's **local** (non-domain) user accounts and local

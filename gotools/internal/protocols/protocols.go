@@ -215,6 +215,18 @@ func (c *Creds) Attempts() []Credential {
 // the person clearly wants a credentialed check.
 func (c *Creds) HasCreds() bool { return len(c.users) > 0 }
 
+// RawPasswords returns every -p value given, regardless of whether any
+// -u was given to pair it with. Attempts requires a -u to produce any
+// non-anonymous Credential at all (so a lone -p with no -u is a
+// Dangling entry, silently dropped there) -- which is right for every
+// protocol with a real username, but wrong for one that has no
+// username concept at all (vnc's classic security types: RFC 6143 has
+// no login name, only a password). A command for such a protocol reads
+// its passwords from here instead of Attempts, and should not also
+// call Dangling for -p (there's nothing dangling about a username-less
+// password).
+func (c *Creds) RawPasswords() []string { return append([]string(nil), c.passwords...) }
+
 // Dangling reports -p/-H entries with no matching -u, a near-certain
 // command-line mistake (netexec itself requires -u before -p) worth
 // warning about rather than silently dropping.

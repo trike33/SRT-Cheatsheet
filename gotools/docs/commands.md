@@ -18,7 +18,7 @@ ranges>"` narrows that further by HTTP status (e.g. `-where
 to; `srt results -kind` lists every kind actually saved so far. Commands
 with this fallback: `probe`, `portscan`, `resolve`, `traceroute`,
 `subdomains`, `gau`, `dork`, `sensitive`, `params`, `robots`, `validate`,
-`ftp`, `telnet`, `smb`, `ldap`.
+`ftp`, `telnet`, `smb`, `ldap`, `ssh`, `mssql`, `vnc`, `rdp`.
 
 If a command is still working 5 seconds after it starts, it logs a
 `still running (Ns elapsed)...` line to stderr every 5 seconds until it's
@@ -32,7 +32,7 @@ Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [params](#params) · [paramdiscover](#paramdiscover) · [dirlist](#dirlist) ·
 [robots](#robots) · [validate](#validate) · [snyk](#snyk) ·
 [relpaths](#relpaths) · [fuzz](#fuzz) ·
-[ftp · telnet · smb · ldap](#protocol-clients-ftp--telnet--smb--ldap) ·
+[ftp · telnet · smb · ldap · ssh · mssql · vnc · rdp](#protocol-clients-ftp--telnet--smb--ldap--ssh--mssql--vnc--rdp) ·
 [pipeline](#pipeline) ·
 [results](#results) · [runs](#runs) · [export](#export) · [db](#db) ·
 [shell](#shell) · [version](#version)
@@ -790,37 +790,42 @@ filter next time instead of guessing.
 
 ---
 
-## Protocol clients: ftp · telnet · smb · ldap
+## Protocol clients: ftp · telnet · smb · ldap · ssh · mssql · vnc · rdp
 
 Phases 1-2 of the internal-pentest protocol-client roadmap (see
-[ROADMAP.md](ROADMAP.md)): native Go clients for the AD/internal-network
-protocols impacket/netexec cover, wrapping a mature Go library per protocol
+[ROADMAP.md](ROADMAP.md)), plus four more protocols beyond that roadmap's
+original four: native Go clients wrapping a mature library per protocol
 (`internal/protocols/<name>`) behind SRT's own scope/results/metering
-conventions, rather than reimplementing the wire formats. Every one of these
-four shares the same flag shape, netexec-style:
+conventions, rather than reimplementing a wire format by hand -- `vnc` and
+`rdp`'s security-layer negotiation are the two exceptions, hand-rolled
+because no good library exists (see their own sections below). Every one of
+these eight shares the same credential flag shape, netexec-style, except
+`vnc` (no username concept) and `rdp` (no login attempted at all):
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-l` | stdin | target list: `host` or `host:port` (falls back to the project db's `port` records, like `probe`/`portscan`) |
 | `-u` | — | username (repeatable; default: anonymous/unauthenticated only) |
-| `-p` | — | password (repeatable, paired with `-u` in listed order) |
-| `-H` | — | NTLM/NT hash, for pass-the-hash (repeatable, paired with `-u`; `smb` and `ldap` use it directly, `ftp`/`telnet` don't take hash auth) |
+| `-p` | — | password (repeatable, paired with `-u` in listed order; `vnc` reads this directly, no `-u` needed) |
+| `-H` | — | NTLM/NT hash, for pass-the-hash (repeatable, paired with `-u`; `smb` and `ldap` use it directly, including over Kerberos for `smb`; `ftp`/`telnet`/`ssh`/`mssql`/`vnc` don't take hash auth) |
 | `-d` | — | AD domain (also the Kerberos realm for `-k`) |
 | `-local-auth` | off | authenticate against the target's local SAM, not the domain |
-| `-k` | off | Kerberos auth instead of NTLM/simple bind, where supported (`smb` and `ldap` do; `ftp`/`telnet` don't) |
+| `-k` | off | Kerberos auth instead of NTLM/simple bind, where supported (`smb` and `ldap` do) |
+| `-key` | — | (`ssh` only) private key file for public-key auth, tried alongside `-p` for every `-u` |
 | `-port` | the protocol's default | override the port |
 | `-timeout` | 8-10s | per-connection timeout |
 | `-c` | 10-20 | concurrent connections |
 | `-o` / `-json` / `-color` | stdout / off / `auto` | same as every other command |
 
 Every target is tried anonymous-first (so a bare `srt smb -l hosts.txt` needs
-no flags at all), then with each `-u`/`-p`/`-H`/`-k` attempt in turn until one
-is accepted. A result is saved as its own kind (`ftp`, `telnet`, `smb`,
-`ldap`) with a `severity` (`info`/`low`/`medium`/`high`) in its data, the same
-way `probe`'s `title`/`server`/`tech` are — `srt results -kind smb` lists
-them. None of the four ever writes, deletes or creates anything on the
-target, even when a login grants write access — `smb`'s spider (below) only
-lists directory names, never opens a file.
+no flags at all), then with each credential attempt in turn until one is
+accepted. A result is saved as its own kind (`ftp`, `telnet`, `smb`, `ldap`,
+`ssh`, `mssql`, `vnc`, `rdp`) with a `severity` (`info`/`low`/`medium`/`high`)
+in its data, the same way `probe`'s `title`/`server`/`tech` are — `srt
+results -kind smb` lists them. None of the eight ever writes, deletes,
+executes or opens a shell on the target, even when a login grants that
+access — `smb`'s spider (below) only lists directory names, never opens a
+file, and `ssh`'s login check never runs a command.
 
 ```bash
 srt ftp -l hosts.txt                                # anonymous-login check + root listing
@@ -828,6 +833,11 @@ srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash: fingerprint
 srt smb -l dc01.corp.local -u alice -p pw -d CORP.LOCAL -k    # Kerberos bind (needs the DC's hostname, not its IP)
 srt ldap -l hosts.txt -u svc-acct -p '' -d CORP      # simple bind as svc-acct@CORP + RootDSE + AD enum
 srt telnet -l hosts.txt -u root -p toor             # banner/no-auth-shell check, then try a login
+srt ssh -l hosts.txt -u deploy -key ~/.ssh/id_ed25519   # key auth check, no shell opened
+srt mssql -l hosts.txt -u sa -p '' -json            # SQL-auth login check + version/database list
+srt mssql -l hosts.txt -u administrator -p pw -d CORP   # NTLM/Windows auth (any "DOMAIN\user" triggers it)
+srt vnc -l hosts.txt -p mypassword                  # no-auth check, then the given password
+srt rdp -l hosts.txt                                # security-layer fingerprint only, never logs in
 ```
 
 **`ldap`'s authenticated enumeration** (`-enum`, on by default) runs after
@@ -866,6 +876,41 @@ is a shell" — it classifies by the conventional wording (`login:`,
 `username:`) versus a trailing shell-style prompt character (`$ # > %`), so an
 unusual banner can show up as a plain `banner` finding rather than
 `no-auth`/`login-ok`; read `-json`'s `detail` field when in doubt.
+
+**`ssh`** wraps `golang.org/x/crypto/ssh`. Every target is tried with no
+credentials at all first (`"none"`, RFC 4252 — the client always sends
+this first regardless of what's configured; a server that accepts it
+outright needs no password at all, flagged `no-auth`), then `-u`/`-p` and
+`-key` (paired with `-p` as the key's own passphrase, if it's encrypted).
+It never opens a shell or runs a command.
+
+**`mssql`** wraps `microsoft/go-mssqldb`, the official driver. A plain `-u`
+is SQL Server authentication; `-u` combined with `-d` becomes
+`"DOMAIN\user"`, which activates the driver's own NTLM provider
+automatically (no extra flag). `-H` isn't supported — the NTLM provider
+takes a password only. A successful login is followed by `SELECT
+@@VERSION` and a bounded `sys.databases` list — read-only; `xp_cmdshell`
+and every other execution-capable stored procedure are never called.
+
+**`vnc`** is a small hand-rolled RFB (RFC 6143) client — no maintained Go
+VNC library exists. It understands exactly the two security types every
+real deployment uses: `None` (no password at all, `no-auth`) and `VNC
+Authentication` (the classic DES challenge-response, `-p`). A server
+offering only the Tight/VeNCrypt/TLS extensions is reported as a `banner`
+Finding naming what it offered, not a failure. It never requests a
+framebuffer update or sends an input event. Real-world note: a VNC server
+that throttles a client after enough recent failed attempts (most do) can
+make a *later* password in a long `-p` list fail for that reason, not
+because it was wrong.
+
+**`rdp`** is deliberately scoped down from a full login check: no
+maintained, verified-against-real-servers Go library exists for RDP's NLA
+(every option is either abandoned or explicitly unfinished), so this
+reports only the X.224 Connection Request/Confirm security-protocol
+negotiation (MS-RDPBCGR 2.2.1.1/2.2.1.2) — which security layer the server
+offers (plain RDP Standard Security, TLS, or CredSSP/NLA) and whether
+legacy, unencrypted RDP Standard Security still works as a fallback — and
+never attempts a login. No `-u`/`-p`/credential flags apply here at all.
 
 ---
 

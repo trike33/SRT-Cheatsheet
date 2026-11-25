@@ -30,8 +30,8 @@ internal/
                     group), each self-registering with cli in its own init()
   protocols/        shared Target/Credential/Finding + the netexec-style
     ftp/ telnet/     global credential/connection flags every protocol
-    smb/ ldap/       command binds (protocols.go); one subpackage per
-                    protocol command, same self-registering convention as
+    smb/ ldap/ ssh/  command binds (protocols.go); one subpackage per
+    mssql/ vnc/ rdp/ protocol command, same self-registering convention as
                     recon/* -- see docs/ROADMAP.md's "Protocol clients"
   pipeline/         orchestrates the recon/* packages per docs/pipeline.md
   results/          the results/runs/export/db commands (the CLI over store)
