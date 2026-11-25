@@ -1,6 +1,7 @@
 package smb
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -93,9 +94,9 @@ func TestBuildInitiator(t *testing.T) {
 
 func TestProbeConnectionRefused(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	f := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
-	if f.Err == "" {
-		t.Fatalf("expected a connection error, got Finding %+v", f)
+	findings := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond, true)
+	if len(findings) != 1 || findings[0].Err == "" {
+		t.Fatalf("expected a single connection-error Finding, got %+v", findings)
 	}
 }
 
@@ -136,11 +137,74 @@ func TestProbeAgainstNonSMBServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	findings := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second, true)
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v, want exactly one", findings)
+	}
+	f := findings[0]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}
 	if !strings.Contains(f.Detail, "rejected") {
 		t.Errorf("Detail = %q, want it to explain the rejection", f.Detail)
+	}
+}
+
+func TestIsInterestingFile(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"vault.kdbx", true},
+		{"server.pem", true},
+		{"id_rsa", true},
+		{"id_rsa.pub", true}, // substring match, not just suffix
+		{"backup-passwords.xlsx", true},
+		{"Unattend.xml", true}, // case-insensitive
+		{"web.config", true},
+		{".npmrc", true},
+		{"readme.txt", false},
+		{"invoice.pdf", false},
+		{"photo.jpg", false},
+	}
+	for _, c := range cases {
+		if got := isInterestingFile(c.name); got != c.want {
+			t.Errorf("isInterestingFile(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestJoinHits(t *testing.T) {
+	hits := []shareHit{
+		{share: "Users", path: "alice/id_rsa"},
+		{share: "IT", path: "scripts/unattend.xml"},
+	}
+	got := joinHits(hits)
+	want := `Users\alice\id_rsa, IT\scripts\unattend.xml`
+	if got != want {
+		t.Errorf("joinHits = %q, want %q", got, want)
+	}
+}
+
+func TestShareReportString(t *testing.T) {
+	r := shareReport{
+		names:  []string{"IPC$", "C$", "Users"},
+		access: map[string]string{"IPC$": "IPC", "C$": "no-access", "Users": "readable"},
+	}
+	got := r.String()
+	for _, want := range []string{"3 share(s)", "IPC$ (IPC)", "C$ (no-access)", "Users (readable)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shareReport.String() = %q, want it to contain %q", got, want)
+		}
+	}
+
+	empty := shareReport{}
+	if got := empty.String(); got != "session accepted; no shares enumerated" {
+		t.Errorf("empty shareReport.String() = %q", got)
+	}
+
+	failed := shareReport{listErr: errors.New("access denied")}
+	if got := failed.String(); !strings.Contains(got, "share enumeration failed") {
+		t.Errorf("failed shareReport.String() = %q", got)
 	}
 }

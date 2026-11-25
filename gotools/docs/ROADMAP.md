@@ -4,6 +4,72 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Protocol clients, Phase 2 (partial): Kerberos LDAP bind, authenticated AD enum, SMB secrets spider
+- **`ldap -k`**: Kerberos/GSSAPI bind, via `go-ldap/ldap/v3`'s own `gssapi`
+  subpackage (its PR #402, built on `jcmturner/gokrb5/v8`) rather than a
+  hand-rolled GSSAPI client -- that matters here specifically because its
+  `InitSecContext`/`NegotiateSaslAuth` (RFC 4752 3.1) are exercised by
+  go-ldap's own test suite, a materially different confidence level than
+  code written in this repo with no live KDC to verify against. `srt`
+  writes a minimal, disposable `krb5.conf` per bind attempt (`-d`'s realm,
+  the target host as that realm's own KDC -- the common case for hitting a
+  DC directly) rather than depending on one already being configured.
+  **Not supported**: pass-the-key (a raw NT/AES key instead of a password)
+  -- `gokrb5`'s public `keytab.Keytab` API only derives keys from a
+  password (`AddEntry`), never accepts a raw key, so there's no way to
+  plug `-H` in here. The actual AS-REQ/TGS-REQ exchange goes over a
+  connection `gokrb5` dials itself straight to the target's port 88; it
+  does **not** go through `netx`'s metering/`-rate` (no dialer hook to
+  route it through), unlike every other request this package or any
+  `recon/*` package makes.
+- **`ldap`'s authenticated enumeration** (`-enum`, on by default, after
+  any successful bind -- anonymous included, in case a server allows
+  anonymous subtree searches even with general anonymous bind
+  restricted): a bulk `(&(objectCategory=person)(objectClass=user))`
+  search, bounded at 2000 entries, reduced to three findings beyond a
+  headline user count -- **AS-REP roastable accounts** (`userAccountControl`'s
+  `DONT_REQ_PREAUTH` bit, MS-SAMR 2.2.1.13: exactly the LDAP-side half of
+  the gap-analysis section's "Kerberoasting/ASREPRoasting as bulk ops"
+  item, candidate discovery without yet doing the AS-REQ/AS-REP roast
+  itself), **privileged-group membership** (`memberOf` matched against
+  Domain Admins/Enterprise Admins/Administrators/Schema Admins), and the
+  **domain password policy** read off the base DN object itself
+  (`minPwdLength`/`lockoutThreshold`/`maxPwdAge`/`pwdProperties`,
+  `maxPwdAge`'s negative 100ns-tick `Interval` converted to days),
+  flagged `weak-password-policy` when the minimum length is under 8,
+  complexity isn't required, or lockout is disabled. A search this
+  account can't run is dropped silently, not reported as an error --
+  enumeration is a bonus on a successful bind, not something the bind
+  should be judged to have failed over.
+- **`smb`'s secrets spider** (`-spider`, on by default): a bounded
+  recursive walk (depth 3, a 1000-entry visit budget shared across every
+  share, capped at 50 reported hits) of every share Phase 1's
+  `ReadDir`-on-root check already found readable, flagging filenames that
+  commonly carry credentials or secrets -- netexec's `spider_plus` module,
+  read-only: it lists directories and checks names, never opens a file's
+  contents. Curated extension list (`.kdbx`, `.pem`, `.key`, `.pfx`,
+  `.ppk`, `.ovpn`, ...) plus name substrings (`password`, `unattend`,
+  `id_rsa`, `web.config`, `.git-credentials`, ...), deliberately narrow to
+  keep the output signal-heavy rather than exhaustive.
+- **Testing note**: `ldap`'s new fake-server tests cover the bind
+  dispatch and every enumeration finding (extending the existing
+  BER-level fake server with the two new search shapes), plus that a
+  Kerberos attempt against a target with nothing on port 88 fails cleanly
+  rather than hanging; the real GSSAPI/AS-REQ wire exchange itself is
+  unverified against a live KDC, for the same reason noted under Phase 1
+  for SMB2's own handshake. `smb`'s spider walk (`walkDir`) can't be
+  tested at all without a real SMB2 server -- `go-smb2`'s `Share` is a
+  concrete struct with unexported fields, nothing to fake -- so coverage
+  there stays at the pure filename matcher (`isInterestingFile`) and
+  result formatting (same limitation as Phase 1's share-access checks).
+- **Still not done, from the original Phase 2 line item**: Kerberos for
+  `smb` (`go-smb2`'s `Initiator` is an unexported interface -- NTLM only,
+  no way to plug a Kerberos implementation in from outside the package;
+  would need a different SMB library or patching this one) and
+  pass-the-key for either protocol (see above). DCE/RPC exec/relay
+  (Phase 3) and the secretsdump/AD CS/BloodHound-style porting work
+  (Phase 4) remain entirely open.
+
 ### Protocol clients, Phase 1: `ftp`, `telnet`, `smb`, `ldap` (internal-pentest direction)
 - **New `internal/protocols` package family**, parallel to `internal/recon`:
   a shared `protocols` package (`Target`, `Credential`, `Finding`, and the

@@ -792,7 +792,7 @@ filter next time instead of guessing.
 
 ## Protocol clients: ftp · telnet · smb · ldap
 
-Phase 1 of the internal-pentest protocol-client roadmap (see
+Phases 1-2 of the internal-pentest protocol-client roadmap (see
 [ROADMAP.md](ROADMAP.md)): native Go clients for the AD/internal-network
 protocols impacket/netexec cover, wrapping a mature Go library per protocol
 (`internal/protocols/<name>`) behind SRT's own scope/results/metering
@@ -805,28 +805,47 @@ four shares the same flag shape, netexec-style:
 | `-u` | — | username (repeatable; default: anonymous/unauthenticated only) |
 | `-p` | — | password (repeatable, paired with `-u` in listed order) |
 | `-H` | — | NTLM/NT hash, for pass-the-hash (repeatable, paired with `-u`; `smb` and `ldap` use it directly, `ftp`/`telnet` don't take hash auth) |
-| `-d` | — | AD domain |
+| `-d` | — | AD domain (also the Kerberos realm for `ldap -k`) |
 | `-local-auth` | off | authenticate against the target's local SAM, not the domain |
-| `-k` | off | Kerberos auth instead of NTLM (not yet implemented — see [ROADMAP.md](ROADMAP.md)) |
+| `-k` | off | Kerberos auth instead of NTLM/simple bind, where supported (`ldap` only — see below; `smb`'s chosen library is NTLM-only) |
 | `-port` | the protocol's default | override the port |
 | `-timeout` | 8-10s | per-connection timeout |
 | `-c` | 10-20 | concurrent connections |
 | `-o` / `-json` / `-color` | stdout / off / `auto` | same as every other command |
 
 Every target is tried anonymous-first (so a bare `srt smb -l hosts.txt` needs
-no flags at all), then with each `-u`/`-p`/`-H` attempt in turn until one is
-accepted. A result is saved as its own kind (`ftp`, `telnet`, `smb`, `ldap`)
-with a `severity` (`info`/`low`/`medium`/`high`) in its data, the same way
-`probe`'s `title`/`server`/`tech` are — `srt results -kind smb` lists them.
-None of the four ever writes, deletes or creates anything on the target, even
-when a login grants write access.
+no flags at all), then with each `-u`/`-p`/`-H`/`-k` attempt in turn until one
+is accepted. A result is saved as its own kind (`ftp`, `telnet`, `smb`,
+`ldap`) with a `severity` (`info`/`low`/`medium`/`high`) in its data, the same
+way `probe`'s `title`/`server`/`tech` are — `srt results -kind smb` lists
+them. None of the four ever writes, deletes or creates anything on the
+target, even when a login grants write access — `smb`'s spider (below) only
+lists directory names, never opens a file.
 
 ```bash
-srt ftp -l hosts.txt                              # anonymous-login check + root listing
-srt smb -l hosts.txt -u administrator -H <nthash>  # pass-the-hash, share enum + read-access check
-srt ldap -l hosts.txt -u svc-acct -p '' -d CORP     # simple bind as svc-acct@CORP + RootDSE
-srt telnet -l hosts.txt -u root -p toor            # banner/no-auth-shell check, then try a login
+srt ftp -l hosts.txt                                # anonymous-login check + root listing
+srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash, share enum + secrets spider
+srt ldap -l hosts.txt -u svc-acct -p '' -d CORP      # simple bind as svc-acct@CORP + RootDSE + AD enum
+srt ldap -l dc01.corp.local -u alice -p pw -d CORP.LOCAL -k   # Kerberos bind (needs the DC's hostname, not its IP)
+srt telnet -l hosts.txt -u root -p toor             # banner/no-auth-shell check, then try a login
 ```
+
+**`ldap`'s authenticated enumeration** (`-enum`, on by default) runs after
+any successful bind: a bulk user search reduced to AS-REP roastable
+accounts (`userAccountControl`'s `DONT_REQ_PREAUTH` bit), membership in a
+well-known high-value group (Domain/Enterprise/Schema Admins,
+Administrators), and the domain password policy (flagged weak under an
+8-character minimum, no complexity requirement, or no lockout). `ldap -k`
+needs the realm (`-d`) and a password (pass-the-key isn't supported); the
+target must be the DC's actual hostname, not its IP, since that's what its
+LDAP service principal name is keyed to — `srt` writes a disposable
+`krb5.conf` per attempt, treating the target as its own realm's KDC.
+
+**`smb`'s secrets spider** (`-spider`, on by default) walks every share
+Phase 1's read-access check found readable (bounded depth and entry budget)
+flagging filenames that commonly carry credentials — `.kdbx`/`.pem`/`.key`/
+`.pfx`/`.ppk`/`.ovpn`, `password`/`unattend`/`id_rsa`/`web.config`/
+`.git-credentials` — reported as a separate `interesting-file` finding.
 
 `telnet` has no formal protocol marker for "this is a login prompt" or "this
 is a shell" — it classifies by the conventional wording (`login:`,
