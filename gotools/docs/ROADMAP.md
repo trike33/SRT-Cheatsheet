@@ -4,6 +4,52 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Protocol clients: `smb` gains local-SAM enumeration via MS-SAMR
+- **`-local-enum`** (on by default): after a successful session, lists
+  the target's **local** (non-domain) user accounts and local
+  Administrators-alias membership over MS-SAMR, the same DCE/RPC bind
+  pattern `listShares` already uses for MS-SRVS, just against
+  `\PIPE\samr` instead of `\PIPE\srvsvc`. `jfjallid/go-smb` (already
+  added for Kerberos/the fingerprint line, see the entry below) exposes
+  convenience methods (`ListLocalUsers`, `QueryLocalUserAllInfo`) that
+  made this a same-library extension, no new dependency.
+- Two findings beyond the headline count: a **disabled** tally and which
+  accounts have **`UserDontExpirePassword`** set (`QueryLocalUserAllInfo`,
+  bounded to the first 50 users -- one extra RPC round trip each, so not
+  run against all 500 `ListLocalUsers` can return), and **local
+  Administrators-alias membership** (`BUILTIN`, well-known RID 544 --
+  stable across every Windows version), reported separately the same way
+  `ldap`'s privileged-group-members finding sits apart from its bind
+  result. Tried regardless of which credential got the session in,
+  anonymous included: on legacy/misconfigured targets, `RestrictAnonymous`
+  being off has let exactly this succeed over a null session.
+- **A real, deliberate correctness check before writing this**: MS-SAMR's
+  `UserAccountControl` bit layout is *not* the same as the AD/LDAP
+  `userAccountControl` attribute's (MS-ADA3/MS-ADTS) bits `ldap`'s own
+  enumeration already reads -- e.g. SAMR's disabled bit is `0x1`, AD's is
+  `0x2`. Mixing the two tables up would silently misreport
+  disabled/never-expires status, exactly the kind of subtle bug worth
+  catching before it ships in a security tool; this entry uses
+  `mssamr.UserAccountDisabled`/`mssamr.UserDontExpirePassword` from the
+  library's own SAMR-specific constants, not `ldap`'s AD ones.
+- **Not attempted**: resolving the Administrators-alias members' raw SIDs
+  to names (`MS-LSAD`'s `LsarLookupSids2`, a second RPC bind) -- left as
+  SID strings for now to keep the round-trip count down; a SID's trailing
+  RID is often recognizable on its own (`-500` is the built-in
+  Administrator). Also not attempted: reading `LmOwfPassword`/
+  `NtOwfPassword` off `SamprUserAllInformation` -- those fields exist in
+  the struct (it mirrors several SAMR information levels, some
+  local-caller-only) but Windows does not return real hash material over
+  SAMR to a remote caller; reporting them would risk a tool that claims
+  to have dumped hashes it hasn't. Real remote hash extraction needs
+  DRSUAPI (DCSync) or the registry-based path impacket's
+  `secretsdump.py` uses, both still open (Phase 4).
+- **Tests**: `localAccountFindings` (the pure reduction from a
+  `localAccountReport` to Findings) is covered directly, including the
+  no-users and no-admins-resolved cases; the DCE/RPC calls themselves
+  aren't (same "no real server to fake against" limitation this file's
+  Phase 1 entry already notes for the SMB2 handshake and share listing).
+
 ### Protocol clients: `smb` moves to `jfjallid/go-smb` -- Kerberos auth, a real fingerprint line, and a real share list
 - **Library swap, not a fork or a wire-protocol reimplementation**: `smb`
   now wraps [`jfjallid/go-smb`](https://github.com/jfjallid/go-smb) instead

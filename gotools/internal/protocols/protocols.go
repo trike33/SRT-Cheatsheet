@@ -184,7 +184,7 @@ func BindCreds(fs *flag.FlagSet) *Creds {
 	fs.Var(&c.hashes, "H", "NTLM/NT hash, for pass-the-hash (repeatable, paired with -u in listed order; not yet used by every protocol -- see docs/ROADMAP.md)")
 	c.domain = fs.String("d", "", "AD domain")
 	c.localAuth = fs.Bool("local-auth", false, "authenticate against the target's local SAM, not the domain")
-	c.kerberos = fs.Bool("k", false, "use Kerberos auth instead of NTLM/simple bind, where this command supports it (ldap does; see docs/ROADMAP.md for the rest)")
+	c.kerberos = fs.Bool("k", false, "use Kerberos auth instead of NTLM/simple bind, where this command supports it (smb and ldap do; see docs/ROADMAP.md for the rest)")
 	return c
 }
 

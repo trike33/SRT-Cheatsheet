@@ -162,7 +162,7 @@ func TestBuildInitiatorKerberos(t *testing.T) {
 
 func TestProbeConnectionRefused(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond, true)
+	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond, true, true)
 	if len(findings) != 1 || findings[0].Err == "" {
 		t.Fatalf("expected a single connection-error Finding, got %+v", findings)
 	}
@@ -205,7 +205,7 @@ func TestProbeAgainstNonSMBServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second, true)
+	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second, true, true)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %+v, want exactly one", findings)
 	}
@@ -277,6 +277,69 @@ func TestShareReportString(t *testing.T) {
 	failed := shareReport{listErr: errors.New("access denied")}
 	if got := failed.String(); !strings.Contains(got, "share enumeration failed") {
 		t.Errorf("failed shareReport.String() = %q", got)
+	}
+}
+
+func TestJoinCapped(t *testing.T) {
+	if got := joinCapped([]string{"a", "b"}, 5); got != "a, b" {
+		t.Errorf("joinCapped under cap = %q", got)
+	}
+	got := joinCapped([]string{"a", "b", "c", "d"}, 2)
+	if got != "a, b, +2 more" {
+		t.Errorf("joinCapped over cap = %q, want %q", got, "a, b, +2 more")
+	}
+}
+
+func TestLocalAccountFindings(t *testing.T) {
+	cr := protocols.Anonymous
+
+	// No users enumerated at all (the common case on a hardened target):
+	// no findings, not an empty/placeholder one.
+	if got := localAccountFindings(testTarget, cr, localAccountReport{}); got != nil {
+		t.Errorf("empty report: findings = %+v, want nil", got)
+	}
+
+	r := localAccountReport{
+		users:        []string{"alice", "bob", "svc-backup"},
+		disabled:     1,
+		neverExpires: []string{"svc-backup"},
+		admins:       []string{"S-1-5-21-111-222-333-500", "S-1-5-21-111-222-333-1105"},
+	}
+	findings := localAccountFindings(testTarget, cr, r)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v, want exactly 2 (local-users + local-admin-members)", findings)
+	}
+
+	users := findings[0]
+	if users.Kind != KindLocalUsers {
+		t.Errorf("findings[0].Kind = %q, want %q", users.Kind, KindLocalUsers)
+	}
+	for _, want := range []string{"3 local user(s)", "1 disabled", "never expires: svc-backup"} {
+		if !strings.Contains(users.Detail, want) {
+			t.Errorf("local-users Detail = %q, want it to contain %q", users.Detail, want)
+		}
+	}
+
+	admins := findings[1]
+	if admins.Kind != KindLocalAdmins {
+		t.Errorf("findings[1].Kind = %q, want %q", admins.Kind, KindLocalAdmins)
+	}
+	if admins.Severity != protocols.Medium {
+		t.Errorf("local-admin-members Severity = %q, want %q", admins.Severity, protocols.Medium)
+	}
+	if !strings.Contains(admins.Detail, "2 member(s)") || !strings.Contains(admins.Detail, "S-1-5-21-111-222-333-500") {
+		t.Errorf("local-admin-members Detail = %q, want it to mention 2 members and the SID", admins.Detail)
+	}
+}
+
+func TestLocalAccountFindingsNoAdmins(t *testing.T) {
+	// Users enumerated but the Administrators-alias lookup itself failed
+	// (a real possibility: listing users and listing alias membership are
+	// two separate RPC calls) -- only the local-users finding should show.
+	r := localAccountReport{users: []string{"alice"}}
+	findings := localAccountFindings(testTarget, protocols.Anonymous, r)
+	if len(findings) != 1 || findings[0].Kind != KindLocalUsers {
+		t.Fatalf("findings = %+v, want exactly one local-users finding", findings)
 	}
 }
 

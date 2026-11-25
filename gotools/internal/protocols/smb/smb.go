@@ -46,6 +46,7 @@ import (
 	"github.com/jfjallid/golog"
 
 	"github.com/jfjallid/go-smb/dcerpc"
+	"github.com/jfjallid/go-smb/dcerpc/mssamr"
 	"github.com/jfjallid/go-smb/dcerpc/mssrvs"
 	"github.com/jfjallid/go-smb/dcerpc/smbtransport"
 	"github.com/jfjallid/go-smb/gss"
@@ -82,10 +83,12 @@ const DefaultPort = 445
 
 // Finding kinds this package reports.
 const (
-	KindAnonymousLogin  = "anonymous-login"  // an anonymous/null session was accepted
-	KindLoginOK         = "login-ok"         // a given -u/-p/-H/-k credential was accepted
-	KindLoginFailed     = "login-failed"     // every given credential (and anonymous) was rejected
-	KindInterestingFile = "interesting-file" // the spider found a filename that commonly carries secrets
+	KindAnonymousLogin  = "anonymous-login"     // an anonymous/null session was accepted
+	KindLoginOK         = "login-ok"            // a given -u/-p/-H/-k credential was accepted
+	KindLoginFailed     = "login-failed"        // every given credential (and anonymous) was rejected
+	KindInterestingFile = "interesting-file"    // the spider found a filename that commonly carries secrets
+	KindLocalUsers      = "local-users"         // the target's local (non-domain) SAM users, via MS-SAMR
+	KindLocalAdmins     = "local-admin-members" // members of the local Administrators alias, via MS-SAMR
 )
 
 // sharesToProbe caps how many non-admin shares get an actual read-access
@@ -104,6 +107,17 @@ const (
 	spiderMaxHitsPerRun = 50
 )
 
+// Local-account enumeration bounds (MS-SAMR, the target's own SAM --
+// never the domain, that's ldap's job): how many local users ListLocalUsers
+// returns at most, and how many of those get a second QueryLocalUserAllInfo
+// round trip for their UserAccountControl flags (disabled, password never
+// expires) -- bounded separately since that second call costs one more RPC
+// round trip per user.
+const (
+	localEnumMaxUsers  = 500
+	localEnumDetailCap = 50
+)
+
 func Run(args []string) error {
 	fs := flag.NewFlagSet("smb", flag.ExitOnError)
 	fs.Usage = func() {
@@ -111,6 +125,7 @@ func Run(args []string) error {
 			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "CREDENTIALS", Names: []string{"u", "p", "H", "d", "local-auth", "k"}},
 			{Title: "CONNECTION", Names: []string{"port", "timeout", "c"}},
+			{Title: "ENUMERATION", Names: []string{"local-enum"}},
 			{Title: "SPIDER", Names: []string{"spider"}},
 			{Title: "OUTPUT", Names: []string{"o", "json", "color"}},
 		})
@@ -120,6 +135,7 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 10, "concurrent sessions")
+	localEnum := fs.Bool("local-enum", true, "after a successful session, also enumerate the target's local (non-domain) SAM via MS-SAMR: local users and Administrators-alias membership")
 	spider := fs.Bool("spider", false, "after a successful session, recursively walk every readable share (bounded depth/entries) flagging filenames that commonly carry secrets -- off by default: it's a real recursive crawl of every readable share, opt in rather than something every run does")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
@@ -162,7 +178,7 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			findingsPerTarget[i], sharesPerTarget[i] = probe(t, attempts, *conn.Timeout, *spider)
+			findingsPerTarget[i], sharesPerTarget[i] = probe(t, attempts, *conn.Timeout, *spider, *localEnum)
 		}(i, t)
 	}
 	wg.Wait()
@@ -216,7 +232,7 @@ func Run(args []string) error {
 // table: everything that table needs beyond what belongs in a stored
 // Finding (the per-share access/remark detail, not just the one-line
 // summary already in Finding.Detail).
-func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration, spider bool) ([]protocols.Finding, shareReport) {
+func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration, spider, localEnum bool) ([]protocols.Finding, shareReport) {
 	var lastErr error
 	for _, cr := range attempts {
 		init, err := buildInitiator(cr, t)
@@ -264,6 +280,10 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 				hits = append(hits, spiderShare(conn, share, &budget)...)
 			}
 		}
+		var localAccounts localAccountReport
+		if localEnum {
+			localAccounts = enumerateLocalAccounts(conn)
+		}
 		conn.Close()
 
 		kind := KindLoginOK
@@ -283,6 +303,9 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 				Target: t, Cred: cr, Kind: KindInterestingFile, Severity: protocols.High,
 				Detail: fmt.Sprintf("%d file(s) matching known secret/credential patterns: %s", len(hits), joinHits(hits)),
 			})
+		}
+		if localEnum {
+			findings = append(findings, localAccountFindings(t, cr, localAccounts)...)
 		}
 		return findings, report
 	}
@@ -594,6 +617,156 @@ func shareAccess(conn *gosmb.Connection, share string) string {
 		return "listed, not readable"
 	}
 	return "readable"
+}
+
+// localAccountReport is what enumerateLocalAccounts finds over MS-SAMR,
+// on the same IPC$ DCE/RPC connection listShares uses for MS-SRVS: the
+// target's LOCAL SAM (never the domain's -- that's ldap's job).
+type localAccountReport struct {
+	users        []string
+	disabled     int
+	neverExpires []string // users whose password never expires (UserDontExpirePassword)
+	admins       []string // local Administrators-alias members, as SID strings (not resolved to names -- see localAdministrators)
+	err          error
+}
+
+// enumerateLocalAccounts lists the target's local user accounts (MS-SAMR
+// ListLocalUsers, auto-detecting the local SAM domain) and, for up to
+// localEnumDetailCap of them, a second round trip (QueryLocalUserAllInfo)
+// for UserAccountControl flags worth flagging on their own: a disabled
+// count and which accounts never expire their password. It also lists
+// local Administrators-alias membership (see localAdministrators) --
+// legacy/misconfigured servers have let this succeed even over a null
+// session (an anonymous "RestrictAnonymous" bypass), so it's worth
+// trying regardless of which credential got the session in.
+func enumerateLocalAccounts(conn *gosmb.Connection) localAccountReport {
+	const ipc = "IPC$"
+	if err := conn.TreeConnect(ipc); err != nil {
+		return localAccountReport{err: err}
+	}
+	defer conn.TreeDisconnect(ipc)
+
+	f, err := conn.OpenFile(ipc, mssamr.MSRPCSamrPipe)
+	if err != nil {
+		return localAccountReport{err: err}
+	}
+	defer f.CloseFile()
+
+	transport, err := smbtransport.NewSMBTransport(f)
+	if err != nil {
+		return localAccountReport{err: err}
+	}
+	bind, err := dcerpc.Bind(transport, mssamr.MSRPCUuidSamr, mssamr.MSRPCSamrMajorVersion, mssamr.MSRPCSamrMinorVersion, dcerpc.MSRPCUuidNdr)
+	if err != nil {
+		return localAccountReport{err: err}
+	}
+	rpc := mssamr.NewRPCCon(bind)
+
+	var r localAccountReport
+	users, err := rpc.ListLocalUsers("", localEnumMaxUsers)
+	if err != nil {
+		r.err = err
+		return r
+	}
+	detailed := 0
+	for _, u := range users {
+		name := u.Name.Value
+		r.users = append(r.users, name)
+		if detailed >= localEnumDetailCap {
+			continue
+		}
+		detailed++
+		info, ierr := rpc.QueryLocalUserAllInfo(u.RelativeId, "")
+		if ierr != nil {
+			continue // this account's detail isn't worth failing the whole enumeration over
+		}
+		if info.UserAccountControl&mssamr.UserAccountDisabled != 0 {
+			r.disabled++
+		}
+		if info.UserAccountControl&mssamr.UserDontExpirePassword != 0 {
+			r.neverExpires = append(r.neverExpires, name)
+		}
+	}
+
+	if admins, aerr := localAdministrators(rpc); aerr == nil {
+		r.admins = admins
+	}
+	return r
+}
+
+// localAdministrators resolves the well-known Administrators alias
+// (BUILTIN, RID 544 -- stable across every Windows version) and lists
+// its members as raw SID strings: resolving those to names would need a
+// second RPC bind (MS-LSAD's LsarLookupSids2), which this pass leaves
+// out to keep the round-trip count down; a SID's trailing RID is still
+// often recognizable by itself (e.g. "-500" is the built-in Administrator).
+func localAdministrators(rpc *mssamr.RPCCon) ([]string, error) {
+	handle, err := rpc.SamrConnect5("")
+	if err != nil {
+		return nil, err
+	}
+	defer rpc.SamrCloseHandle(handle)
+
+	builtinSid, err := rpc.SamrLookupDomain(handle, "BUILTIN")
+	if err != nil {
+		return nil, err
+	}
+	builtinHandle, err := rpc.SamrOpenDomain(handle, mssamr.MaximumAllowed, builtinSid)
+	if err != nil {
+		return nil, err
+	}
+	defer rpc.SamrCloseHandle(builtinHandle)
+
+	const administratorsRID = 544
+	aliasHandle, err := rpc.SamrOpenAlias(builtinHandle, mssamr.MaximumAllowed, administratorsRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rpc.SamrCloseHandle(aliasHandle)
+
+	members, err := rpc.SamrGetMembersInAlias(aliasHandle)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(members))
+	for i, m := range members {
+		out[i] = m.ToString()
+	}
+	return out, nil
+}
+
+// localAccountFindings turns r into up to two Findings: a headline
+// local-users count (flagging a disabled count and any never-expires
+// accounts) and, separately, local Administrators-alias membership --
+// kept apart from the main login Finding the same way ldap keeps its own
+// enumeration findings apart from the bind result. Nothing is reported
+// at all when the enumeration itself failed (a normal, expected outcome
+// for a non-admin credential -- SAMR enumeration needs real privilege on
+// most hardened targets) or found nothing.
+func localAccountFindings(t protocols.Target, cr protocols.Credential, r localAccountReport) []protocols.Finding {
+	if len(r.users) == 0 {
+		return nil
+	}
+	var findings []protocols.Finding
+	detail := fmt.Sprintf("%d local user(s) (%d disabled)", len(r.users), r.disabled)
+	if len(r.neverExpires) > 0 {
+		detail += fmt.Sprintf("; never expires: %s", joinCapped(r.neverExpires, 20))
+	}
+	findings = append(findings, protocols.Finding{Target: t, Cred: cr, Kind: KindLocalUsers, Severity: protocols.Info, Detail: detail})
+	if len(r.admins) > 0 {
+		findings = append(findings, protocols.Finding{
+			Target: t, Cred: cr, Kind: KindLocalAdmins, Severity: protocols.Medium,
+			Detail: fmt.Sprintf("%d member(s) of the local Administrators alias: %s", len(r.admins), joinCapped(r.admins, 20)),
+		})
+	}
+	return findings
+}
+
+func joinCapped(items []string, n int) string {
+	if len(items) <= n {
+		return strings.Join(items, ", ")
+	}
+	return strings.Join(items[:n], ", ") + fmt.Sprintf(", +%d more", len(items)-n)
 }
 
 // shareHit is one spiderShare match.

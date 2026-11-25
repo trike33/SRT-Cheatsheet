@@ -805,9 +805,9 @@ four shares the same flag shape, netexec-style:
 | `-u` | — | username (repeatable; default: anonymous/unauthenticated only) |
 | `-p` | — | password (repeatable, paired with `-u` in listed order) |
 | `-H` | — | NTLM/NT hash, for pass-the-hash (repeatable, paired with `-u`; `smb` and `ldap` use it directly, `ftp`/`telnet` don't take hash auth) |
-| `-d` | — | AD domain (also the Kerberos realm for `ldap -k`) |
+| `-d` | — | AD domain (also the Kerberos realm for `-k`) |
 | `-local-auth` | off | authenticate against the target's local SAM, not the domain |
-| `-k` | off | Kerberos auth instead of NTLM/simple bind, where supported (`ldap` only — see below; `smb`'s chosen library is NTLM-only) |
+| `-k` | off | Kerberos auth instead of NTLM/simple bind, where supported (`smb` and `ldap` do; `ftp`/`telnet` don't) |
 | `-port` | the protocol's default | override the port |
 | `-timeout` | 8-10s | per-connection timeout |
 | `-c` | 10-20 | concurrent connections |
@@ -824,9 +824,9 @@ lists directory names, never opens a file.
 
 ```bash
 srt ftp -l hosts.txt                                # anonymous-login check + root listing
-srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash, share enum + secrets spider
+srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash: fingerprint, share enum, local SAM
+srt smb -l dc01.corp.local -u alice -p pw -d CORP.LOCAL -k    # Kerberos bind (needs the DC's hostname, not its IP)
 srt ldap -l hosts.txt -u svc-acct -p '' -d CORP      # simple bind as svc-acct@CORP + RootDSE + AD enum
-srt ldap -l dc01.corp.local -u alice -p pw -d CORP.LOCAL -k   # Kerberos bind (needs the DC's hostname, not its IP)
 srt telnet -l hosts.txt -u root -p toor             # banner/no-auth-shell check, then try a login
 ```
 
@@ -841,11 +841,25 @@ target must be the DC's actual hostname, not its IP, since that's what its
 LDAP service principal name is keyed to — `srt` writes a disposable
 `krb5.conf` per attempt, treating the target as its own realm's KDC.
 
-**`smb`'s secrets spider** (`-spider`, on by default) walks every share
-Phase 1's read-access check found readable (bounded depth and entry budget)
-flagging filenames that commonly carry credentials — `.kdbx`/`.pem`/`.key`/
-`.pfx`/`.ppk`/`.ovpn`, `password`/`unattend`/`id_rsa`/`web.config`/
-`.git-credentials` — reported as a separate `interesting-file` finding.
+**`smb`** wraps `jfjallid/go-smb`, which exposes what `go-smb2` (the
+original Phase 1 pick) didn't: a real netexec-style fingerprint line
+(negotiated dialect, whether signing is required, and — from the NTLM
+challenge, so empty on a Kerberos login — hostname/domain/OS build), a
+real share list over MS-SRVS (each share with the server's own remark, not
+a guessed one), and `-k` itself (`go-smb2`'s auth interface was unexported,
+with no way to plug Kerberos in). `-k` here also takes `-H` for
+pass-the-hash over Kerberos — `ldap`'s Kerberos support still can't do
+that. **`-local-enum`** (on by default) additionally lists the target's
+*local* (non-domain) SAM users and local Administrators-alias membership
+over MS-SAMR — the same DCE/RPC machinery as the share list, just a
+different pipe; tried regardless of which credential got the session in,
+since a misconfigured target has let this succeed over a null session
+before. **`-spider`** (off by default — it's a real recursive crawl) walks
+every share the read-access check found readable (bounded depth and entry
+budget) flagging filenames that commonly carry credentials —
+`.kdbx`/`.pem`/`.key`/`.pfx`/`.ppk`/`.ovpn`,
+`password`/`unattend`/`id_rsa`/`web.config`/`.git-credentials` — reported
+as a separate `interesting-file` finding.
 
 `telnet` has no formal protocol marker for "this is a login prompt" or "this
 is a shell" — it classifies by the conventional wording (`login:`,
