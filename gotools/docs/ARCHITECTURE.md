@@ -28,6 +28,14 @@ internal/
     dirlist/ robots/ snyk/ relpaths/ traceroute/ fuzz/
                     one package per command (or tightly related command
                     group), each self-registering with cli in its own init()
+  protocols/        internal-pentest service clients (ftp/ telnet/ smb/
+                    ldap/, ...), same one-package-per-command shape as
+                    recon/ -- each wraps an existing Go library rather than
+                    re-implementing the protocol; auth/ holds the shared
+                    netexec-style credential/connection flags (-u/-p/-H/-d/
+                    --local-auth/-k/-port/-timeout/-M/-o) every protocol
+                    command binds the same way (see the internal-pentest
+                    feasibility/roadmap doc for the full phased plan).
   pipeline/         orchestrates the recon/* packages per docs/pipeline.md
   results/          the results/runs/export/db commands (the CLI over store)
   shell/            the interactive REPL
@@ -37,7 +45,7 @@ internal/
 Dependencies only point inward/sideways, never back out:
 
 ```
-recon/*, scope, store, netx, halt, ioutil, colorout, payloads, cli
+recon/*, protocols/*, scope, store, netx, halt, ioutil, colorout, payloads, cli
         ^                                                        |
         |                                                        |
         +---- pipeline, results, shell, version --- cmd/srt -----+
