@@ -335,7 +335,11 @@ func (m shellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyBackspace:
+	case tea.KeyBackspace, tea.KeyCtrlH: // many terminals (and SSH/tmux setups) send ^H (0x08) for Backspace
+		if msg.Alt {
+			m.deleteWordBefore()
+			return m, nil
+		}
 		if m.cursor > 0 {
 			m.input = append(m.input[:m.cursor-1], m.input[m.cursor:]...)
 			m.cursor--
