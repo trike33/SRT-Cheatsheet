@@ -273,8 +273,14 @@ func readText(c net.Conn, window time.Duration) string {
 // answering every DO/WILL request it finds with DONT/WONT (so a server
 // waiting on a reply doesn't stall the next read) and returning the
 // plain text that's left.
+//
+// Every reply is batched into one Write at the end rather than issued as it's
+// found: a separate Write per option is one more syscall than needed, and on
+// a real socket two back-to-back Writes aren't guaranteed to land in the same
+// TCP segment, so a reader expecting one negotiation response (rather than
+// however many happen to coalesce) can't rely on seeing it in a single Read.
 func stripIAC(c net.Conn, b []byte) string {
-	var text []byte
+	var text, reply []byte
 	for i := 0; i < len(b); i++ {
 		if b[i] != iac || i+1 >= len(b) {
 			text = append(text, b[i])
@@ -285,11 +291,11 @@ func stripIAC(c net.Conn, b []byte) string {
 		case do, will:
 			if i+2 < len(b) {
 				opt := b[i+2]
-				reply := wont
+				r := wont
 				if cmd == do {
-					reply = dont
+					r = dont
 				}
-				c.Write([]byte{iac, byte(reply), opt})
+				reply = append(reply, iac, byte(r), opt)
 				i += 2
 			} else {
 				i++
@@ -311,6 +317,9 @@ func stripIAC(c net.Conn, b []byte) string {
 		default:
 			i++
 		}
+	}
+	if len(reply) > 0 {
+		c.Write(reply)
 	}
 	return string(text)
 }
