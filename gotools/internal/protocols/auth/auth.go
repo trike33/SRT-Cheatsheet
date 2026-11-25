@@ -8,7 +8,10 @@ package auth
 import (
 	"errors"
 	"flag"
+	"strings"
 	"time"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
 // Creds is one set of credentials to try against a target. Anonymous is the
@@ -92,6 +95,68 @@ func Bind(fs *flag.FlagSet, defaultPort int) *Flags {
 	f.module = fs.String("M", "", "run a named module instead of the default enumeration (phase 2+)")
 	fs.Var(modOptsValue{&f.modOpts}, "o", "module option as key=val (repeatable)")
 	return f
+}
+
+// Reorder lets a protocol command accept its target anywhere on the command
+// line -- netexec-style `srt smb 10.0.0.5 -u alice -p pass`, not just
+// `srt smb -u alice -p pass 10.0.0.5` -- despite Go's flag.FlagSet.Parse
+// stopping at the first non-flag token (after which everything, flags
+// included, lands unparsed in fs.Args()). Call it on the raw args, after
+// every flag is registered on fs but before fs.Parse: it moves every flag
+// (and, for a non-boolean flag, the value token right after it) to the
+// front, in order, and every other token to the back, also in order, so
+// fs.Parse(Reorder(fs, args)) parses every flag regardless of where the
+// target appeared, and fs.Args() after that call holds just the targets.
+//
+// A bare "--" stops reordering: everything after it is taken as positional,
+// matching flag.FlagSet's own "--" convention.
+func Reorder(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if len(a) < 2 || a[0] != '-' || a == "-" {
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+		name := strings.TrimLeft(a, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			continue // "-name=value" already carries its value
+		}
+		fl := fs.Lookup(name)
+		isBool := false
+		if fl != nil {
+			if b, ok := fl.Value.(interface{ IsBoolFlag() bool }); ok {
+				isBool = b.IsBoolFlag()
+			}
+		}
+		if !isBool && i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
+		}
+	}
+	return append(flags, positional...)
+}
+
+// ResolveTargets returns the targets a protocol command should probe.
+// Unlike most srt commands -- where internal/ioutil's ResolveInput treats a
+// single positional argument as a *file path* to read lines from, the same
+// as -l -- a protocol command's positional arguments are taken as literal
+// hosts: netexec-style `srt smb 10.0.0.5 10.0.0.6`, not a target-list file.
+// That fits how these commands actually get used (pointed at one host, or a
+// handful typed inline) better than the file convention recon's bulk-list
+// commands need. -l (an explicit file), stdin, or the project db fallback
+// via fb still work exactly as ResolveInput/InputFallback always have --
+// positional only short-circuits those when it's non-empty.
+func ResolveTargets(l string, positional []string, fb *store.InputFallback) ([]string, string, error) {
+	if len(positional) > 0 {
+		return positional, "", nil
+	}
+	return fb.Resolve(l, nil)
 }
 
 // Resolve reads the parsed flag values into a Creds and an Options. Call it

@@ -5,9 +5,14 @@
 // impacket's SMB client from scratch.
 //
 // Default behavior: attempt a null session (empty user/password) or, with
-// -u/-p/-H, that credential, then list the target's shares. Phase 2 adds
-// authenticated file/share access and the -M module hook already wired in
-// internal/protocols/auth.
+// -u/-p/-H, that credential, then list the target's shares with a
+// best-effort READ-access probe on each (no write probe: this never writes
+// to a target without being asked to). go-smb2 doesn't expose OS
+// version/signing/dialect through its public API, so unlike netexec this
+// can't print a full host fingerprint line -- Phase 3's DCE/RPC work
+// (srvsvc/wkssvc, see the design doc) is where that becomes possible.
+// Phase 2 adds authenticated file access and the -M module hook already
+// wired in internal/protocols/auth.
 package smb
 
 import (
@@ -18,9 +23,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
-	"text/tabwriter"
+	"time"
 
 	smb2 "github.com/hirochachacha/go-smb2"
 
@@ -40,14 +44,44 @@ func init() {
 	})
 }
 
+// ShareInfo is one enumerated share, with a best-effort READ-access result
+// and, for Windows' well-known default shares, the remark netexec/Windows
+// itself shows for them (go-smb2 has no API for a server-supplied remark on
+// a custom share, so those come back blank rather than guessed).
+type ShareInfo struct {
+	Name   string `json:"name"`
+	Read   bool   `json:"read"`
+	Remark string `json:"remark,omitempty"`
+}
+
+// defaultRemarks are the comments Windows itself assigns its built-in
+// shares -- the same strings `net share` and netexec show for them.
+var defaultRemarks = map[string]string{
+	"ADMIN$":   "Remote Admin",
+	"IPC$":     "Remote IPC",
+	"NETLOGON": "Logon server share",
+	"SYSVOL":   "Logon server share",
+	"PRINT$":   "Printer Drivers",
+}
+
+func remarkFor(share string) string {
+	if r, ok := defaultRemarks[share]; ok {
+		return r
+	}
+	if len(share) == 2 && share[1] == '$' { // C$, D$, E$, ...
+		return "Default share"
+	}
+	return ""
+}
+
 // Result is one target's SMB probe outcome.
 type Result struct {
-	Target         string   `json:"target"`
-	Port           int      `json:"port"`
-	LoginAttempted string   `json:"login_attempted,omitempty"` // "" (null session), or user[@domain]
-	LoginOK        bool     `json:"login_ok"`
-	Shares         []string `json:"shares,omitempty"`
-	Err            string   `json:"error,omitempty"`
+	Target         string      `json:"target"`
+	Port           int         `json:"port"`
+	LoginAttempted string      `json:"login_attempted,omitempty"` // "" (null session), or user[@domain]
+	LoginOK        bool        `json:"login_ok"`
+	Shares         []ShareInfo `json:"shares,omitempty"`
+	Err            string      `json:"error,omitempty"`
 }
 
 // Record reduces r to the generic shape the results database stores.
@@ -59,7 +93,11 @@ func (r Result) Record() store.Record {
 		d["login_attempted"] = "null session"
 	}
 	if len(r.Shares) > 0 {
-		d["shares"] = r.Shares
+		shares := make([]map[string]any, len(r.Shares))
+		for i, s := range r.Shares {
+			shares[i] = map[string]any{"name": s.Name, "read": s.Read, "remark": s.Remark}
+		}
+		d["shares"] = shares
 	}
 	if r.Err != "" {
 		d["error"] = r.Err
@@ -68,8 +106,25 @@ func (r Result) Record() store.Record {
 	return store.Record{Kind: "smb", Key: key, Host: r.Target, Port: r.Port, Data: d}
 }
 
+// canRead attempts a READ-only check on share: mount it and list its root.
+// It never writes anything. A failure of any kind (access denied, timeout,
+// the share not existing) just means "not readable", not an error worth
+// surfacing on its own.
+func canRead(sess *smb2.Session, share string, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	fs, err := sess.Mount(share)
+	if err != nil {
+		return false
+	}
+	fs = fs.WithContext(ctx)
+	defer fs.Umount()
+	_, err = fs.ReadDir(".")
+	return err == nil
+}
+
 // One probes a single target: connect, authenticate (null session by
-// default), and list shares.
+// default), list shares, and READ-probe each one.
 func One(ctx context.Context, target string, creds auth.Creds, opts auth.Options) Result {
 	port := opts.Port
 	if port == 0 {
@@ -116,18 +171,22 @@ func One(ctx context.Context, target string, creds auth.Creds, opts auth.Options
 	defer sess.Logoff()
 	res.LoginOK = true
 
-	shares, err := sess.ListSharenames()
+	names, err := sess.ListSharenames()
 	if err != nil {
 		res.Err = fmt.Sprintf("logged in but couldn't list shares: %v", err)
 		return res
 	}
-	res.Shares = shares
+	res.Shares = make([]ShareInfo, len(names))
+	for i, name := range names {
+		res.Shares[i] = ShareInfo{Name: name, Remark: remarkFor(name), Read: canRead(sess, name, opts.Timeout)}
+	}
 	return res
 }
 
 // Run implements the smb command: see internal/protocols/auth for the
 // shared global flags (-u/-p/-H/-d/--port/--timeout/-M/-o) every protocol
-// command binds the same way.
+// command binds the same way. The target can go anywhere on the command
+// line, e.g. `srt smb 10.0.0.5 -u alice -p pass` (see auth.Reorder).
 func Run(args []string) error {
 	fs := flag.NewFlagSet("smb", flag.ExitOnError)
 	fs.Usage = func() {
@@ -145,20 +204,20 @@ func Run(args []string) error {
 	af := auth.Bind(fs, 445)
 	conc := fs.Int("c", 10, "concurrent connections")
 	out := fs.String("out", "", "output file (default: stdout)")
-	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
-	if err := fs.Parse(args); err != nil {
+	jsonOut := fs.Bool("json", false, "emit JSON lines instead of netexec-style lines")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
+	if err := fs.Parse(auth.Reorder(fs, args)); err != nil {
 		return err
 	}
 	cm := colorout.ParseMode(*colorFlag)
 	creds, opts := af.Resolve()
 
-	targets, _, err := fb.Resolve(*in, fs.Args())
+	targets, _, err := auth.ResolveTargets(*in, fs.Args(), fb)
 	if err != nil {
 		return err
 	}
 	if len(targets) == 0 {
-		return ioutil.ErrMissing("no targets: pass -l <file>, pipe hosts on stdin, or save some into the project db first (see `srt results`)")
+		return ioutil.ErrMissing("no targets: pass -l <file>, pipe hosts on stdin, give one as an argument (srt smb <host>), or save some into the project db first (see `srt results`)")
 	}
 	defer ioutil.StartHeartbeat("smb")()
 
@@ -195,23 +254,55 @@ func Run(args []string) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TARGET\tLOGIN\tRESULT\tSHARES/ERROR")
 	for _, r := range results {
-		target := fmt.Sprintf("%s:%d", r.Target, r.Port)
 		login := r.LoginAttempted
 		if login == "" {
-			login = "null session"
+			login = "(null)"
 		}
 		if r.Err != "" {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, login, cm.Wrap(colorout.Red, "ERROR"), r.Err)
+			fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Fail, "ERROR: "+r.Err))
 			continue
 		}
-		result, color := "fail", colorout.Red
-		if r.LoginOK {
-			result, color = "OK", colorout.Green
+		if !r.LoginOK {
+			fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Fail, login+" (login failed)"))
+			continue
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, login, cm.Wrap(color, result), strings.Join(r.Shares, ","))
+		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.OK, login))
+		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Info, "enumerated shares"))
+		if len(r.Shares) > 0 {
+			printShares(w, r.Shares)
+		}
 	}
-	return tw.Flush()
+	return nil
+}
+
+// printShares renders a netexec-style share table: Share / Permissions /
+// Remark, columns sized to the widest cell in this result's own shares.
+func printShares(w interface{ Write([]byte) (int, error) }, shares []ShareInfo) {
+	nameW, permW := len("Share"), len("Permissions")
+	for _, s := range shares {
+		if n := len(s.Name); n > nameW {
+			nameW = n
+		}
+	}
+	row := func(name, perm, remark string) {
+		fmt.Fprintf(w, "%-*s  %-*s  %s\n", nameW, name, permW, perm, remark)
+	}
+	row("Share", "Permissions", "Remark")
+	row(dashes(nameW), dashes(permW), dashes(len("Remark")))
+	for _, s := range shares {
+		perm := ""
+		if s.Read {
+			perm = "READ"
+		}
+		row(s.Name, perm, s.Remark)
+	}
+}
+
+func dashes(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = '-'
+	}
+	return string(b)
 }

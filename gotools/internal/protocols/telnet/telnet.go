@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
 
 	"github.com/trike33/srt-cheatsheet/gotools/internal/cli"
@@ -211,13 +210,13 @@ func Run(args []string) error {
 	out := fs.String("out", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(auth.Reorder(fs, args)); err != nil {
 		return err
 	}
 	cm := colorout.ParseMode(*colorFlag)
 	creds, opts := af.Resolve()
 
-	targets, _, err := fb.Resolve(*in, fs.Args())
+	targets, _, err := auth.ResolveTargets(*in, fs.Args(), fb)
 	if err != nil {
 		return err
 	}
@@ -259,24 +258,24 @@ func Run(args []string) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TARGET\tLOGIN\tRESULT\tBANNER/ERROR")
 	for _, r := range results {
-		target := fmt.Sprintf("%s:%d", r.Target, r.Port)
 		if r.Err != "" {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, r.LoginAttempted, cm.Wrap(colorout.Red, "ERROR"), r.Err)
+			fmt.Fprintln(w, auth.Line(cm, "TELNET", r.Target, r.Port, auth.Fail, "ERROR: "+r.Err))
 			continue
 		}
-		result, color := "-", ""
-		if r.LoginAttempted != "" {
-			result, color = "fail?", colorout.Yellow
-			if r.LoginLikelyOK {
-				result, color = "likely OK", colorout.Green
-			}
+		if r.Banner != "" {
+			fmt.Fprintln(w, auth.Line(cm, "TELNET", r.Target, r.Port, auth.Info, "banner: "+firstLine(r.Banner)))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, r.LoginAttempted, cm.Wrap(color, result), firstLine(r.Banner))
+		if r.LoginAttempted == "" {
+			continue
+		}
+		if r.LoginLikelyOK {
+			fmt.Fprintln(w, auth.Line(cm, "TELNET", r.Target, r.Port, auth.OK, r.LoginAttempted+" (likely valid -- heuristic, confirm interactively)"))
+		} else {
+			fmt.Fprintln(w, auth.Line(cm, "TELNET", r.Target, r.Port, auth.Fail, r.LoginAttempted+" (likely invalid -- heuristic)"))
+		}
 	}
-	return tw.Flush()
+	return nil
 }
 
 func firstLine(s string) string {

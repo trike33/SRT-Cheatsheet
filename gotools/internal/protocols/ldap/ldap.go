@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"text/tabwriter"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -151,13 +150,13 @@ func Run(args []string) error {
 	out := fs.String("out", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(auth.Reorder(fs, args)); err != nil {
 		return err
 	}
 	cm := colorout.ParseMode(*colorFlag)
 	creds, opts := af.Resolve()
 
-	targets, _, err := fb.Resolve(*in, fs.Args())
+	targets, _, err := auth.ResolveTargets(*in, fs.Args(), fb)
 	if err != nil {
 		return err
 	}
@@ -199,19 +198,23 @@ func Run(args []string) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TARGET\tBIND\tRESULT\tDEFAULT NAMING CONTEXT/ERROR")
 	for _, r := range results {
-		target := fmt.Sprintf("%s:%d", r.Target, r.Port)
 		if r.Err != "" {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, r.BindAttempted, cm.Wrap(colorout.Red, "ERROR"), r.Err)
+			fmt.Fprintln(w, auth.Line(cm, "LDAP", r.Target, r.Port, auth.Fail, "ERROR: "+r.Err))
 			continue
 		}
-		result, color := "fail", colorout.Red
-		if r.BindOK {
-			result, color = "OK", colorout.Green
+		if !r.BindOK {
+			fmt.Fprintln(w, auth.Line(cm, "LDAP", r.Target, r.Port, auth.Fail, r.BindAttempted+" (bind failed)"))
+			continue
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", target, r.BindAttempted, cm.Wrap(color, result), r.DefaultContext)
+		msg := r.BindAttempted + " (bind OK)"
+		if r.DefaultContext != "" {
+			msg += " -- " + r.DefaultContext
+		}
+		fmt.Fprintln(w, auth.Line(cm, "LDAP", r.Target, r.Port, auth.OK, msg))
+		for _, nc := range r.NamingContexts {
+			fmt.Fprintln(w, auth.Line(cm, "LDAP", r.Target, r.Port, auth.Info, "naming context: "+nc))
+		}
 	}
-	return tw.Flush()
+	return nil
 }
