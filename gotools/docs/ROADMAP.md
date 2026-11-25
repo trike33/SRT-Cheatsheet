@@ -4,6 +4,57 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Protocol clients: `smb` moves to `jfjallid/go-smb` -- Kerberos auth, a real fingerprint line, and a real share list
+- **Library swap, not a fork or a wire-protocol reimplementation**: `smb`
+  now wraps [`jfjallid/go-smb`](https://github.com/jfjallid/go-smb) instead
+  of `hirochachacha/go-smb2`. The previous library's `Initiator` is an
+  unexported interface (no way to plug Kerberos in from outside its own
+  package) and exposed no dialect/signing/hostname/OS information at all --
+  both items the previous Phase 2 entry logged as open, needing "a
+  different library or patching this one". `jfjallid/go-smb` is a
+  maintained, MIT-licensed fork lineage related to both `go-smb2` and
+  `stacktitan/smb` that exposes all of it publicly.
+- **`smb -k`** now does a real Kerberos login, via the library's own
+  `spnego.KRB5Initiator` -- a public struct, not walled off the way
+  `go-smb2`'s was. Unlike `ldap`'s Kerberos support (which hand-rolls a
+  disposable `krb5.conf` for `go-ldap`'s `gssapi` client), this library
+  dials the KDC itself given an IP, so no config file is written. **`-H`
+  (pass-the-hash) now works for Kerberos too** -- `KRB5Initiator.Hash`
+  accepts an RC4/NT-hash pass-the-key directly, which `ldap`'s Kerberos
+  support still can't do (`gokrb5`'s keytab API only derives keys from a
+  password). Same caveat as `ldap`'s own Kerberos entry: needs the
+  target's actual hostname, not its bare IP, since that's what the
+  `cifs/<host>` SPN is keyed to.
+- **A real netexec-style fingerprint line**: negotiated dialect
+  (`Connection.Dialect()`/`DialectString()`), whether signing is required
+  (`Session.IsSigningRequired()`, the same `SecurityMode` bit netexec
+  itself reads), and -- from the NTLM challenge's target info, so empty on
+  a Kerberos login -- the server's hostname, domain and OS build
+  (`Connection.GetTargetInfo()`). No marketing name like "Server 2022":
+  no library anywhere, impacket included, maps a build number to one, so
+  this reports the raw "Windows X.Y Build Z" form. The `x64`/`x32` suffix
+  netexec shows isn't from SMB at all (it's a separate RPC
+  endpoint-mapper bind on port 135) and isn't implemented here.
+- **Real share enumeration**: MS-SRVS `NetShareEnumAll` over a DCE/RPC
+  bind to `\PIPE\srvsvc` on `IPC$` -- the same wire call impacket/netexec
+  make -- replacing `go-smb2`'s bare `ListSharenames()`. Each share now
+  carries the server's own comment/remark (shown in brackets in the
+  Detail line), not a guessed one from a static table of well-known
+  defaults.
+- **Pinned, not `@latest`**: the library's own README calls itself "a
+  work in progress"; `go.mod` pins the exact version resolved at the time
+  of this change rather than tracking its tip.
+- **Tests**: `buildInitiator` and the new `buildKerberosInitiator` are
+  covered directly (type-asserting the returned `gss.Mechanism` to the
+  concrete initiator and checking its fields, including the two new -k
+  validation errors -- no `-d`, no `-p`/`-H`); the existing
+  connection-refused and garbage-server tests needed no behavior changes
+  beyond updated comments, since the connection-vs-auth error
+  classification `probe` relies on is unchanged in shape. The DCE/RPC
+  share-enum path itself isn't tested (same "no real server to fake
+  against" limitation this file's Phase 1 entry already notes for the
+  SMB2 handshake).
+
 ### Protocol clients, Phase 2 (partial): Kerberos LDAP bind, authenticated AD enum, SMB secrets spider
 - **`ldap -k`**: Kerberos/GSSAPI bind, via `go-ldap/ldap/v3`'s own `gssapi`
   subpackage (its PR #402, built on `jcmturner/gokrb5/v8`) rather than a
@@ -65,10 +116,12 @@ Running log of what's shipped and what's queued, newest first.
 - **Still not done, from the original Phase 2 line item**: Kerberos for
   `smb` (`go-smb2`'s `Initiator` is an unexported interface -- NTLM only,
   no way to plug a Kerberos implementation in from outside the package;
-  would need a different SMB library or patching this one) and
-  pass-the-key for either protocol (see above). DCE/RPC exec/relay
-  (Phase 3) and the secretsdump/AD CS/BloodHound-style porting work
-  (Phase 4) remain entirely open.
+  would need a different SMB library or patching this one -- **done in
+  the newer entry above**, via a library swap to `jfjallid/go-smb`) and
+  pass-the-key for `ldap` (see above; `smb`'s Kerberos pass-the-hash
+  works, per the entry above). DCE/RPC exec/relay (Phase 3) and the
+  secretsdump/AD CS/BloodHound-style porting work (Phase 4) remain
+  entirely open.
 
 ### Protocol clients, Phase 1: `ftp`, `telnet`, `smb`, `ldap` (internal-pentest direction)
 - **New `internal/protocols` package family**, parallel to `internal/recon`:
@@ -92,7 +145,8 @@ Running log of what's shipped and what's queued, newest first.
   (`ListSharenames`) plus a shallow `ReadDir` read-access check per share
   (skipping `IPC$`), capped at 20 shares/target. `-local-auth` drops the
   domain for a local-SAM bind; `-k` (Kerberos) is accepted for CLI-schema
-  consistency but not yet implemented (go-smb2 is NTLM-only).
+  consistency but not yet implemented (go-smb2 is NTLM-only -- **done in a
+  later entry**, which also moves `smb` off go-smb2 entirely).
 - **`ldap`**: true anonymous bind (empty DN + empty password, via
   `SimpleBind` with `AllowEmptyPassword` — the plain `Bind` method
   refuses an empty password client-side per RFC 4513), simple bind as a

@@ -7,8 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jfjallid/go-smb/spnego"
+
 	"github.com/trike33/srt-cheatsheet/gotools/internal/protocols"
 )
+
+var testTarget = protocols.Target{Host: "dc01.corp.local", Port: DefaultPort}
 
 func TestParseHash(t *testing.T) {
 	cases := []struct {
@@ -53,42 +57,105 @@ func TestParseHashTakesNTHalfOfLMNT(t *testing.T) {
 	}
 }
 
+// ntlmOf asserts gm is the *spnego.NTLMInitiator buildInitiator should have
+// returned for every non-Kerberos case below, failing the test (not just
+// returning ok=false) if it's some other gss.Mechanism instead.
+func ntlmOf(t *testing.T, gm interface{}) *spnego.NTLMInitiator {
+	t.Helper()
+	init, ok := gm.(*spnego.NTLMInitiator)
+	if !ok {
+		t.Fatalf("buildInitiator returned %T, want *spnego.NTLMInitiator", gm)
+	}
+	return init
+}
+
 func TestBuildInitiator(t *testing.T) {
-	init, err := buildInitiator(protocols.Anonymous)
+	gm, err := buildInitiator(protocols.Anonymous, testTarget)
 	if err != nil {
 		t.Fatalf("anonymous: %v", err)
 	}
+	init := ntlmOf(t, gm)
 	if init.User != "" || init.Password != "" {
 		t.Errorf("anonymous initiator = %+v, want empty user/password", init)
 	}
+	if init.AuthMode != spnego.NTLMAuthAnonymous {
+		t.Errorf("anonymous initiator.AuthMode = %v, want NTLMAuthAnonymous (a true null session)", init.AuthMode)
+	}
 
-	init, err = buildInitiator(protocols.Credential{User: "alice", Password: "pw", Domain: "CORP"})
+	gm, err = buildInitiator(protocols.Credential{User: "alice", Password: "pw", Domain: "CORP"}, testTarget)
 	if err != nil {
 		t.Fatal(err)
 	}
+	init = ntlmOf(t, gm)
 	if init.User != "alice" || init.Password != "pw" || init.Domain != "CORP" {
 		t.Errorf("initiator = %+v, want alice/pw/CORP", init)
 	}
 
-	// --local-auth drops the domain even if -d was also given (SAM, not AD).
-	init, err = buildInitiator(protocols.Credential{User: "admin", Password: "pw", Domain: "CORP", LocalAuth: true})
+	// --local-auth drops the domain even if -d was also given (SAM, not AD),
+	// and sets LocalUser so the library authenticates against the SAM.
+	gm, err = buildInitiator(protocols.Credential{User: "admin", Password: "pw", Domain: "CORP", LocalAuth: true}, testTarget)
 	if err != nil {
 		t.Fatal(err)
 	}
+	init = ntlmOf(t, gm)
 	if init.Domain != "" {
 		t.Errorf("--local-auth initiator.Domain = %q, want empty", init.Domain)
 	}
+	if !init.LocalUser {
+		t.Error("--local-auth initiator.LocalUser = false, want true")
+	}
 
-	init, err = buildInitiator(protocols.Credential{User: "administrator", Hash: "aad3b435b51404eeaad3b435b51404ee:0123456789abcdef0123456789abcdef"})
+	gm, err = buildInitiator(protocols.Credential{User: "administrator", Hash: "aad3b435b51404eeaad3b435b51404ee:0123456789abcdef0123456789abcdef"}, testTarget)
 	if err != nil {
 		t.Fatal(err)
 	}
+	init = ntlmOf(t, gm)
 	if len(init.Hash) != 16 {
 		t.Errorf("pass-the-hash initiator.Hash len = %d, want 16", len(init.Hash))
 	}
 
-	if _, err := buildInitiator(protocols.Credential{User: "x", Hash: "not-hex"}); err == nil {
+	if _, err := buildInitiator(protocols.Credential{User: "x", Hash: "not-hex"}, testTarget); err == nil {
 		t.Error("buildInitiator with a malformed -H: want error, got nil")
+	}
+}
+
+func TestBuildInitiatorKerberos(t *testing.T) {
+	// -k with neither -p nor -H is rejected before ever touching the KDC.
+	if _, err := buildInitiator(protocols.Credential{User: "alice", Domain: "CORP.LOCAL", Kerberos: true}, testTarget); err == nil {
+		t.Error("-k with no -p/-H: want error, got nil")
+	}
+	// -k with no -d (no realm to authenticate against) is rejected the same way.
+	if _, err := buildInitiator(protocols.Credential{User: "alice", Password: "pw", Kerberos: true}, testTarget); err == nil {
+		t.Error("-k with no -d: want error, got nil")
+	}
+
+	gm, err := buildInitiator(protocols.Credential{User: "alice", Password: "pw", Domain: "CORP.LOCAL", Kerberos: true}, testTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	krb, ok := gm.(*spnego.KRB5Initiator)
+	if !ok {
+		t.Fatalf("buildInitiator(..., Kerberos: true) returned %T, want *spnego.KRB5Initiator", gm)
+	}
+	if krb.User != "alice" || krb.Password != "pw" || krb.Domain != "CORP.LOCAL" {
+		t.Errorf("KRB5Initiator = %+v, want alice/pw/CORP.LOCAL", krb)
+	}
+	if krb.DCIP != testTarget.Host || krb.Host != testTarget.Host {
+		t.Errorf("KRB5Initiator.DCIP/Host = %q/%q, want the target's own host %q (the common case: hitting a DC directly)", krb.DCIP, krb.Host, testTarget.Host)
+	}
+	if krb.SPN != "cifs/"+testTarget.Host {
+		t.Errorf("KRB5Initiator.SPN = %q, want %q", krb.SPN, "cifs/"+testTarget.Host)
+	}
+
+	// -H works for Kerberos too (an RC4/NT-hash pass-the-key), unlike srt's
+	// ldap package, where gokrb5's keytab API forced -p-only.
+	gm, err = buildInitiator(protocols.Credential{User: "alice", Hash: "aad3b435b51404eeaad3b435b51404ee:0123456789abcdef0123456789abcdef", Domain: "CORP.LOCAL", Kerberos: true}, testTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	krb = gm.(*spnego.KRB5Initiator)
+	if len(krb.Hash) != 16 {
+		t.Errorf("Kerberos pass-the-hash initiator.Hash len = %d, want 16", len(krb.Hash))
 	}
 }
 
@@ -100,9 +167,9 @@ func TestProbeConnectionRefused(t *testing.T) {
 	}
 }
 
-// TestProbeAgainstNonSMBServer exercises the real github.com/hirochachacha/go-smb2
-// Dial path against a TCP listener that accepts the connection but
-// speaks nothing SMB -- as far as this package can offline-test the
+// TestProbeAgainstNonSMBServer exercises the real github.com/jfjallid/go-smb
+// NewConnection path against a TCP listener that accepts the connection
+// but speaks nothing SMB -- as far as this package can offline-test the
 // real wire negotiate without a genuine SMB2 server fixture (building
 // one would mean re-implementing SMB2 negotiate/session-setup on the
 // server side, which is out of scope for a unit test; see
@@ -175,9 +242,12 @@ func TestIsInterestingFile(t *testing.T) {
 }
 
 func TestJoinHits(t *testing.T) {
+	// Paths here are already backslash-joined, the form gosmb.SharedFile's
+	// own FullPath produces (unlike the old go-smb2-backed code, which used
+	// io/fs-style forward slashes and converted them in joinHits).
 	hits := []shareHit{
-		{share: "Users", path: "alice/id_rsa"},
-		{share: "IT", path: "scripts/unattend.xml"},
+		{share: "Users", path: `alice\id_rsa`},
+		{share: "IT", path: `scripts\unattend.xml`},
 	}
 	got := joinHits(hits)
 	want := `Users\alice\id_rsa, IT\scripts\unattend.xml`
