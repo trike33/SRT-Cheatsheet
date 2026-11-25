@@ -634,6 +634,37 @@ func TestCommandOutputIsCapturedIntoScrollback(t *testing.T) {
 	}
 }
 
+func TestChildEnvMirrorsColorOnSoPipedChildrenStillColorize(t *testing.T) {
+	hasEnv := func(env []string, kv string) bool { return slices.Contains(env, kv) }
+
+	m := newTestModel()
+	m.colorOn = true
+	if env := m.childEnv(); !hasEnv(env, "SRT_COLOR=1") {
+		t.Errorf("childEnv() with colorOn=true: want SRT_COLOR=1, got %v", env)
+	}
+
+	m.colorOn = false
+	if env := m.childEnv(); !hasEnv(env, "SRT_COLOR=0") {
+		t.Errorf("childEnv() with colorOn=false: want SRT_COLOR=0, got %v", env)
+	}
+
+	// A stale SRT_COLOR inherited from the real environment must never
+	// survive alongside the one childEnv sets -- a child seeing both would
+	// be at the mercy of whichever os/exec happens to put last.
+	t.Setenv("SRT_COLOR", "0")
+	m.colorOn = true
+	env := m.childEnv()
+	count := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, "SRT_COLOR=") {
+			count++
+		}
+	}
+	if count != 1 || !hasEnv(env, "SRT_COLOR=1") {
+		t.Errorf("childEnv() with an inherited SRT_COLOR=0 and colorOn=true: want exactly one SRT_COLOR=1, got %v", env)
+	}
+}
+
 func TestScrollbackScrollsAndClamps(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 80, 24

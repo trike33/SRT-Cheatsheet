@@ -97,9 +97,23 @@ func (m Mode) Enabled() bool {
 	case Never:
 		return false
 	default:
+		if v, ok := os.LookupEnv(EnvColor); ok {
+			return v == "1"
+		}
 		return IsTerminal(os.Stdout)
 	}
 }
+
+// EnvColor overrides Auto mode's own terminal check: set to "1" or "0" by
+// the interactive shell on every command it runs (whatever that command's
+// own -color flag says -- most commands' default is Auto), since those
+// commands' stdout is a pipe into the shell, not a real terminal, so
+// IsTerminal(os.Stdout) would otherwise always say no color -- even though
+// the shell is about to render the captured lines in its own colored UI and
+// wants the command's ANSI codes intact to do it. A plain run of srt outside
+// the shell never sees this set, so Auto still means "color iff this is
+// really a terminal" there.
+const EnvColor = "SRT_COLOR"
 
 // Wrap colorizes s with code when enabled, else returns it unchanged. An
 // empty code is always left unwrapped, color enabled or not.

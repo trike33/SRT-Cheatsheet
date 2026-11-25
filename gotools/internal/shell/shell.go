@@ -669,6 +669,19 @@ func shellSplitArgs(line string) ([]string, error) {
 // per-command so a stale one can never be misattributed.
 func (m *shellModel) childEnv() []string {
 	env := append(os.Environ(), colorout.EnvProgressMark+"=1")
+	// A command's stdout is a pipe into the shell, not a real terminal, so
+	// its own -color=auto would always come out "no color" without this --
+	// even though the shell is about to render the captured lines in its
+	// own colored UI (see appendCmdOut) and wants the command's ANSI codes
+	// intact. Mirror the shell's own `color on|off|auto` toggle (m.colorOn)
+	// onto every command it runs, dropping any inherited SRT_COLOR first so
+	// a stale one from the environment never wins.
+	env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, colorout.EnvColor+"=") })
+	if m.colorOn {
+		env = append(env, colorout.EnvColor+"=1")
+	} else {
+		env = append(env, colorout.EnvColor+"=0")
+	}
 	if f, err := os.CreateTemp("", "srt-traffic-*.json"); err == nil {
 		f.Close()
 		m.trafficFile = f.Name()
