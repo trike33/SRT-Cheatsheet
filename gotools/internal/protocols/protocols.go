@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
@@ -101,6 +102,28 @@ func (c Credential) String() string {
 	}
 }
 
+// UserPass renders c as netexec's own output does on a success line --
+// "domain\user:password" (or "user:password" with no domain, or
+// "user:hash" for pass-the-hash) -- the one place a protocol command
+// deliberately shows the secret itself, unlike String above. Confirming
+// exactly which credential worked, in cleartext, right there in the
+// line that says so, is the point of that output style: the person
+// running the command already supplied it. Anonymous renders as "".
+func (c Credential) UserPass() string {
+	if c.IsAnonymous() {
+		return ""
+	}
+	who := c.User
+	if c.Domain != "" {
+		who = c.Domain + `\` + c.User
+	}
+	secret := c.Password
+	if c.Hash != "" {
+		secret = c.Hash
+	}
+	return who + ":" + secret
+}
+
 // Severity is how serious a Finding is -- the same four-level scale every
 // protocol command uses, for consistent coloring/sorting with the rest of
 // srt's results (see colorout.StatusColor for the HTTP-status equivalent).
@@ -124,6 +147,13 @@ type Finding struct {
 	Detail   string
 	Severity Severity
 	Err      string // set instead of Kind/Detail when the attempt itself failed (refused, timed out, auth rejected)
+	// Hostname is the target's own resolved name, when the protocol
+	// happened to hand one over for free (SMB's NTLM challenge, LDAP's
+	// RootDSE dnsHostName, ...) -- left empty for a protocol with no
+	// such concept (ssh, mssql, vnc, ftp, telnet, rdp), in which case
+	// Line falls back to the bare host, the same way netexec's own
+	// hostname column does.
+	Hostname string
 }
 
 // Record reduces f to the generic shape the results database stores,
@@ -146,10 +176,57 @@ func (f Finding) Record(protoKind string) store.Record {
 	if !f.Cred.IsAnonymous() {
 		d["cred"] = f.Cred.String()
 	}
+	if f.Hostname != "" {
+		d["hostname"] = f.Hostname
+	}
 	if f.Err != "" {
 		d["error"] = f.Err
 	}
 	return store.Record{Kind: protoKind, Key: key, Host: f.Target.Host, Port: f.Target.Port, Data: d}
+}
+
+// Symbol is netexec's own bracketed per-line outcome marker.
+type Symbol string
+
+const (
+	SymInfo    Symbol = "*" // a banner/fingerprint/enumeration line -- no success/failure judgment
+	SymSuccess Symbol = "+" // a credential, or a no-auth/anonymous check, was accepted
+	SymFailure Symbol = "-" // every attempt was rejected, or a connection-level error
+)
+
+// Line renders f in netexec's own one-line output style -- what every
+// protocol command in this family prints instead of a table:
+//
+//	PROTO     host             port   hostname         [symbol] message (Pwn3d!)
+//
+// proto is upper-cased and column-padded the way netexec's own module
+// names are. hostname falls back to the bare host when f.Hostname is
+// unknown. pwned appends " (Pwn3d!)" -- never decided by Line itself;
+// each protocol package's own printTable decides when its access level
+// earns it (see each command's doc comment on printTable for exactly
+// which Kind/credential combination that is, and why).
+func (f Finding) Line(proto string, cm colorout.Mode, symbol Symbol, message string, pwned bool) string {
+	hostname := f.Hostname
+	if hostname == "" {
+		hostname = f.Target.Host
+	}
+	color := colorout.Cyan
+	switch symbol {
+	case SymSuccess:
+		color = colorout.Green
+	case SymFailure:
+		color = colorout.Red
+	}
+	line := fmt.Sprintf("%s  %s  %s  %s  %s",
+		cm.PadWrap("", strings.ToUpper(proto), 8),
+		cm.PadWrap("", f.Target.Host, 16),
+		cm.PadWrap("", strconv.Itoa(f.Target.Port), 6),
+		cm.PadWrap("", hostname, 16),
+		cm.Wrap(color, "["+string(symbol)+"] "+message))
+	if pwned {
+		line += cm.Wrap(colorout.Red, " (Pwn3d!)")
+	}
+	return line
 }
 
 // --- shared CLI flags (netexec-style global flags, see the doc's CLI flag schema) ---

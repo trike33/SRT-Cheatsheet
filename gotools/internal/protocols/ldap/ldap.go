@@ -103,7 +103,7 @@ func Run(args []string) error {
 	enum := fs.Bool("enum", true, "after a successful bind, also run authenticated AD enumeration (AS-REP roastable accounts, privileged-group members, password policy) -- read-only LDAP searches")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -217,6 +217,9 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 			}
 		}
 		l.Close()
+		for i := range findings {
+			findings[i].Hostname = dse.dnsHostName
+		}
 		return findings
 	}
 
@@ -540,45 +543,29 @@ func orDash(s string) string {
 	return s
 }
 
+// printTable renders results in netexec's own one-line-per-result style
+// (see protocols.Finding.Line), not a table: "LDAP  host  port  hostname
+// [symbol] message". ldap never marks a line "(Pwn3d!)": even a
+// privileged-looking bind is read access to directory data, not the
+// shell/admin-share/desktop access claim the protocols that do use
+// Pwn3d are making.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		if !f.Cred.IsAnonymous() {
-			detail = f.Cred.String() + ": " + detail
-		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Kind {
-		case KindAnonymousBind, KindLoginOK, KindASREPRoastable:
-			color = colorout.Red
-		case "error":
-			color = colorout.Gray
+		switch f.Kind {
+		case KindAnonymousBind, KindLoginOK:
+			msg := f.Detail
+			if up := f.Cred.UserPass(); up != "" {
+				msg = up + " " + msg
+			}
+			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymSuccess, msg, false))
 		case KindLoginFailed:
-			color = colorout.Green
-		case KindPrivilegedMembers, KindWeakPasswordPolicy:
-			color = colorout.Yellow
+			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymFailure, f.Detail, false))
+		default:
+			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymInfo, f.Detail, false))
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
 	}
 }

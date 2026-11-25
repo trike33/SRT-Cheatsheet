@@ -105,7 +105,7 @@ func Run(args []string) error {
 	concurrency := fs.Int("c", 20, "concurrent connections")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -352,39 +352,18 @@ func readExact(r io.Reader, n int) ([]byte, error) {
 	return buf, err
 }
 
+// printTable renders results in netexec's own one-line-per-result style
+// (see protocols.Finding.Line), not a table: "RDP  host  port  hostname
+// [symbol] message". This package never attempts a login at all (see the
+// package doc), so every line is an info line -- never a success,
+// failure, or "(Pwn3d!)": there's no credential outcome to report, only
+// what security protocol the server negotiated.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("rdp", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Severity {
-		case protocols.Medium, protocols.High:
-			color = colorout.Yellow
-		}
-		if results[i].Kind == "error" {
-			color = colorout.Gray
-		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
+		fmt.Fprintln(w, f.Line("rdp", cm, protocols.SymInfo, f.Detail, false))
 	}
 }

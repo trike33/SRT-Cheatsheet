@@ -85,7 +85,7 @@ func Run(args []string) error {
 	concurrency := fs.Int("c", 20, "concurrent connections")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -337,43 +337,30 @@ func trimForDetail(s string) string {
 	return s
 }
 
+// printTable renders results in netexec's own one-line-per-result
+// style (see protocols.Finding.Line), not a table: "TELNET  host  port
+// hostname  [symbol] message". A telnet session, authenticated or
+// not, is an interactive shell by definition -- so both KindNoAuth (no
+// login at all) and KindLoginOK (a real credential worked) are marked
+// "(Pwn3d!)", the same access-level claim ssh makes for the same
+// reason.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		if !f.Cred.IsAnonymous() {
-			detail = f.Cred.String() + ": " + detail
-		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Kind {
-		case KindNoAuth, KindLoginOK:
-			color = colorout.Red
-		case "error":
-			color = colorout.Gray
+		switch f.Kind {
+		case KindNoAuth:
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, f.Detail, true))
+		case KindLoginOK:
+			msg := f.Cred.UserPass() + " " + f.Detail
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, msg, true))
 		case KindLoginFailed:
-			color = colorout.Yellow
+			msg := f.Cred.UserPass() + " " + f.Detail
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymFailure, msg, false))
+		default: // KindBanner
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymInfo, f.Detail, false))
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
 	}
 }

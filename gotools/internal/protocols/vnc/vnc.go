@@ -81,7 +81,7 @@ func Run(args []string) error {
 	concurrency := fs.Int("c", 20, "concurrent connections")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -481,43 +481,30 @@ func reverseBits(b byte) byte {
 	return r
 }
 
+// printTable renders results in netexec's own one-line-per-result style
+// (see protocols.Finding.Line), not a table: "VNC  host  port  hostname
+// [symbol] message". VNC has no username concept at all (RFB
+// Authentication is a bare password), so a successful login's message is
+// just the password, not Credential.UserPass's generic "user:secret"
+// form. Full remote-desktop control, authenticated or not, is the same
+// access-level claim ssh/telnet make for a shell -- so both KindNoAuth
+// and KindLoginOK are marked "(Pwn3d!)".
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		if !f.Cred.IsAnonymous() {
-			detail = f.Cred.String() + ": " + detail
-		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Kind {
-		case KindNoAuth, KindLoginOK:
-			color = colorout.Red
-		case "error":
-			color = colorout.Gray
+		switch f.Kind {
+		case KindNoAuth:
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, f.Detail, true))
+		case KindLoginOK:
+			msg := f.Cred.Password + " " + f.Detail
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, msg, true))
 		case KindLoginFailed:
-			color = colorout.Green
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymFailure, f.Detail, false))
+		default: // KindBanner
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymInfo, f.Detail, false))
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
 	}
 }

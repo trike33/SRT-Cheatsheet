@@ -139,7 +139,7 @@ func Run(args []string) error {
 	spider := fs.Bool("spider", false, "after a successful session, recursively walk every readable share (bounded depth/entries) flagging filenames that commonly carry secrets -- off by default: it's a real recursive crawl of every readable share, opt in rather than something every run does")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -205,7 +205,11 @@ func Run(args []string) error {
 		}
 		return nil
 	}
-	printTable(w, results, cm)
+	reports := make(map[string]shareReport, len(targets))
+	for i, t := range targets {
+		reports[t.String()] = sharesPerTarget[i]
+	}
+	printTable(w, results, reports, cm)
 	// The one-line Detail above already has the share summary (and it's
 	// what's stored to the DB/JSON); this is the netexec-style expanded
 	// view -- bold, colored, indented -- for a target where a session
@@ -269,6 +273,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		}
 
 		report := inspectShares(conn, t.Host)
+		hostname := targetHostname(conn)
 		detail := fingerprint(conn) + "; " + report.String()
 		var hits []shareHit
 		if spider {
@@ -294,18 +299,21 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		if len(report.readable) == 0 {
 			sev = protocols.Medium // session accepted, but nothing beyond IPC$ was actually readable
 		}
-		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: detail}}
+		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: detail, Hostname: hostname}}
 		if len(hits) > 0 {
 			if len(hits) > spiderMaxHitsPerRun {
 				hits = hits[:spiderMaxHitsPerRun]
 			}
 			findings = append(findings, protocols.Finding{
-				Target: t, Cred: cr, Kind: KindInterestingFile, Severity: protocols.High,
+				Target: t, Cred: cr, Kind: KindInterestingFile, Severity: protocols.High, Hostname: hostname,
 				Detail: fmt.Sprintf("%d file(s) matching known secret/credential patterns: %s", len(hits), joinHits(hits)),
 			})
 		}
 		if localEnum {
-			findings = append(findings, localAccountFindings(t, cr, localAccounts)...)
+			for _, lf := range localAccountFindings(t, cr, localAccounts) {
+				lf.Hostname = hostname
+				findings = append(findings, lf)
+			}
 		}
 		return findings, report
 	}
@@ -378,6 +386,21 @@ func fingerprint(conn *gosmb.Connection) string {
 		parts = append(parts, "(null session)")
 	}
 	return strings.Join(parts, " ")
+}
+
+// targetHostname extracts the server's hostname from the same NTLM
+// challenge fingerprint already reads, for Finding.Hostname -- empty on a
+// Kerberos login, the same caveat fingerprint's own name/domain fields
+// document.
+func targetHostname(conn *gosmb.Connection) string {
+	ti := conn.GetTargetInfo()
+	if ti == nil {
+		return ""
+	}
+	if ti.DnsComputerName != "" {
+		return ti.DnsComputerName
+	}
+	return ti.NBComputerName
 }
 
 // buildInitiator turns a Credential into the gss.Mechanism gosmb.Options
@@ -858,43 +881,47 @@ func joinHits(hits []shareHit) string {
 	return strings.Join(parts, ", ")
 }
 
-func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+// adminShareReadable reports whether C$ or ADMIN$ -- the shares that
+// specifically imply local Administrator rights, not just "some share
+// happened to be world-readable" -- came back actually readable in r.
+func adminShareReadable(r shareReport) bool {
+	for _, name := range []string{"C$", "ADMIN$"} {
+		if r.access[name] == "readable" {
+			return true
+		}
+	}
+	return false
+}
+
+// printTable renders results in netexec's own one-line-per-result style
+// (see protocols.Finding.Line), not a table: "SMB  host  port  hostname
+// [symbol] message". reports is Run's per-target shareReport (keyed by
+// Target.String()), looked up here only to decide "(Pwn3d!)": a
+// KindLoginOK session (a real, non-anonymous credential) that can also
+// read C$ or ADMIN$ is local-Administrator access, the same claim
+// netexec's own Pwn3d marker makes for SMB. An anonymous/null session
+// never gets it, even with the same share access -- that's a
+// misconfiguration finding, not a credential compromise. The expanded
+// per-share view (printShareTable) is a separate, deliberately denser
+// block printed after this for a target where a session actually got in.
+func printTable(w io.Writer, results []protocols.Finding, reports map[string]shareReport, cm colorout.Mode) {
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		if !f.Cred.IsAnonymous() {
-			detail = f.Cred.String() + ": " + detail
-		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Kind {
-		case KindAnonymousLogin, KindLoginOK, KindInterestingFile:
-			color = colorout.Red
-		case "error":
-			color = colorout.Gray
+		switch f.Kind {
+		case KindAnonymousLogin, KindLoginOK:
+			msg := f.Detail
+			if up := f.Cred.UserPass(); up != "" {
+				msg = up + " " + msg
+			}
+			pwned := f.Kind == KindLoginOK && adminShareReadable(reports[f.Target.String()])
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymSuccess, msg, pwned))
 		case KindLoginFailed:
-			color = colorout.Green
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymFailure, f.Detail, false))
+		default:
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymInfo, f.Detail, false))
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
 	}
 }

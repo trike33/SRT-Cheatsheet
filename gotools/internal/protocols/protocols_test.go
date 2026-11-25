@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 )
 
 func TestParseTarget(t *testing.T) {
@@ -211,5 +213,49 @@ func TestBindConn(t *testing.T) {
 	}
 	if *c.Timeout != 2*time.Second {
 		t.Errorf("Timeout = %s, want 2s", *c.Timeout)
+	}
+}
+
+func TestCredentialUserPass(t *testing.T) {
+	cases := []struct {
+		c    Credential
+		want string
+	}{
+		{Anonymous, ""},
+		{Credential{User: "alice", Password: "s3cret"}, "alice:s3cret"},
+		{Credential{User: "alice", Password: "s3cret", Domain: "CORP"}, `CORP\alice:s3cret`},
+		{Credential{User: "administrator", Hash: "aad3b435b51404eeaad3b435b51404ee"}, "administrator:aad3b435b51404eeaad3b435b51404ee"},
+		// Hash wins over Password when both are somehow set (shouldn't
+		// normally happen, but Hash is the more specific secret).
+		{Credential{User: "a", Password: "pw", Hash: "ha"}, "a:ha"},
+	}
+	for _, c := range cases {
+		if got := c.c.UserPass(); got != c.want {
+			t.Errorf("UserPass() = %q, want %q (cred=%+v)", got, c.want, c.c)
+		}
+	}
+}
+
+func TestFindingLine(t *testing.T) {
+	cm := colorout.ParseMode("never") // deterministic, uncolored output to assert on
+	f := Finding{Target: Target{Host: "10.0.0.5", Port: 445}}
+
+	got := f.Line("smb", cm, SymInfo, "Windows 10.0 Build 17763 x64", false)
+	want := "SMB       10.0.0.5          445     10.0.0.5          [*] Windows 10.0 Build 17763 x64"
+	if got != want {
+		t.Errorf("Line (no hostname, info) =\n  %q\nwant\n  %q", got, want)
+	}
+
+	f.Hostname = "DC01"
+	got = f.Line("smb", cm, SymSuccess, "CORP\\administrator:Password1", true)
+	want = "SMB       10.0.0.5          445     DC01              [+] CORP\\administrator:Password1 (Pwn3d!)"
+	if got != want {
+		t.Errorf("Line (hostname, success, pwned) =\n  %q\nwant\n  %q", got, want)
+	}
+
+	got = f.Line("ldap", cm, SymFailure, "every bind attempt was rejected", false)
+	want = "LDAP      10.0.0.5          445     DC01              [-] every bind attempt was rejected"
+	if got != want {
+		t.Errorf("Line (failure) =\n  %q\nwant\n  %q", got, want)
 	}
 }

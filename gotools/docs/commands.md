@@ -827,6 +827,31 @@ executes or opens a shell on the target, even when a login grants that
 access — `smb`'s spider (below) only lists directory names, never opens a
 file, and `ssh`'s login check never runs a command.
 
+**Default output** is one line per result, netexec's own style, not a table:
+
+```
+PROTO     ip                port    hostname          [symbol] message
+SMB       10.0.0.5          445     DC01              [+] CORP\administrator:Password1 (Pwn3d!)
+```
+
+`[symbol]` is `[*]` (info: a banner, an enumeration finding, anything with no
+success/failure outcome of its own), `[+]` (an accepted login or session) or
+`[-]` (a connection error or a rejected login); `hostname` falls back to the
+bare IP when the protocol doesn't hand one over for free (only `smb`, from the
+NTLM challenge, and `ldap`, from RootDSE's `dnsHostName`, do — empty on a
+Kerberos login either way). `(Pwn3d!)` marks a result that is a genuine
+access-level compromise, not just an accepted credential, decided per
+protocol: `telnet`/`ssh` for any shell-granting login (no-auth or a real
+credential — a session is a shell either way); `vnc` the same, for full
+desktop control; `smb` for a non-anonymous login where the share report also
+shows `C$` or `ADMIN$` readable (local Administrator); `mssql` for a login
+confirmed a member of the `sysadmin` fixed server role (`SELECT
+IS_SRVROLEMEMBER('sysadmin')`, read-only). `ftp`, `ldap` and `rdp` never mark
+a line `(Pwn3d!)` — read/write file access, directory read access, and a
+security-layer fingerprint (`rdp` never even attempts a login) aren't the same
+claim. This is unaffected by `-json`, which keeps its own one-line-per-result
+machine-readable shape.
+
 ```bash
 srt ftp -l hosts.txt                                # anonymous-login check + root listing
 srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash: fingerprint, share enum, local SAM

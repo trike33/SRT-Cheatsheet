@@ -57,8 +57,9 @@ const DefaultPort = 1433
 
 // Finding kinds this package reports.
 const (
-	KindLoginOK     = "login-ok"     // a given credential (SQL or NTLM auth) was accepted
-	KindLoginFailed = "login-failed" // every attempt was rejected
+	KindLoginOK         = "login-ok"          // a given credential (SQL or NTLM auth) was accepted
+	KindLoginOKSysadmin = "login-ok-sysadmin" // accepted AND confirmed a member of the sysadmin fixed server role
+	KindLoginFailed     = "login-failed"      // every attempt was rejected
 )
 
 // databasesToList caps how many database names summarize prints, so an
@@ -82,7 +83,7 @@ func Run(args []string) error {
 	concurrency := fs.Int("c", 20, "concurrent connections")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
-	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
+	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -176,8 +177,13 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		}
 
 		detail := summarize(db, timeout)
+		sysadmin := isSysadmin(db, timeout)
 		db.Close()
-		return protocols.Finding{Target: t, Cred: cr, Kind: KindLoginOK, Severity: protocols.High, Detail: detail}
+		kind := KindLoginOK
+		if sysadmin {
+			kind = KindLoginOKSysadmin
+		}
+		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Detail: detail}
 	}
 
 	detail := "every login attempt was rejected"
@@ -294,6 +300,24 @@ func summarize(db *sql.DB, timeout time.Duration) string {
 	return detail
 }
 
+// isSysadmin runs a single read-only scalar check -- SELECT
+// IS_SRVROLEMEMBER('sysadmin') -- the same scalar netexec's own mssql
+// module reads to decide whether a login gets its "(Pwn3d!)" marker: 1
+// means the current login is a member of the sysadmin fixed server role
+// (full instance control, the SQL Server equivalent of local
+// Administrator), 0 means it isn't. An error (an edition quirk, or a
+// login lacking even that much visibility) is treated as "not
+// confirmed" rather than failing the login Finding itself over it.
+func isSysadmin(db *sql.DB, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var v int
+	if err := db.QueryRowContext(ctx, "SELECT IS_SRVROLEMEMBER('sysadmin')").Scan(&v); err != nil {
+		return false
+	}
+	return v == 1
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
@@ -301,43 +325,29 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// printTable renders results in netexec's own one-line-per-result style
+// (see protocols.Finding.Line), not a table: "MSSQL  host  port
+// hostname  [symbol] message". KindLoginOKSysadmin -- a login confirmed
+// a member of the sysadmin fixed server role via isSysadmin -- gets
+// "(Pwn3d!)": the SQL Server equivalent of local Administrator, full
+// instance control. A plain accepted login that isn't sysadmin does not.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
-	type row struct{ target, kind, detail string }
-	rows := make([]row, len(results))
-	for i, f := range results {
-		kind := f.Kind
-		detail := f.Detail
+	for _, f := range results {
 		if f.Err != "" {
-			kind, detail = "error", f.Err
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymFailure, f.Err, false))
+			continue
 		}
-		if !f.Cred.IsAnonymous() {
-			detail = f.Cred.String() + ": " + detail
-		}
-		rows[i] = row{target: f.Target.String(), kind: kind, detail: detail}
-	}
-	widths := [2]int{len("TARGET"), len("KIND")}
-	for _, r := range rows {
-		if n := len(r.target); n > widths[0] {
-			widths[0] = n
-		}
-		if n := len(r.kind); n > widths[1] {
-			widths[1] = n
-		}
-	}
-	fmt.Fprintf(w, "%-*s  %-*s  %s\n", widths[0], "TARGET", widths[1], "KIND", "DETAIL")
-	for i, r := range rows {
-		color := colorout.Cyan
-		switch results[i].Kind {
-		case KindLoginOK:
-			color = colorout.Red
-		case "error":
-			color = colorout.Gray
+		switch f.Kind {
+		case KindLoginOK, KindLoginOKSysadmin:
+			msg := f.Detail
+			if up := f.Cred.UserPass(); up != "" {
+				msg = up + " " + msg
+			}
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymSuccess, msg, f.Kind == KindLoginOKSysadmin))
 		case KindLoginFailed:
-			color = colorout.Green
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymFailure, f.Detail, false))
+		default:
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymInfo, f.Detail, false))
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n",
-			cm.PadWrap("", r.target, widths[0]),
-			cm.PadWrap(color, r.kind, widths[1]),
-			cm.Wrap("", r.detail))
 	}
 }
