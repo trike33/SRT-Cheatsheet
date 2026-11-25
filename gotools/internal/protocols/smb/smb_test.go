@@ -9,6 +9,7 @@ import (
 
 	"github.com/jfjallid/go-smb/spnego"
 
+	"github.com/trike33/srt-cheatsheet/gotools/internal/colorout"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/protocols"
 )
 
@@ -161,7 +162,7 @@ func TestBuildInitiatorKerberos(t *testing.T) {
 
 func TestProbeConnectionRefused(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	findings := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond, true)
+	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond, true)
 	if len(findings) != 1 || findings[0].Err == "" {
 		t.Fatalf("expected a single connection-error Finding, got %+v", findings)
 	}
@@ -204,7 +205,7 @@ func TestProbeAgainstNonSMBServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	findings := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second, true)
+	findings, _ := probe(tg, []protocols.Credential{protocols.Anonymous}, 2*time.Second, true)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %+v, want exactly one", findings)
 	}
@@ -276,5 +277,40 @@ func TestShareReportString(t *testing.T) {
 	failed := shareReport{listErr: errors.New("access denied")}
 	if got := failed.String(); !strings.Contains(got, "share enumeration failed") {
 		t.Errorf("failed shareReport.String() = %q", got)
+	}
+}
+
+func TestPrintShareTable(t *testing.T) {
+	r := shareReport{
+		names:  []string{"ADMIN$", "IPC$", "NETLOGON", "Users"},
+		access: map[string]string{"ADMIN$": "no-access", "IPC$": "IPC", "NETLOGON": "readable", "Users": "listed, not readable"},
+		remark: map[string]string{"ADMIN$": "Remote Admin", "IPC$": "Remote IPC", "NETLOGON": "Logon server share"},
+	}
+	var buf strings.Builder
+	printShareTable(&buf, protocols.Target{Host: "10.0.0.5", Port: DefaultPort}, r, colorout.Never)
+	got := buf.String()
+
+	for _, want := range []string{
+		"10.0.0.5:445 shares", "Share", "Permissions", "Remark",
+		"ADMIN$", "Remote Admin", "IPC$", "READ", "Remote IPC",
+		"NETLOGON", "Logon server share", "Users",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("printShareTable output missing %q; got:\n%s", want, got)
+		}
+	}
+	// ADMIN$ and Users (readable but share enumeration denied/not
+	// readable) show no permission -- only an actually readable share
+	// (or IPC$, whose own RPC bind already proved access) says READ.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "ADMIN$") && strings.Contains(line, "READ") {
+			t.Errorf("ADMIN$ row shows READ, want blank permission: %q", line)
+		}
+	}
+
+	var empty strings.Builder
+	printShareTable(&empty, protocols.Target{Host: "10.0.0.5", Port: DefaultPort}, shareReport{}, colorout.Never)
+	if empty.Len() != 0 {
+		t.Errorf("printShareTable with no shares wrote %q, want nothing", empty.String())
 	}
 }

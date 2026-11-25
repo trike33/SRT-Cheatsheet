@@ -20,11 +20,13 @@
 // all), then with each -u/-p/-H/-k attempt in turn. A session that's
 // accepted is followed by the fingerprint line, a real share listing
 // (MS-SRVS NetShareEnumAll over IPC$, with the server's own remark per
-// share -- not a guessed one), a shallow per-share read-access check,
-// and, unless -spider=false, a bounded recursive walk of every readable
-// share (see spiderShare) flagging filenames that commonly carry
-// secrets -- netexec's spider_plus module, read-only. This package
-// never writes, deletes or creates anything on the target.
+// share -- not a guessed one), and a shallow per-share read-access
+// check. With -spider (off by default -- it's a real recursive crawl of
+// every readable share, opt in rather than something every run does), a
+// bounded recursive walk of every readable share (see spiderShare) also
+// flags filenames that commonly carry secrets -- netexec's spider_plus
+// module, read-only. This package never writes, deletes or creates
+// anything on the target.
 package smb
 
 import (
@@ -118,7 +120,7 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 10, "concurrent sessions")
-	spider := fs.Bool("spider", true, "after a successful session, recursively walk every readable share (bounded depth/entries) flagging filenames that commonly carry secrets")
+	spider := fs.Bool("spider", false, "after a successful session, recursively walk every readable share (bounded depth/entries) flagging filenames that commonly carry secrets -- off by default: it's a real recursive crawl of every readable share, opt in rather than something every run does")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the table output: auto|always|never (ignored with -json)")
@@ -150,7 +152,8 @@ func Run(args []string) error {
 	}
 
 	attempts := creds.Attempts()
-	perTarget := make([][]protocols.Finding, len(targets))
+	findingsPerTarget := make([][]protocols.Finding, len(targets))
+	sharesPerTarget := make([]shareReport, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -159,13 +162,13 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			perTarget[i] = probe(t, attempts, *conn.Timeout, *spider)
+			findingsPerTarget[i], sharesPerTarget[i] = probe(t, attempts, *conn.Timeout, *spider)
 		}(i, t)
 	}
 	wg.Wait()
 
 	var results []protocols.Finding
-	for _, fs := range perTarget {
+	for _, fs := range findingsPerTarget {
 		results = append(results, fs...)
 	}
 
@@ -187,6 +190,13 @@ func Run(args []string) error {
 		return nil
 	}
 	printTable(w, results, cm)
+	// The one-line Detail above already has the share summary (and it's
+	// what's stored to the DB/JSON); this is the netexec-style expanded
+	// view -- bold, colored, indented -- for a target where a session
+	// actually got in and found something to enumerate.
+	for i, t := range targets {
+		printShareTable(w, t, sharesPerTarget[i], cm)
+	}
 	return nil
 }
 
@@ -200,7 +210,13 @@ func Run(args []string) error {
 // one. A connection-level failure (refused, timed out, unreachable)
 // aborts the whole target immediately, same as before; an
 // authentication failure just moves on to the next credential.
-func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration, spider bool) []protocols.Finding {
+//
+// Its second return value -- a shareReport, zero-valued unless a session
+// was actually accepted -- is for Run's netexec-style expanded share
+// table: everything that table needs beyond what belongs in a stored
+// Finding (the per-share access/remark detail, not just the one-line
+// summary already in Finding.Detail).
+func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration, spider bool) ([]protocols.Finding, shareReport) {
 	var lastErr error
 	for _, cr := range attempts {
 		init, err := buildInitiator(cr, t)
@@ -230,7 +246,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 				// route, timed out) -- every other credential would fail
 				// the same way, so there's nothing to gain from trying
 				// them.
-				return []protocols.Finding{{Target: t, Err: err.Error()}}
+				return []protocols.Finding{{Target: t, Err: err.Error()}}, shareReport{}
 			}
 			lastErr = err
 			continue
@@ -268,14 +284,14 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 				Detail: fmt.Sprintf("%d file(s) matching known secret/credential patterns: %s", len(hits), joinHits(hits)),
 			})
 		}
-		return findings
+		return findings, report
 	}
 
 	detail := "every login attempt was rejected"
 	if lastErr != nil {
 		detail = "rejected: " + lastErr.Error()
 	}
-	return []protocols.Finding{{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}}
+	return []protocols.Finding{{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}}, shareReport{}
 }
 
 // meteredDialer is the ProxyDialer gosmb.Options takes: NewConnection
@@ -510,6 +526,59 @@ func (r shareReport) String() string {
 		}
 	}
 	return fmt.Sprintf("%d share(s): %s", len(r.names), strings.Join(parts, ", "))
+}
+
+// ansiBold is the plain SGR bold code; colorout only defines colors, not
+// weight, so this is combined with one of its color constants (or used
+// bare) the same way colorout.Mode.Wrap expects a single "code" string.
+const ansiBold = "\033[1m"
+
+// printShareTable renders r as a netexec-style expanded view: a bold
+// header row, bold share names, "READ" highlighted in green, the whole
+// block indented so it reads as nested under its target rather than
+// starting at the left margin -- the visual netexec itself uses (see the
+// design doc's screenshots). It prints nothing for a target with no
+// shares to show (a failed login, a listing error, or an empty list).
+func printShareTable(w io.Writer, t protocols.Target, r shareReport, cm colorout.Mode) {
+	if len(r.names) == 0 {
+		return
+	}
+	const indent = "    "
+	nameW, permW := len("Share"), len("Permissions")
+	for _, name := range r.names {
+		if n := len(name); n > nameW {
+			nameW = n
+		}
+	}
+	row := func(nameCell, permCell, remark string) {
+		fmt.Fprintf(w, "%s%s  %s  %s\n", indent, nameCell, permCell, remark)
+	}
+
+	fmt.Fprintf(w, "\n%s%s\n", indent, cm.Wrap(ansiBold, t.String()+" shares"))
+	row(cm.PadWrap(ansiBold, "Share", nameW), cm.PadWrap(ansiBold, "Permissions", permW), cm.Wrap(ansiBold, "Remark"))
+	row(dashes(nameW), dashes(permW), dashes(len("Remark")))
+	for _, name := range r.names {
+		// A plain "readable"/"no-access"/... phrase (shareReport's own,
+		// kept as-is for the stored Detail summary) becomes netexec's
+		// bare "READ" or blank here. IPC$ reads as accessible too: the
+		// MS-SRVS RPC bind that enumerated these shares in the first
+		// place already opened it, the same thing netexec's own
+		// (IPC$, READ) line reports.
+		perm := ""
+		permColor := ""
+		if access := r.access[name]; access == "readable" || access == "IPC" {
+			perm, permColor = "READ", colorout.Green
+		}
+		row(cm.PadWrap(ansiBold, name, nameW), cm.PadWrap(permColor, perm, permW), r.remark[name])
+	}
+}
+
+func dashes(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = '-'
+	}
+	return string(b)
 }
 
 // shareAccess reports whether share's root directory can be listed
