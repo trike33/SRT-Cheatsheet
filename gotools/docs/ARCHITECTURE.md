@@ -28,6 +28,11 @@ internal/
     dirlist/ robots/ snyk/ relpaths/ traceroute/ fuzz/
                     one package per command (or tightly related command
                     group), each self-registering with cli in its own init()
+  protocols/        shared Target/Credential/Finding + the netexec-style
+    ftp/ telnet/     global credential/connection flags every protocol
+    smb/ ldap/       command binds (protocols.go); one subpackage per
+                    protocol command, same self-registering convention as
+                    recon/* -- see docs/ROADMAP.md's "Protocol clients"
   pipeline/         orchestrates the recon/* packages per docs/pipeline.md
   results/          the results/runs/export/db commands (the CLI over store)
   shell/            the interactive REPL
@@ -37,17 +42,21 @@ internal/
 Dependencies only point inward/sideways, never back out:
 
 ```
-recon/*, scope, store, netx, halt, ioutil, colorout, payloads, cli
-        ^                                                        |
-        |                                                        |
-        +---- pipeline, results, shell, version --- cmd/srt -----+
+recon/*, protocols/*, scope, store, netx, halt, ioutil, colorout, payloads, cli
+        ^                                                                   |
+        |                                                                   |
+        +---- pipeline, results, shell, version --- cmd/srt ----------------+
 ```
 
 A `recon/*` package never imports `pipeline`, `results`, or `shell`. The one
 exception within `recon/` itself: `recon/fuzz` imports `recon/probe` (for
 `-ext-auto`'s tech-detect), which is fine because the dependency still only
 points "sideways" between two leaf packages, not back up toward anything
-that depends on `fuzz`.
+that depends on `fuzz`. `protocols/*` follows the same rule: `ftp`/`telnet`/
+`smb`/`ldap` each import the shared `protocols` package (for `Target`/
+`Credential`/`Finding`/`BindCreds`) but never `pipeline`, `results`, or
+`shell`, and nothing in `recon/*` imports `protocols/*` or vice versa yet --
+the two families are siblings, not layered.
 
 ## Why this grain, not finer or coarser
 

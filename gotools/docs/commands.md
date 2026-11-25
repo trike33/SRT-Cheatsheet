@@ -17,7 +17,8 @@ ranges>"` narrows that further by HTTP status (e.g. `-where
 "status=200,301-399"`). A command's own `-h` says which kind(s) it defaults
 to; `srt results -kind` lists every kind actually saved so far. Commands
 with this fallback: `probe`, `portscan`, `resolve`, `traceroute`,
-`subdomains`, `gau`, `dork`, `sensitive`, `params`, `robots`, `validate`.
+`subdomains`, `gau`, `dork`, `sensitive`, `params`, `robots`, `validate`,
+`ftp`, `telnet`, `smb`, `ldap`.
 
 If a command is still working 5 seconds after it starts, it logs a
 `still running (Ns elapsed)...` line to stderr every 5 seconds until it's
@@ -30,7 +31,9 @@ Jump to: [ipexpand](#ipexpand) · [ipports](#ipports) · [resolve](#resolve) ·
 [burpscope](#burpscope) · [gau](#gau) · [dork](#dork) · [sensitive](#sensitive) ·
 [params](#params) · [paramdiscover](#paramdiscover) · [dirlist](#dirlist) ·
 [robots](#robots) · [validate](#validate) · [snyk](#snyk) ·
-[relpaths](#relpaths) · [fuzz](#fuzz) · [pipeline](#pipeline) ·
+[relpaths](#relpaths) · [fuzz](#fuzz) ·
+[ftp · telnet · smb · ldap](#protocol-clients-ftp--telnet--smb--ldap) ·
+[pipeline](#pipeline) ·
 [results](#results) · [runs](#runs) · [export](#export) · [db](#db) ·
 [shell](#shell) · [version](#version)
 
@@ -784,6 +787,52 @@ left off instead of repeating work. `-ndjson` lets you keep the colored table
 on screen while another tool tails structured output from a file; `-summary`
 shows every status code seen regardless of `-mc`/`-fc`, for deciding what to
 filter next time instead of guessing.
+
+---
+
+## Protocol clients: ftp · telnet · smb · ldap
+
+Phase 1 of the internal-pentest protocol-client roadmap (see
+[ROADMAP.md](ROADMAP.md)): native Go clients for the AD/internal-network
+protocols impacket/netexec cover, wrapping a mature Go library per protocol
+(`internal/protocols/<name>`) behind SRT's own scope/results/metering
+conventions, rather than reimplementing the wire formats. Every one of these
+four shares the same flag shape, netexec-style:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-l` | stdin | target list: `host` or `host:port` (falls back to the project db's `port` records, like `probe`/`portscan`) |
+| `-u` | — | username (repeatable; default: anonymous/unauthenticated only) |
+| `-p` | — | password (repeatable, paired with `-u` in listed order) |
+| `-H` | — | NTLM/NT hash, for pass-the-hash (repeatable, paired with `-u`; `smb` and `ldap` use it directly, `ftp`/`telnet` don't take hash auth) |
+| `-d` | — | AD domain |
+| `-local-auth` | off | authenticate against the target's local SAM, not the domain |
+| `-k` | off | Kerberos auth instead of NTLM (not yet implemented — see [ROADMAP.md](ROADMAP.md)) |
+| `-port` | the protocol's default | override the port |
+| `-timeout` | 8-10s | per-connection timeout |
+| `-c` | 10-20 | concurrent connections |
+| `-o` / `-json` / `-color` | stdout / off / `auto` | same as every other command |
+
+Every target is tried anonymous-first (so a bare `srt smb -l hosts.txt` needs
+no flags at all), then with each `-u`/`-p`/`-H` attempt in turn until one is
+accepted. A result is saved as its own kind (`ftp`, `telnet`, `smb`, `ldap`)
+with a `severity` (`info`/`low`/`medium`/`high`) in its data, the same way
+`probe`'s `title`/`server`/`tech` are — `srt results -kind smb` lists them.
+None of the four ever writes, deletes or creates anything on the target, even
+when a login grants write access.
+
+```bash
+srt ftp -l hosts.txt                              # anonymous-login check + root listing
+srt smb -l hosts.txt -u administrator -H <nthash>  # pass-the-hash, share enum + read-access check
+srt ldap -l hosts.txt -u svc-acct -p '' -d CORP     # simple bind as svc-acct@CORP + RootDSE
+srt telnet -l hosts.txt -u root -p toor            # banner/no-auth-shell check, then try a login
+```
+
+`telnet` has no formal protocol marker for "this is a login prompt" or "this
+is a shell" — it classifies by the conventional wording (`login:`,
+`username:`) versus a trailing shell-style prompt character (`$ # > %`), so an
+unusual banner can show up as a plain `banner` finding rather than
+`no-auth`/`login-ok`; read `-json`'s `detail` field when in doubt.
 
 ---
 

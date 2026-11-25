@@ -35,6 +35,10 @@ import (
 	// block is the only place that needs to list them. Adding a new command
 	// package means adding one line here (and nowhere else in this file).
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/pipeline"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/ftp"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/ldap"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/smb"
+	_ "github.com/trike33/srt-cheatsheet/gotools/internal/protocols/telnet"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dirlist"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/domains"
 	_ "github.com/trike33/srt-cheatsheet/gotools/internal/recon/dork"
@@ -102,7 +106,10 @@ func applyGlobalFlags() {
 // structuredSaveCommands record rich results themselves (see each recon
 // package's own store.CurrentSink().Add call sites); every other command is
 // saved by teeing its stdout line by line.
-var structuredSaveCommands = map[string]bool{"portscan": true, "fuzz": true, "probe": true, "pipeline": true}
+var structuredSaveCommands = map[string]bool{
+	"portscan": true, "fuzz": true, "probe": true, "pipeline": true,
+	"ftp": true, "telnet": true, "smb": true, "ldap": true,
+}
 
 // dbCommands read the database, so they are never run "with -save".
 var dbCommands = map[string]bool{"runs": true, "results": true, "export": true, "db": true, "shell": true}

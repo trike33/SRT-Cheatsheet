@@ -54,6 +54,10 @@ echo 10.0.0.5 | ./srt portscan -p common,uncommon
 
 # scope-aware directory fuzzing
 ./srt fuzz -u https://target/FUZZ -w wordlist.txt -ac
+
+# internal AD protocols: anonymous-login/null-session checks, no flags needed
+echo 10.0.0.5 | ./srt smb
+echo 10.0.0.5 | ./srt ldap
 ```
 
 Run `./srt help` for the full command list, or `./srt <command> -h` for a

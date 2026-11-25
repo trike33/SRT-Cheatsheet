@@ -4,6 +4,68 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Protocol clients, Phase 1: `ftp`, `telnet`, `smb`, `ldap` (internal-pentest direction)
+- **New `internal/protocols` package family**, parallel to `internal/recon`:
+  a shared `protocols` package (`Target`, `Credential`, `Finding`, and the
+  netexec-style global flags every protocol command shares — `-u`/`-p`/`-H`/
+  `-d`/`-local-auth`/`-k`/`-port`/`-timeout`) plus one subpackage per
+  protocol, each wrapping a mature Go library rather than reimplementing a
+  wire format: `jlaffaye/ftp`, `hirochachacha/go-smb2`, `go-ldap/ldap/v3`;
+  `telnet` needs none, a raw `net.Dial` client. Findings are a new result
+  kind per protocol (`ftp`/`telnet`/`smb`/`ldap`), alongside the existing
+  `portscan`/`probe`/`fuzz` kinds, with a `severity` in their data; `srt
+  results -kind smb` lists them like any other.
+- **`ftp`**: anonymous login (RFC 1635's placeholder credential, never a
+  real address) then each `-u`/`-p` attempt, followed by a read-only root
+  listing (`NameList`) on whichever login is accepted. Never writes,
+  deletes or renames anything on the target.
+- **`smb`**: anonymous/null session then NTLM `-u`/`-p`, **and
+  pass-the-hash via `-H`** (go-smb2's `NTLMInitiator.Hash` supports it
+  directly — a Phase 2 item in the original roadmap table, pulled forward
+  since the chosen library already had it). Share enumeration
+  (`ListSharenames`) plus a shallow `ReadDir` read-access check per share
+  (skipping `IPC$`), capped at 20 shares/target. `-local-auth` drops the
+  domain for a local-SAM bind; `-k` (Kerberos) is accepted for CLI-schema
+  consistency but not yet implemented (go-smb2 is NTLM-only).
+- **`ldap`**: true anonymous bind (empty DN + empty password, via
+  `SimpleBind` with `AllowEmptyPassword` — the plain `Bind` method
+  refuses an empty password client-side per RFC 4513), simple bind as a
+  UPN (`user@domain`) when `-d` is given, **and an NTLM pass-the-hash
+  bind via `-H`** (`NTLMBindWithHash`, another Phase-2 item pulled
+  forward for the same reason). A successful bind is followed by a
+  RootDSE search (`namingContexts`, `dnsHostName`, supported LDAP
+  version) — a read every LDAP server answers, authenticated or not.
+- **`telnet`**: no formal protocol marker distinguishes a login prompt
+  from a shell, so it classifies by convention (`login:`/`username:`
+  wording vs. a trailing shell-style prompt character) — a connection
+  that lands straight on a shell prompt with no login at all is flagged
+  `no-auth`/high severity; `-u`/`-p`, when given, are used to attempt an
+  actual login over the same connection and classify the result that
+  follows. Minimal IAC option negotiation (decline everything) keeps a
+  server from stalling the read.
+- Every command dials through `netx.Request()`/`netx.CountConn` for
+  `-rate`/traffic-metering parity with the rest of srt, including a raw
+  `DialFunc` for `ftp` (its data-connection dial, not just the control
+  connection — `DialWithNetConn` would have reused the same pre-dialed
+  conn for both, which breaks `NameList`'s EPSV/PASV data channel; a
+  `DialFunc` dials whatever address it's actually given, each time it's
+  asked). Credentialed commands dial a fresh TCP connection per attempt
+  rather than retry a failed auth on the same socket.
+- **Not yet done** (next phases, per the original direction doc): Kerberos
+  auth (`-k`) for `smb`/`ldap`; DCE/RPC-based exec and relay; the
+  `secretsdump`/AD CS/Kerberoasting/BloodHound-style porting work the doc's
+  gap-analysis section scoped out as translation, not research.
+- Tested offline: `jlaffaye/ftp`'s and `go-ldap`'s wire formats are simple
+  enough to drive against a hand-rolled loopback fake server per package
+  (FTP's EPSV/NLST data-channel round trip included, and LDAP's BER
+  bind/search framing via `go-asn1-ber` directly); SMB2's negotiate/
+  session-setup/DCE-RPC-over-IPC$ handshake is not (see
+  `docs/ARCHITECTURE.md`'s note on preferring `t.Skip` over mocking a
+  capability the test environment doesn't have — `smb`'s own tests take
+  that path for anything past a raw TCP accept, same as `recon/traceroute`
+  does for a raw socket), so `smb`'s coverage is the pure helpers
+  (hash/initiator building) plus connection-error handling.
+
 ### `config.sh`: guided setup for the optional API keys
 - **New repo-root script** alongside `install.sh`/`update.sh`/`uninstall.sh`
   — a guided wizard for the API keys `dork -search` and `pipeline`'s
