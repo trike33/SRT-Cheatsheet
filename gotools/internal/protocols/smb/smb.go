@@ -78,7 +78,8 @@ func remarkFor(share string) string {
 type Result struct {
 	Target         string      `json:"target"`
 	Port           int         `json:"port"`
-	LoginAttempted string      `json:"login_attempted,omitempty"` // "" (null session), or user[@domain]
+	LoginAttempted string      `json:"login_attempted,omitempty"` // "" (null session), or domain\user
+	Secret         string      `json:"-"`                         // the password or "<hash> (pass-the-hash)" shown alongside LoginAttempted in terminal output, deliberately left out of JSON/the results DB
 	LoginOK        bool        `json:"login_ok"`
 	Shares         []ShareInfo `json:"shares,omitempty"`
 	Err            string      `json:"error,omitempty"`
@@ -157,6 +158,10 @@ func One(ctx context.Context, target string, creds auth.Creds, opts auth.Options
 		res.LoginAttempted = creds.User
 		if creds.Domain != "" {
 			res.LoginAttempted = creds.Domain + "\\" + creds.User
+		}
+		res.Secret = creds.Password
+		if creds.Hash != "" {
+			res.Secret = creds.Hash + " (pass-the-hash)"
 		}
 	}
 
@@ -267,8 +272,12 @@ func Run(args []string) error {
 			fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Fail, login+" (login failed)"))
 			continue
 		}
-		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.OK, login))
-		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Info, "enumerated shares"))
+		who := login
+		if r.Secret != "" {
+			who = login + ":" + r.Secret
+		}
+		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.OK, who))
+		fmt.Fprintln(w, auth.Line(cm, "SMB", r.Target, r.Port, auth.Info, "Enumerated shares"))
 		if len(r.Shares) > 0 {
 			printShares(w, r.Shares)
 		}
