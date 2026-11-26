@@ -121,14 +121,30 @@ func TestBuildInitiator(t *testing.T) {
 }
 
 func TestBuildInitiatorKerberos(t *testing.T) {
-	// -k with neither -p nor -H is rejected before ever touching the KDC.
+	// -k with neither -p nor -H, and no $KRB5CCNAME to fall back to, is
+	// rejected before ever touching the KDC -- there is nothing this
+	// attempt could possibly authenticate with.
+	t.Setenv("KRB5CCNAME", "")
 	if _, err := buildInitiator(protocols.Credential{User: "alice", Domain: "CORP.LOCAL", Kerberos: true}, testTarget); err == nil {
-		t.Error("-k with no -p/-H: want error, got nil")
+		t.Error("-k with no -p/-H/$KRB5CCNAME: want error, got nil")
 	}
 	// -k with no -d (no realm to authenticate against) is rejected the same way.
 	if _, err := buildInitiator(protocols.Credential{User: "alice", Password: "pw", Kerberos: true}, testTarget); err == nil {
 		t.Error("-k with no -d: want error, got nil")
 	}
+	// -k with neither -p nor -H, but $KRB5CCNAME set, is accepted here --
+	// go-smb's own Kerberos client (not this function) is the one that
+	// actually reads the ccache, lazily, the first time the Initiator's
+	// Client() is called.
+	t.Setenv("KRB5CCNAME", "/tmp/doesnt-need-to-exist-for-this-check.ccache")
+	gmKC, err := buildInitiator(protocols.Credential{User: "alice", Domain: "CORP.LOCAL", Kerberos: true}, testTarget)
+	if err != nil {
+		t.Fatalf("-k with $KRB5CCNAME set and no -p/-H: unexpected error: %v", err)
+	}
+	if krbKC := gmKC.(*spnego.KRB5Initiator); krbKC.Password != "" || krbKC.Hash != nil {
+		t.Errorf("KRB5Initiator built from $KRB5CCNAME alone should carry no password/hash, got %+v", krbKC)
+	}
+	t.Setenv("KRB5CCNAME", "")
 
 	gm, err := buildInitiator(protocols.Credential{User: "alice", Password: "pw", Domain: "CORP.LOCAL", Kerberos: true}, testTarget)
 	if err != nil {

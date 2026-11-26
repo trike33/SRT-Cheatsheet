@@ -871,10 +871,12 @@ accounts (`userAccountControl`'s `DONT_REQ_PREAUTH` bit), membership in a
 well-known high-value group (Domain/Enterprise/Schema Admins,
 Administrators), and the domain password policy (flagged weak under an
 8-character minimum, no complexity requirement, or no lockout). `ldap -k`
-needs the realm (`-d`) and a password (pass-the-key isn't supported); the
-target must be the DC's actual hostname, not its IP, since that's what its
-LDAP service principal name is keyed to — `srt` writes a disposable
-`krb5.conf` per attempt, treating the target as its own realm's KDC.
+needs the realm (`-d`) and either a password or `$KRB5CCNAME` pointing at an
+existing ticket cache (pass-the-ticket — the `srt shell`'s `krb5` built-in
+sets it for you; pass-the-key isn't supported); the target must be the DC's
+actual hostname, not its IP, since that's what its LDAP service principal
+name is keyed to — `srt` writes a disposable `krb5.conf` per attempt,
+treating the target as its own realm's KDC.
 
 **`smb`** wraps `jfjallid/go-smb`, which exposes what `go-smb2` (the
 original Phase 1 pick) didn't: a real netexec-style fingerprint line
@@ -884,7 +886,11 @@ real share list over MS-SRVS (each share with the server's own remark, not
 a guessed one), and `-k` itself (`go-smb2`'s auth interface was unexported,
 with no way to plug Kerberos in). `-k` here also takes `-H` for
 pass-the-hash over Kerberos — `ldap`'s Kerberos support still can't do
-that. **`-local-enum`** (on by default) additionally lists the target's
+that. With neither `-p` nor `-H`, `-k` here also authenticates straight from
+`$KRB5CCNAME` (pass-the-ticket) with no extra code needed — `go-smb`'s own
+Kerberos client checks that variable itself before ever asking for a
+password; the `srt shell`'s `krb5` built-in sets it for you. **`-local-enum`**
+(on by default) additionally lists the target's
 *local* (non-domain) SAM users and local Administrators-alias membership
 over MS-SAMR — the same DCE/RPC machinery as the share list, just a
 different pipe; tried regardless of which credential got the session in,
@@ -1126,6 +1132,29 @@ srt> exit
 ```
 
 Needs an interactive terminal (stdin must be a TTY).
+
+**`krb5`** and **`timesync`** are two more built-ins (`help krb5`/`help
+timesync` for their own reference), for Kerberos work with `smb -k`/`ldap -k`:
+
+- **`krb5 [<ccache-path>|clear]`** sets, shows, or clears this session's
+  `$KRB5CCNAME` — inherited by every command launched from here (`childEnv`),
+  so `smb -k`/`ldap -k` can authenticate from a ticket obtained elsewhere
+  (`kinit`, Rubeus, impacket's `getTGT.py`) with no `-p`/`-H` at all
+  ("pass-the-ticket"): `smb`'s own Kerberos client already checks
+  `$KRB5CCNAME` itself before ever asking for a password; `ldap`'s reads it
+  explicitly for the same effect. A path that doesn't exist yet is accepted,
+  not rejected — the ticket may still be on its way.
+- **`timesync <host>`** queries `host`'s clock over NTP (UDP/123 — the port
+  Active Directory's own `w32time` service answers on by default, so a DC
+  needs no extra setup) and reports the offset from local time, since
+  Kerberos typically rejects anything past ~5 minutes of skew. Read-only: it
+  never touches the system clock, only reports what it measured.
+
+```bash
+srt> krb5 /tmp/alice.ccache     # every command launched from here now sees it
+srt> timesync dc01.corp.local   # check clock skew before trying -k
+srt> ldap -l dc01.corp.local -d CORP.LOCAL -k   # authenticates from the ccache, no -p needed
+```
 
 ---
 

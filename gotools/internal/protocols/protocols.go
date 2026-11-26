@@ -26,6 +26,20 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
+// EnvKRB5CCName is the standard MIT krb5 ticket-cache environment
+// variable -- a path to a ccache file holding a TGT (and, maybe, service
+// tickets) obtained elsewhere (kinit, Rubeus, impacket's getTGT.py, ...),
+// letting -k authenticate from an existing ticket instead of needing
+// -p/-H at all ("pass-the-ticket"). smb's go-smb checks it transparently
+// inside its own Kerberos client construction (krb5ssp.InitKerberosClient
+// tries it before ever falling back to a password/hash), so smb's own
+// buildKerberosInitiator needs no extra code to use it; ldap's
+// go-ldap/gssapi does not check it on its own, so ldap.go's kerberosBind
+// reads it explicitly to choose between gssapi.NewClientFromCCache and
+// NewClientWithPassword. The srt shell's own "krb5" built-in sets this
+// for every command it launches -- see internal/shell.
+const EnvKRB5CCName = "KRB5CCNAME"
+
 // Target is one host:port a protocol command probes.
 type Target struct {
 	Host string

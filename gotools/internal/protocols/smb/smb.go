@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -437,12 +438,23 @@ func buildInitiator(cr protocols.Credential, t protocols.Target) (gss.Mechanism,
 // own Kerberos support documents applies here too: it needs the target's
 // actual hostname, not its bare IP, since that's what the "cifs/<host>"
 // SPN is keyed to.
+//
+// With neither -p nor -H given, nothing here points the Initiator at a
+// credential at all -- and that's deliberate, not an oversight: this
+// library's own Kerberos client (krb5ssp.InitKerberosClient, underneath
+// KRB5Initiator.Client/initKerberosClient) already checks $KRB5CCNAME
+// itself, before ever asking for a password or hash, and uses whatever
+// cached ticket it finds there (pass-the-ticket) -- unlike ldap's
+// gssapi client, which needs srt to read that env var and choose the
+// right constructor explicitly (see ldap.kerberosBind). So the only
+// thing to guard against here is giving up before even trying: if
+// $KRB5CCNAME is also unset, there is nothing this attempt could
+// possibly authenticate with, and failing fast with a clear reason
+// beats letting the library's own deeper error surface as an opaque
+// connection failure.
 func buildKerberosInitiator(cr protocols.Credential, t protocols.Target) (gss.Mechanism, error) {
 	if cr.Domain == "" {
 		return nil, fmt.Errorf("-k needs -d <domain> (the Kerberos realm)")
-	}
-	if cr.Password == "" && cr.Hash == "" {
-		return nil, fmt.Errorf("-k needs -p <password> or -H <hash>")
 	}
 	init := &spnego.KRB5Initiator{
 		User:   cr.User,
@@ -451,14 +463,17 @@ func buildKerberosInitiator(cr protocols.Credential, t protocols.Target) (gss.Me
 		Host:   t.Host,
 		SPN:    "cifs/" + t.Host,
 	}
-	if cr.Hash != "" {
+	switch {
+	case cr.Hash != "":
 		h, err := parseHash(cr.Hash)
 		if err != nil {
 			return nil, fmt.Errorf("-H %q: %w", cr.Hash, err)
 		}
 		init.Hash = h
-	} else {
+	case cr.Password != "":
 		init.Password = cr.Password
+	case os.Getenv(protocols.EnvKRB5CCName) == "":
+		return nil, fmt.Errorf("-k needs -p <password>, -H <hash>, or $KRB5CCNAME pointing at an existing ticket cache")
 	}
 	return init, nil
 }

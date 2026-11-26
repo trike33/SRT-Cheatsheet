@@ -4,6 +4,48 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### Kerberos pass-the-ticket (`$KRB5CCNAME`) + the shell's `krb5`/`timesync` built-ins
+- **`smb -k`/`ldap -k` now authenticate from an existing ticket cache**, not
+  just a password or hash: `internal/protocols.EnvKRB5CCName` names the
+  standard MIT krb5 `$KRB5CCNAME` variable, pointing at a ccache a ticket
+  obtained elsewhere (`kinit`, Rubeus, impacket's `getTGT.py`) already wrote.
+  `smb` needed no new code at all for this -- `go-smb`'s own Kerberos client
+  (`krb5ssp.InitKerberosClient`) already checks `$KRB5CCNAME` itself, before
+  ever falling back to a password/hash, so `buildKerberosInitiator` only
+  needed its validation relaxed (erroring upfront only when neither a
+  credential nor `$KRB5CCNAME` is available at all, rather than blocking on
+  a missing `-p`/`-H` unconditionally). `ldap`'s `go-ldap/gssapi` client
+  does *not* check the variable on its own, so `kerberosBind` reads it
+  explicitly and calls `gssapi.NewClientFromCCache` instead of
+  `NewClientWithPassword` when no `-p` was given -- a constructor that
+  version already shipped with, found by reading its source rather than
+  needing a newer release. A ticket's own principal authenticates
+  regardless of `-u`/`-d`, the same way a pass-the-hash credential does.
+- **The `srt shell` gets two new built-ins**: `krb5 [<ccache-path>|clear]`
+  sets/shows/clears a session-level `$KRB5CCNAME` override, inherited by
+  every command the shell launches from there on (`childEnv`, the same
+  mechanism `save`/`limit` already use) -- so a ticket obtained mid-session
+  reaches `smb -k`/`ldap -k` without exporting the variable in the
+  surrounding terminal first. `timesync <host>` sends a single SNTP (RFC
+  4330) request to the target's UDP/123 -- the port Active Directory's own
+  `w32time` answers on by default -- and reports the clock offset against
+  Kerberos's ~5-minute default skew tolerance; read-only, it only measures,
+  never adjusts, the local clock. Both run as real in-process shell
+  built-ins (`timesync`'s network round trip as an async `tea.Cmd`, so it
+  can't block the UI thread the way a synchronous built-in's work can).
+- **Tested**: `toNTPTime`/`fromNTPTime` round-trip (within the 32-bit
+  fractional field's own sub-millisecond precision limit); `queryNTP`
+  against a hand-rolled fake SNTP UDP server (the same "drive the real
+  wire format against a minimal fake" convention the protocol packages'
+  FTP/telnet/LDAP tests use), both for a measured offset and a dead port's
+  timeout; `applyKrb5Command`'s set/show/clear/directory-rejection paths
+  and `childEnv`'s override-wins-over-inherited-env behavior; `ldap`'s and
+  `smb`'s relaxed Kerberos validation (accepts `$KRB5CCNAME` alone, still
+  rejects having neither it nor a credential). The Kerberos ccache
+  *parsing* itself is gokrb5's/go-smb's own, already well outside what a
+  unit test here can verify without a live KDC -- the same caveat this
+  file's earlier Kerberos entries already note.
+
 ### `srt creds` + bash/zsh tab-completion
 - **`internal/protocols.Finding.Accepted`**: a new field each of the eight
   protocol clients sets on exactly the one Finding per probe call that

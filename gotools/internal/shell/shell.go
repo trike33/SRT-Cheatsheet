@@ -27,6 +27,7 @@ import (
 	"github.com/trike33/srt-cheatsheet/gotools/internal/fuzzctl"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/ioutil"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/netx"
+	"github.com/trike33/srt-cheatsheet/gotools/internal/protocols"
 	"github.com/trike33/srt-cheatsheet/gotools/internal/store"
 )
 
@@ -88,6 +89,7 @@ type shellModel struct {
 	limits      netx.Limits // halt ceilings applied to each command via env
 	save        bool        // record each command's results in the project database
 	rate        float64     // req/s throttle applied to each command (0 = unlimited)
+	krb5ccname  string      // session override for $KRB5CCNAME ("" = inherit the OS environment's own, if any) -- see applyKrb5Command
 	prevDir     string      // previous project, for `cd -`
 	notice      string      // transient info line (not an error) -- cleared on the next keystroke
 	lastRun     string      // last finished command's traffic summary -- persists in its own box
@@ -165,6 +167,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingHelp = ""
 			m.printHelp(msg.name)
 		}
+		return m, nil
+
+	case timesyncDoneMsg:
+		m.notice = describeTimesync(msg)
 		return m, nil
 
 	case tea.MouseMsg:
@@ -554,6 +560,11 @@ func (m shellModel) runLine() (tea.Model, tea.Cmd) {
 	case "limit":
 		m.applyLimitCommand(cmdArgs)
 		return m, nil
+	case "krb5":
+		m.applyKrb5Command(cmdArgs)
+		return m, nil
+	case "timesync":
+		return m.runTimesync(cmdArgs)
 	case "cd", "project":
 		if len(cmdArgs) > 1 {
 			m.lastErr = ioutil.ErrMissing("usage: " + cmdName + " [<dir>|-]")
@@ -616,7 +627,7 @@ func (m *shellModel) applyColorCommand(args []string) {
 // pseudo-commands, for completion and syntax highlighting.
 func shellCommandNames() []string {
 	names := append([]string{}, cli.Names()...)
-	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume", "save", "jobs", "fg")
+	names = append(names, "help", "exit", "quit", "clear", "color", "cd", "project", "traffic", "limit", "sessions", "resume", "save", "jobs", "fg", "krb5", "timesync")
 	sort.Strings(names)
 	return names
 }
@@ -691,6 +702,10 @@ func (m *shellModel) childEnv() []string {
 	if m.limits.MaxBytes > 0 {
 		env = append(env, fmt.Sprintf("%s=%d", netx.EnvMaxBytes, m.limits.MaxBytes))
 	}
+	if m.krb5ccname != "" {
+		env = slices.DeleteFunc(env, func(e string) bool { return strings.HasPrefix(e, protocols.EnvKRB5CCName+"=") })
+		env = append(env, protocols.EnvKRB5CCName+"="+m.krb5ccname)
+	}
 	return env
 }
 
@@ -736,5 +751,44 @@ func (m *shellModel) applyLimitCommand(args []string) {
 		m.notice = describe()
 	default:
 		m.lastErr = usage
+	}
+}
+
+// applyKrb5Command handles `krb5`, `krb5 <ccache-path>` and `krb5 clear`:
+// a session-level override for $KRB5CCNAME (internal/protocols'
+// EnvKRB5CCName), inherited by every command this shell launches (see
+// childEnv) -- so `smb -k`/`ldap -k` with no -p/-H can authenticate from
+// a ticket obtained elsewhere (kinit, Rubeus, impacket's getTGT.py)
+// without exporting the variable in the surrounding terminal first. A
+// path that doesn't exist yet is accepted, not rejected: the ticket may
+// not have been written until a `kinit`-style step still to come in the
+// same engagement.
+func (m *shellModel) applyKrb5Command(args []string) {
+	switch {
+	case len(args) == 0:
+		switch {
+		case m.krb5ccname != "":
+			m.notice = "krb5ccname: " + m.krb5ccname + " (session override)"
+		case os.Getenv(protocols.EnvKRB5CCName) != "":
+			m.notice = "krb5ccname: " + os.Getenv(protocols.EnvKRB5CCName) + " (inherited from the environment)"
+		default:
+			m.notice = "krb5ccname: not set -- smb/ldap -k will need -p/-H"
+		}
+	case len(args) == 1 && args[0] == "clear":
+		m.krb5ccname = ""
+		m.notice = "krb5ccname: cleared (reverts to whatever the environment already has, if anything)"
+	case len(args) == 1:
+		path := args[0]
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			m.lastErr = fmt.Errorf("krb5: %q is a directory, not a ccache file", path)
+			return
+		} else if err != nil {
+			m.notice = "krb5ccname: " + path + " set, though it doesn't exist yet"
+		} else {
+			m.notice = "krb5ccname: " + path + " (every command launched from here now sees it)"
+		}
+		m.krb5ccname = path
+	default:
+		m.lastErr = ioutil.ErrMissing("usage: krb5 [<ccache-path>|clear]")
 	}
 }

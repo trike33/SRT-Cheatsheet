@@ -271,7 +271,14 @@ func bind(l *ldaplib.Conn, t protocols.Target, cr protocols.Credential) error {
 // Pass-the-key (a raw NT/AES key instead of a password) is NOT
 // supported: gokrb5's public keytab.Keytab API only derives keys from a
 // password (AddEntry), never accepts a raw key directly, so cr.Hash has
-// no way in here -- see docs/ROADMAP.md.
+// no way in here -- see docs/ROADMAP.md. Pass-the-ticket IS: with no -p
+// given, $KRB5CCNAME (protocols.EnvKRB5CCName -- the srt shell's own
+// "krb5" built-in sets it) is read directly here (unlike smb's -k path,
+// go-ldap's gssapi client doesn't check it on its own) and, if it names
+// an existing ccache, gssapi.NewClientFromCCache loads its TGT instead
+// of asking the KDC for a fresh one with a password. The ccache's own
+// principal is what authenticates, regardless of -u/-d -- a ticket
+// speaks for itself the same way a pass-the-hash credential does.
 //
 // -d names the realm; since Active Directory's registered LDAP SPN is
 // keyed to the DC's real hostname, not its IP, -k only works when the
@@ -280,9 +287,6 @@ func kerberosBind(l *ldaplib.Conn, t protocols.Target, cr protocols.Credential) 
 	if cr.Domain == "" {
 		return fmt.Errorf("-k needs -d <domain> (the Kerberos realm)")
 	}
-	if cr.Password == "" {
-		return fmt.Errorf("-k needs -p <password>: pass-the-key isn't supported by srt's Kerberos library -- see docs/ROADMAP.md")
-	}
 	realm := strings.ToUpper(cr.Domain)
 	confPath, cleanup, err := writeKrb5Conf(realm, t.Host)
 	if err != nil {
@@ -290,7 +294,14 @@ func kerberosBind(l *ldaplib.Conn, t protocols.Target, cr protocols.Credential) 
 	}
 	defer cleanup()
 
-	kc, err := krb5gssapi.NewClientWithPassword(cr.User, realm, cr.Password, confPath)
+	var kc *krb5gssapi.Client
+	if cr.Password != "" {
+		kc, err = krb5gssapi.NewClientWithPassword(cr.User, realm, cr.Password, confPath)
+	} else if ccache := os.Getenv(protocols.EnvKRB5CCName); ccache != "" {
+		kc, err = krb5gssapi.NewClientFromCCache(ccache, confPath)
+	} else {
+		return fmt.Errorf("-k needs -p <password>, or $KRB5CCNAME pointing at an existing ticket cache (pass-the-key isn't supported by srt's Kerberos library -- see docs/ROADMAP.md)")
+	}
 	if err != nil {
 		return fmt.Errorf("kerberos client: %w", err)
 	}

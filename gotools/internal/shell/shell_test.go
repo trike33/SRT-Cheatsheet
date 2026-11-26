@@ -178,6 +178,74 @@ func TestApplyColorCommand(t *testing.T) {
 	}
 }
 
+func TestApplyKrb5Command(t *testing.T) {
+	t.Setenv("KRB5CCNAME", "")
+	m := newTestModel()
+
+	m.applyKrb5Command(nil)
+	if m.lastErr != nil || m.krb5ccname != "" {
+		t.Errorf("krb5 (bare, nothing set anywhere): lastErr=%v krb5ccname=%q", m.lastErr, m.krb5ccname)
+	}
+
+	dir := t.TempDir()
+	m.applyKrb5Command([]string{dir})
+	if m.lastErr == nil {
+		t.Error("krb5 <directory>: expected lastErr, got nil")
+	}
+	if m.krb5ccname != "" {
+		t.Errorf("krb5 <directory>: krb5ccname should stay unset after a rejected path, got %q", m.krb5ccname)
+	}
+
+	m.lastErr = nil
+	ccache := filepath.Join(dir, "krb5cc_test")
+	if err := os.WriteFile(ccache, []byte("not a real ccache, just a file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.applyKrb5Command([]string{ccache})
+	if m.lastErr != nil || m.krb5ccname != ccache {
+		t.Errorf("krb5 <existing file>: lastErr=%v krb5ccname=%q, want nil / %q", m.lastErr, m.krb5ccname, ccache)
+	}
+
+	nonexistent := filepath.Join(dir, "not-written-yet")
+	m.applyKrb5Command([]string{nonexistent})
+	if m.lastErr != nil || m.krb5ccname != nonexistent {
+		t.Errorf("krb5 <nonexistent path>: should be accepted (ticket may land later), got lastErr=%v krb5ccname=%q", m.lastErr, m.krb5ccname)
+	}
+
+	m.applyKrb5Command([]string{"clear"})
+	if m.krb5ccname != "" {
+		t.Errorf("krb5 clear: krb5ccname = %q, want \"\"", m.krb5ccname)
+	}
+
+	m.lastErr = nil
+	m.applyKrb5Command([]string{"a", "b"})
+	if m.lastErr == nil {
+		t.Error("krb5 with two args: expected a usage error")
+	}
+}
+
+// TestChildEnvAppliesKrb5Override confirms the session's krb5ccname
+// override actually reaches a launched command's environment -- not
+// just that applyKrb5Command sets the field, which TestApplyKrb5Command
+// already covers -- and that it replaces, not duplicates, any
+// $KRB5CCNAME the shell process itself inherited.
+func TestChildEnvAppliesKrb5Override(t *testing.T) {
+	t.Setenv("KRB5CCNAME", "/inherited/from/os/env")
+	m := newTestModel()
+	m.krb5ccname = "/session/override.ccache"
+
+	env := m.childEnv()
+	var got []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "KRB5CCNAME=") {
+			got = append(got, e)
+		}
+	}
+	if len(got) != 1 || got[0] != "KRB5CCNAME=/session/override.ccache" {
+		t.Errorf("childEnv KRB5CCNAME entries = %v, want exactly one, the session override", got)
+	}
+}
+
 func TestTokenizeLineWithSpans(t *testing.T) {
 	toks := tokenizeLineWithSpans([]rune(`fuzz -H "Name: Value" plain`))
 	want := []string{"fuzz", "-H", `"Name: Value"`, "plain"}

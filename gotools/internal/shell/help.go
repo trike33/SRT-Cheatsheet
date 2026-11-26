@@ -56,6 +56,8 @@ var shellHelp = map[string]string{
 	"fg":       "fg [n]\n\nBring a background job (the newest, or job n) back to the foreground; its buffered output is replayed.\n\nWhile a command runs: Ctrl+C stops it, Ctrl+S skips the current pipeline step, Ctrl+Z sends it to the background, Ctrl+R opens a live-results window (Esc closes it).",
 	"resume":   "resume [<id>]\n\nContinue an interrupted command from where it stopped.",
 	"save":     "save [on|off]\n\nWhether each command's results are recorded in the project database.",
+	"krb5":     "krb5 [<ccache-path>|clear]\n\nShow, set, or clear this session's $KRB5CCNAME override -- every command launched from here inherits it, so `smb -k`/`ldap -k` can authenticate from an existing ticket (kinit, Rubeus, impacket's getTGT.py) with no -p/-H needed.",
+	"timesync": "timesync <host>\n\nQuery host's clock over NTP (UDP/123, the port Active Directory's own w32time answers on) and report the offset from local time -- Kerberos typically rejects anything past ~5 minutes of skew. Read-only: never touches the system clock.",
 }
 
 // isFlagLine reports whether line is an indented "-name ..." flag header, in

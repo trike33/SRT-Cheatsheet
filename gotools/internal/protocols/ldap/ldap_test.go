@@ -397,13 +397,27 @@ func TestWriteKrb5Conf(t *testing.T) {
 	}
 }
 
-func TestKerberosBindRequiresDomainAndPassword(t *testing.T) {
+func TestKerberosBindRequiresDomainAndCredential(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 389}
+	t.Setenv("KRB5CCNAME", "")
 	if err := kerberosBind(nil, tg, protocols.Credential{User: "alice", Kerberos: true}); err == nil {
 		t.Error("kerberosBind with no -d: want error, got nil")
 	}
 	if err := kerberosBind(nil, tg, protocols.Credential{User: "alice", Domain: "CORP", Kerberos: true}); err == nil {
-		t.Error("kerberosBind with no -p (and no -H support): want error, got nil")
+		t.Error("kerberosBind with no -p and no $KRB5CCNAME (and no -H support): want error, got nil")
+	}
+
+	// With $KRB5CCNAME set (even to a nonexistent file), kerberosBind no
+	// longer rejects the missing password upfront -- it tries
+	// gssapi.NewClientFromCCache instead, which is where this now fails
+	// (a different error than the "needs -p" one above).
+	t.Setenv("KRB5CCNAME", "/tmp/doesnt-exist-for-this-test.ccache")
+	err := kerberosBind(nil, tg, protocols.Credential{User: "alice", Domain: "CORP", Kerberos: true})
+	if err == nil {
+		t.Fatal("kerberosBind with a nonexistent $KRB5CCNAME: want error, got nil")
+	}
+	if strings.Contains(err.Error(), "needs -p") {
+		t.Errorf("kerberosBind with $KRB5CCNAME set should not fail with the needs-a-password message, got: %v", err)
 	}
 }
 
