@@ -209,7 +209,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		case cr.Kerberos:
 			sev = protocols.High // confirms a usable cleartext credential over Kerberos specifically
 		}
-		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: dse.String()}}
+		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: dse.String(), Accepted: true}}
 
 		if enum {
 			if base := dse.baseDN(); base != "" {

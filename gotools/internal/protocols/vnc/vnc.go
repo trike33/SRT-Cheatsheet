@@ -173,7 +173,7 @@ func probe(t protocols.Target, passwords []string, timeout time.Duration) protoc
 			return protocols.Finding{Target: t, Err: err.Error()}
 		}
 		return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-			Detail: strings.TrimSpace(serverVersion + "; " + detail)}
+			Detail: strings.TrimSpace(serverVersion + "; " + detail), Accepted: true}
 	}
 
 	var lastErr error
@@ -185,7 +185,7 @@ func probe(t protocols.Target, passwords []string, timeout time.Duration) protoc
 		}
 		if ok {
 			return protocols.Finding{Target: t, Cred: protocols.Credential{Password: pw}, Kind: KindLoginOK,
-				Severity: protocols.High, Detail: strings.TrimSpace(serverVersion + "; " + detail)}
+				Severity: protocols.High, Detail: strings.TrimSpace(serverVersion + "; " + detail), Accepted: true}
 		}
 		lastErr = fmt.Errorf("authentication failed")
 	}

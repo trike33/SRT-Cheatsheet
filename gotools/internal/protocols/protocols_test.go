@@ -104,6 +104,15 @@ func TestFindingRecord(t *testing.T) {
 	if _, ok := rec2.Data["cred"]; ok {
 		t.Errorf("anonymous finding's record carries a cred field: %v", rec2.Data)
 	}
+	if _, ok := rec2.Data["ok"]; ok {
+		t.Errorf("a Finding with Accepted left at its zero value (false) carries an ok field: %v", rec2.Data)
+	}
+
+	accepted := Finding{Target: Target{Host: "10.0.0.1", Port: 445}, Kind: "login-ok", Detail: "accepted", Accepted: true}
+	rec4 := accepted.Record("smb")
+	if rec4.Data["ok"] != true {
+		t.Errorf("rec4.Data[ok] = %v, want true", rec4.Data["ok"])
+	}
 
 	// A Record's Kind is always the protocol ("smb"), same convention as
 	// every other recon package (probe.Result.Record uses "probe", not

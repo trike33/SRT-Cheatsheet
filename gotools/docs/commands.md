@@ -1031,6 +1031,40 @@ srt results -kind probe -q wordpress
 srt results -run 3 -count
 ```
 
+### creds
+
+A focused "what got in" view over the same database: exactly the findings a
+protocol client (`ftp`/`telnet`/`smb`/`ldap`/`ssh`/`mssql`/`vnc`/`rdp`) marked
+as an accepted login or session (`internal/protocols.Finding.Accepted`, stored
+as `Data["ok"]` — a dedicated marker, not a guess from severity or wording, so
+it can't be confused with "every attempt was rejected"), pulled out of
+`results`' own everything-including-banners-and-rejections view. Shares
+`results`' `-host`/`-run`/`-history`/`-limit` filters and `-json`/`-count`
+output modes; `-kind` narrows within the eight protocol kinds instead of
+accepting any kind.
+
+| Flag | Meaning |
+|---|---|
+| `-kind` | comma list, narrowing within `ftp,telnet,smb,ldap,ssh,mssql,vnc,rdp` (default: all eight) |
+| `-host` | host substring |
+| `-run` / `-history` | one run / all observations |
+| `-limit` | max rows |
+| `-json` / `-keys` / `-count` | JSON lines / `"host:port"` one per line, pipe-friendly into another command's `-l` / just the number |
+| `-color` | color the table: `auto`\|`always`\|`never` (ignored with `-json`/`-keys`/`-count`); `PROTO` gets a per-kind color the same way `results`' `KIND` column does, `CRED`/`DETAIL` are colored by severity |
+
+The `CRED` column is `Credential.String()`'s own rendering — a username (and
+domain, if any), never the password or hash itself (see its doc comment):
+the point of `-save` was never to build a password list by reading the
+database back, since whoever ran the original command already had the
+secret. `HOSTNAME` falls back to the bare host for every protocol except
+`smb`/`ldap`, the two that capture one for free (NTLM's challenge, RootDSE).
+
+```bash
+srt creds                                   # every accepted login/session, across all runs
+srt creds -kind smb,ldap -host 10.0.0.0/24  # note: -host is a substring, not CIDR-aware
+srt creds -keys | srt rdp                   # re-probe every host a credential already worked on (reads stdin)
+```
+
 ### runs
 
 `srt runs` lists saved runs (id, start time, record count, the command line);

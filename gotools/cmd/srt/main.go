@@ -117,7 +117,7 @@ var structuredSaveCommands = map[string]bool{
 }
 
 // dbCommands read the database, so they are never run "with -save".
-var dbCommands = map[string]bool{"runs": true, "results": true, "export": true, "db": true, "shell": true}
+var dbCommands = map[string]bool{"runs": true, "results": true, "creds": true, "export": true, "db": true, "shell": true}
 
 // teeStdoutToSink mirrors the command's stdout to the real stdout and stores
 // each line as a record of the given kind. The returned func restores stdout

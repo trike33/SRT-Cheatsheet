@@ -154,6 +154,16 @@ type Finding struct {
 	// Line falls back to the bare host, the same way netexec's own
 	// hostname column does.
 	Hostname string
+	// Accepted marks f as the one Finding per probe call that reports a
+	// session/login actually being let in -- an anonymous/null session,
+	// a no-auth shell, or a real credential (set by each package's own
+	// probe on exactly that Finding, never on a banner, a rejected
+	// attempt, or a follow-up enumeration Finding tied to the same
+	// already-accepted credential). It's what `srt creds` filters the
+	// results database on: a plain severity/Kind check alone can't tell
+	// "got in" apart from "every attempt was rejected", since both can
+	// otherwise look alike (no Err, no Cred, a similar Severity).
+	Accepted bool
 }
 
 // Record reduces f to the generic shape the results database stores,
@@ -181,6 +191,9 @@ func (f Finding) Record(protoKind string) store.Record {
 	}
 	if f.Err != "" {
 		d["error"] = f.Err
+	}
+	if f.Accepted {
+		d["ok"] = true
 	}
 	return store.Record{Kind: protoKind, Key: key, Host: f.Target.Host, Port: f.Target.Port, Data: d}
 }

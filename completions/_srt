@@ -1,0 +1,78 @@
+#compdef srt
+# zsh completion for srt (SRT-Cheatsheet).
+#
+# install.sh/update.sh install this automatically to
+# $PREFIX/share/zsh/site-functions/_srt, a standard $fpath entry on most
+# systems (run `compinit` once, e.g. in ~/.zshrc, if completion isn't
+# already enabled). To use it without a fresh shell:
+#
+#   fpath=(completions $fpath); autoload -U compinit && compinit
+#
+# Like the bash script beside this one, this asks the already-installed
+# `srt` binary itself for both command names and each command's flags
+# (its own -h output) rather than hard-coding a list that would drift out
+# of sync -- see _srt_commands/_srt_command_flags. If srt isn't on PATH,
+# or a lookup fails, completion just offers nothing for that word.
+
+# Parsed from srt's own top-level usage (stderr) -- every command row is
+# "    name<spaces>summary" under a "  GROUP:" heading (cmd/srt/main.go's
+# usage()), so a line starting with exactly four spaces then a word is a
+# command row and nothing else in that listing is.
+_srt_commands() {
+  local -a cmds
+  cmds=(${(f)"$(command srt 2>&1 1>/dev/null | awk '/^    [A-Za-z0-9]/{print $1}')"})
+  _describe -t commands 'srt command' cmds
+}
+
+# Parsed the same way from `srt $1 -h`'s own output -- internal/
+# cli.PrintGroupedUsage (what every command's -h goes through) always
+# indents a flag's row with exactly three spaces then "-name".
+_srt_command_flags() {
+  local -a flags
+  flags=(${(f)"$(command srt "$1" -h 2>&1 1>/dev/null | awk '/^   -/{print $1}')"})
+  _describe -t flags 'flag' flags
+}
+
+_srt() {
+  local cmd i
+  # Walk past any global flag (-rate N / -save PATH / -db PATH) to find
+  # the subcommand, the same left-to-right scan cmd/srt/main.go's own
+  # applyGlobalFlags does before dispatch.
+  cmd=""
+  i=2
+  while (( i <= CURRENT )); do
+    case "${words[$i]}" in
+      -rate|-db)
+        (( i += 2 ))
+        continue
+        ;;
+      -save)
+        (( i += 1 ))
+        continue
+        ;;
+      -*)
+        (( i += 1 ))
+        continue
+        ;;
+      *)
+        cmd="${words[$i]}"
+        break
+        ;;
+    esac
+  done
+
+  if [[ -z "$cmd" ]]; then
+    _alternative \
+      'commands:srt command:_srt_commands' \
+      'flags:global flag:(-rate -save -db)'
+    return
+  fi
+
+  if [[ "${words[CURRENT]}" == -* ]]; then
+    _srt_command_flags "$cmd"
+  else
+    _files
+  fi
+}
+
+_srt "$@"

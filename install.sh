@@ -103,6 +103,44 @@ pd_run() {
   ' _ "$1" "$PD_TOOLS" "$2"
 }
 
+# Installs bash+zsh completion for srt: from a local checkout's
+# completions/ dir when $1 is given and exists (the --local-build path,
+# which already has one), else fetched fresh from this repo's main branch
+# (the default release path, which clones nothing). Best-effort only --
+# any failure (no curl, a read-only completions dir, ...) is a warning,
+# never a reason to fail the whole install, since srt itself works fine
+# without it.
+install_completions() {
+  local src_dir="${1:-}" bash_dst="${PREFIX}/share/bash-completion/completions" zsh_dst="${PREFIX}/share/zsh/site-functions"
+  local tmp_bash="" tmp_zsh=""
+  if [ -n "$src_dir" ] && [ -f "${src_dir}/srt.bash" ] && [ -f "${src_dir}/_srt" ]; then
+    tmp_bash="${src_dir}/srt.bash"
+    tmp_zsh="${src_dir}/_srt"
+  else
+    tmp_bash="$(mktemp)"
+    tmp_zsh="$(mktemp)"
+    if ! curl -fsSL -o "$tmp_bash" "https://raw.githubusercontent.com/${REPO}/main/completions/srt.bash" ||
+      ! curl -fsSL -o "$tmp_zsh" "https://raw.githubusercontent.com/${REPO}/main/completions/_srt"; then
+      echo "note: couldn't fetch shell completions (network?) -- srt itself installed fine; see completions/ in the repo to install them by hand." >&2
+      rm -f "$tmp_bash" "$tmp_zsh"
+      return 0
+    fi
+  fi
+  if install -d "$bash_dst" 2>/dev/null && install -m 0644 "$tmp_bash" "${bash_dst}/srt" 2>/dev/null; then
+    echo "Installed bash completion to ${bash_dst}/srt (new shells pick it up automatically)" >&2
+  else
+    echo "note: couldn't write bash completion to ${bash_dst} -- source completions/srt.bash by hand if you want it." >&2
+  fi
+  if install -d "$zsh_dst" 2>/dev/null && install -m 0644 "$tmp_zsh" "${zsh_dst}/_srt" 2>/dev/null; then
+    echo "Installed zsh completion to ${zsh_dst}/_srt (needs that dir in \$fpath and 'compinit', true by default on most systems)" >&2
+  else
+    echo "note: couldn't write zsh completion to ${zsh_dst} -- see completions/_srt in the repo to install it by hand." >&2
+  fi
+  if [ -z "$src_dir" ]; then
+    rm -f "$tmp_bash" "$tmp_zsh"
+  fi
+}
+
 # Installs $1 to ${PREFIX}/bin/srt and reports the version.
 install_bin() {
   install -d "${PREFIX}/bin"
@@ -113,6 +151,7 @@ install_bin() {
     *":${PREFIX}/bin:"*) ;;
     *) echo "note: ${PREFIX}/bin is not on your PATH -- add: export PATH=\"${PREFIX}/bin:\$PATH\"" >&2 ;;
   esac
+  install_completions "${2:-}"
   if [ "$WITH_PD" -eq 1 ]; then
     pd_run -i 1
   fi
@@ -147,7 +186,7 @@ if [ "$LOCAL_BUILD" -eq 1 ]; then
     echo "error: ${PREFIX}/bin is not writable -- run with sudo or set PREFIX=\$HOME/.local." >&2
     exit 1
   fi
-  install_bin "$tmp"
+  install_bin "$tmp" "${SRC_DIR}/completions"
   exit 0
 fi
 

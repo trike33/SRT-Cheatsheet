@@ -4,6 +4,46 @@ Running log of what's shipped and what's queued, newest first.
 
 ## Shipped
 
+### `srt creds` + bash/zsh tab-completion
+- **`internal/protocols.Finding.Accepted`**: a new field each of the eight
+  protocol clients sets on exactly the one Finding per probe call that
+  reports a session or login actually being let in (an anonymous/null
+  session, a no-auth shell, or a real credential) -- never on a banner, a
+  rejected attempt, or a follow-up enumeration Finding tied to an
+  already-accepted credential. Stored as `Data["ok"]` by `Finding.Record`.
+  It exists because "got in" and "every attempt was rejected" can
+  otherwise look identical in the stored data (no `Err`, no `Cred`, a
+  similar `Severity`) -- a plain field beats trying to reconstruct the
+  distinction later from `Kind` strings that differ per package.
+- **`srt creds`**: a new `internal/results` command, alongside
+  `results`/`runs`/`export`/`db`, that queries the results database for
+  exactly the Findings `Accepted` marked -- a focused "what got in"
+  report pulled out of `results`' own everything-including-banners-and-
+  rejections view. Table output (PROTO/target/hostname/cred/detail,
+  colored by severity) plus `-json`/`-keys` (bare `"host:port"`, pipeable
+  into another command's `-l`, e.g. `srt creds -keys | srt rdp`) /
+  `-count`; `-kind` narrows within the eight protocol kinds. The `CRED`
+  column is `Credential.String()`'s own rendering -- a username, never
+  the password or hash -- the same restraint `results`' own `INFO` column
+  already took: the point was never to build a password list by reading
+  the database back.
+- **bash + zsh completion** (`completions/srt.bash`, `completions/_srt`):
+  completes command names and, per command, its own flags -- by asking
+  the already-installed `srt` binary itself (its top-level usage for
+  command names, `srt <cmd> -h` for that command's flags, both parsed
+  from `internal/cli`'s own fixed usage format) rather than hard-coding a
+  list that would drift the moment a command or flag is added.
+  `install.sh`/`update.sh` install both automatically (best-effort: from
+  the local checkout under `--local-build`, fetched from this repo's
+  `main` otherwise) to `$PREFIX/share/{bash-completion/completions,zsh/
+  site-functions}`; `uninstall.sh` removes them. Verified live: the bash
+  script was driven directly (calling `_srt` and inspecting `COMPREPLY`
+  for several word sequences, including past a global flag like
+  `-save`/`-db`); the zsh script's own command/flag parsing was verified
+  the same way, syntax-checked, and built from the same idiomatic
+  `_describe`/`_alternative`/`_files` pattern most zsh completions use,
+  but a live interactive Tab-press wasn't captured end to end.
+
 ### Protocol clients: four more protocols -- `ssh`, `mssql`, `vnc`, `rdp`
 Beyond the original roadmap's four (`ftp`/`telnet`/`smb`/`ldap`), each a
 login/credential check only, following the same read-only, never-writes-

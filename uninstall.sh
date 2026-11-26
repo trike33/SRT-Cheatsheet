@@ -14,6 +14,8 @@ set -euo pipefail
 
 PREFIX="${PREFIX:-/usr/local}"
 BIN_PATH="${PREFIX}/bin/srt"
+BASH_COMPLETION_PATH="${PREFIX}/share/bash-completion/completions/srt"
+ZSH_COMPLETION_PATH="${PREFIX}/share/zsh/site-functions/_srt"
 SRC_DIR="${SRT_SRC_DIR:-$HOME/.local/src/SRT-Cheatsheet}"
 PURGE=0
 PURGE_PD=0
@@ -87,6 +89,16 @@ if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then
 else
   echo "Nothing to remove: ${BIN_PATH} not found." >&2
 fi
+
+# Best-effort, same as install.sh's own best-effort install of these: a
+# missing or unwritable completion file is not a reason to fail the
+# uninstall.
+for completion in "$BASH_COMPLETION_PATH" "$ZSH_COMPLETION_PATH"; do
+  if [ -e "$completion" ] && [ -w "$(dirname "$completion")" ]; then
+    rm -f "$completion"
+    echo "Removed ${completion}" >&2
+  fi
+done
 
 if [ "$PURGE" -eq 1 ]; then
   # Only delete a directory that is actually a git clone of this repo.

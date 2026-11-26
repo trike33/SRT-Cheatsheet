@@ -216,10 +216,10 @@ func probe(t protocols.Target, attempts []protocols.Credential, signer cryptossh
 
 		if cr.IsAnonymous() {
 			return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-				Detail: "server accepted a connection with no authentication at all" + bannerSuffix(banner)}
+				Detail: "server accepted a connection with no authentication at all" + bannerSuffix(banner), Accepted: true}
 		}
 		return protocols.Finding{Target: t, Cred: cr, Kind: KindLoginOK, Severity: protocols.High,
-			Detail: "login accepted" + bannerSuffix(banner)}
+			Detail: "login accepted" + bannerSuffix(banner), Accepted: true}
 	}
 
 	if len(attempts) == 1 {

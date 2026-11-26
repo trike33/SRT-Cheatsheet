@@ -170,7 +170,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 
 	if prompt == promptShell {
 		return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-			Detail: "unauthenticated shell prompt on connect: " + trimForDetail(banner)}
+			Detail: "unauthenticated shell prompt on connect: " + trimForDetail(banner), Accepted: true}
 	}
 	if prompt != promptLogin {
 		// Neither a recognized login prompt nor a shell -- still worth a
@@ -188,7 +188,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		if ok {
 			kind, sev = KindLoginOK, protocols.High
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: trimForDetail(transcript)}
+		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: trimForDetail(transcript), Accepted: ok}
 	}
 	return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimForDetail(banner)}
 }

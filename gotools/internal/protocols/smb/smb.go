@@ -299,7 +299,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		if len(report.readable) == 0 {
 			sev = protocols.Medium // session accepted, but nothing beyond IPC$ was actually readable
 		}
-		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: detail, Hostname: hostname}}
+		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: detail, Hostname: hostname, Accepted: true}}
 		if len(hits) > 0 {
 			if len(hits) > spiderMaxHitsPerRun {
 				hits = hits[:spiderMaxHitsPerRun]

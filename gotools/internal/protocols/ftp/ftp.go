@@ -190,7 +190,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		if cr.IsAnonymous() {
 			kind = KindAnonymousLogin
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Detail: detail}
+		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Detail: detail, Accepted: true}
 	}
 
 	detail := "every login attempt was rejected"

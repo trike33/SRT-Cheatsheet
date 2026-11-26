@@ -34,6 +34,11 @@ current version and points here. Update an existing install this way instead:
 curl -fsSL https://raw.githubusercontent.com/trike33/SRT-Cheatsheet/main/update.sh | sudo bash
 ```
 
+`install.sh`/`update.sh` also install bash and zsh tab-completion for every
+`srt` command and flag (a fresh shell picks it up automatically; see
+[`completions/`](completions/) to source it by hand, or if that best-effort
+install step was skipped).
+
 Want `srt dork -search` to actually run queries, or `pipeline`'s
 `options.uncover`/chaos subdomain source to have something to query with? Run
 `./config.sh` for a guided wizard through getting and setting those API keys —
