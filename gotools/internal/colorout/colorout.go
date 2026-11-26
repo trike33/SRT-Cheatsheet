@@ -65,6 +65,25 @@ func StatusColor(status int) string {
 	}
 }
 
+// SeverityColor returns the color one of internal/protocols' Severity
+// values ("info"/"low"/"medium"/"high") should be shown in: a plain
+// ordered scale from gray up to red, loosely matching the weight
+// StatusColor gives an HTTP status. An unrecognized or empty value
+// returns "" -- Wrap and PadWrap both treat an empty code as "leave it
+// uncolored".
+func SeverityColor(severity string) string {
+	switch severity {
+	case "low":
+		return Cyan
+	case "medium":
+		return Yellow
+	case "high":
+		return Red
+	default:
+		return Gray
+	}
+}
+
 // Mode decides whether to emit ANSI escapes.
 type Mode int
 

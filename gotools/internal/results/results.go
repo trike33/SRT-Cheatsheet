@@ -77,15 +77,18 @@ func RunResults(args []string) error {
 // table: a distinct color per "kind" (so scrolling past a mixed-kind result
 // set still reads as visually grouped, see colorout.PaletteColor), status
 // 2xx/3xx/4xx/5xx in green/cyan/yellow/red, and the summarized extra-data
-// column dimmed, since it's secondary to KEY. As in probe's own table,
+// column dimmed -- except for a protocol-client finding (ftp/telnet/smb/
+// ldap/ssh/mssql/vnc/rdp), where it's colored by Finding.Record's own
+// "severity" instead (colorout.SeverityColor), the same low-to-high scale
+// the live command's own output is graded on. As in probe's own table,
 // column widths come from the plain (uncolored) text first, then colored
 // cells are padded to that width before their color code is added (see
 // colorout.Mode.PadWrap) -- so coloring some cells and not others never
 // misaligns a column.
 func printResultsTable(w io.Writer, recs []store.Record, cm colorout.Mode) {
 	type row struct {
-		run, kind, status, length, key, info string
-		code                                 int
+		run, kind, status, length, key, info, severity string
+		code                                           int
 	}
 	rows := make([]row, len(recs))
 	for i, r := range recs {
@@ -93,7 +96,8 @@ func printResultsTable(w io.Writer, recs []store.Record, cm colorout.Mode) {
 		if r.Status > 0 {
 			st, ln = strconv.Itoa(r.Status), strconv.Itoa(r.Length)
 		}
-		rows[i] = row{run: strconv.FormatInt(r.RunID, 10), kind: r.Kind, status: st, length: ln, key: r.Key, info: summarize(r), code: r.Status}
+		severity, _ := r.Data["severity"].(string)
+		rows[i] = row{run: strconv.FormatInt(r.RunID, 10), kind: r.Kind, status: st, length: ln, key: r.Key, info: summarize(r), code: r.Status, severity: severity}
 	}
 
 	headers := []string{"RUN", "KIND", "STATUS", "LENGTH", "KEY"}
@@ -117,7 +121,14 @@ func printResultsTable(w io.Writer, recs []store.Record, cm colorout.Mode) {
 
 	for _, r := range rows {
 		infoColor := ""
-		if r.info != "" {
+		switch {
+		case protocolKinds[r.kind] && r.severity != "":
+			// A protocol finding: color by severity, the same ordered
+			// scale Finding.Line's live output would draw on if it had
+			// the per-target data (an admin-share check, a sysadmin-role
+			// query) this stored record never keeps -- see summarize.
+			infoColor = colorout.SeverityColor(r.severity)
+		case r.info != "":
 			infoColor = colorout.Gray
 		}
 		fmt.Fprintln(w, strings.Join([]string{

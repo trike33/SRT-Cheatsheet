@@ -149,10 +149,31 @@ func (f *queryFilter) query(db *sql.DB) ([]store.Record, error) {
 	return out, rows.Err()
 }
 
-// summarize renders a record's extra data as one short column.
+// protocolKinds are the eight kinds internal/protocols.Finding.Record
+// stores -- the only kinds whose data holds "detail"/"severity"/"cred"/
+// "hostname" rather than a recon command's "banner"/"title"/"server"/
+// "tech".
+var protocolKinds = map[string]bool{
+	"ftp": true, "telnet": true, "smb": true, "ldap": true,
+	"ssh": true, "mssql": true, "vnc": true, "rdp": true,
+}
+
+// summarize renders a record's extra data as one short column: a recon
+// command's own fields, or -- for the eight protocol-client kinds --
+// Finding.Record's own shape (cred, hostname, then detail; a Finding.Err
+// always means no other field was set, so it's checked first and wins
+// outright, same priority Line gives a connection error over a login
+// outcome). Credential.String() never shows a password/hash itself (see
+// its own doc comment) -- unlike the live command's one-line output,
+// which deliberately does via UserPass(), a saved record is read back
+// later by anyone who can run `srt results`, not just the person who
+// just typed the credential in.
 func summarize(r store.Record) string {
+	if v, ok := r.Data["error"]; ok {
+		return fmt.Sprint(v)
+	}
 	var parts []string
-	for _, k := range []string{"banner", "title", "server", "tech", "error"} {
+	for _, k := range []string{"banner", "title", "server", "tech"} {
 		if v, ok := r.Data[k]; ok {
 			if list, ok := v.([]any); ok {
 				var s []string
@@ -163,6 +184,17 @@ func summarize(r store.Record) string {
 			} else {
 				parts = append(parts, fmt.Sprint(v))
 			}
+		}
+	}
+	if protocolKinds[r.Kind] {
+		if v, ok := r.Data["cred"]; ok {
+			parts = append(parts, fmt.Sprint(v))
+		}
+		if v, ok := r.Data["hostname"]; ok {
+			parts = append(parts, fmt.Sprintf("host:%s", v))
+		}
+		if v, ok := r.Data["detail"]; ok {
+			parts = append(parts, fmt.Sprint(v))
 		}
 	}
 	return strings.Join(parts, " | ")

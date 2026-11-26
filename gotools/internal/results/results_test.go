@@ -244,3 +244,38 @@ func TestDBImport(t *testing.T) {
 		t.Errorf("subdomains = %d", n)
 	}
 }
+
+func TestSummarize(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  store.Record
+		want string
+	}{
+		{"recon error wins outright", store.Record{Kind: "port", Data: map[string]any{
+			"error": "connection refused", "banner": "should not show",
+		}}, "connection refused"},
+		{"recon fields", store.Record{Kind: "probe", Data: map[string]any{
+			"title": "Login", "server": "nginx", "tech": []any{"PHP", "jQuery"},
+		}}, "Login | nginx | PHP,jQuery"},
+		{"protocol finding: cred, hostname, detail", store.Record{Kind: "smb", Data: map[string]any{
+			"cred": `CORP\administrator`, "hostname": "DC01", "detail": "6 share(s)", "severity": "high",
+		}}, `CORP\administrator | host:DC01 | 6 share(s)`},
+		{"protocol finding: no cred (anonymous), no hostname", store.Record{Kind: "ftp", Data: map[string]any{
+			"detail": "anonymous login accepted", "severity": "high",
+		}}, "anonymous login accepted"},
+		{"protocol finding: error wins over detail too", store.Record{Kind: "ssh", Data: map[string]any{
+			"error": "every attempt was rejected", "detail": "should not show",
+		}}, "every attempt was rejected"},
+		{"non-protocol kind ignores cred/hostname/detail", store.Record{Kind: "port", Data: map[string]any{
+			"detail": "should not show",
+		}}, ""},
+		{"nothing to show", store.Record{Kind: "port", Data: map[string]any{}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := summarize(c.rec); got != c.want {
+				t.Errorf("summarize(%+v) = %q, want %q", c.rec, got, c.want)
+			}
+		})
+	}
+}

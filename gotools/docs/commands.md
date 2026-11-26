@@ -998,9 +998,11 @@ srt -save fuzz -u https://target/FUZZ -w words.txt -ac
 srt -save -db ~/acme.db probe -l hosts.txt
 ```
 
-`portscan`, `fuzz`, `probe` and `pipeline` record structured results (ports with
-banners; URLs with status/length/words/lines; probe title/server/tech). Any
-other command is saved by capturing its stdout line by line (kind = the command
+`portscan`, `fuzz`, `probe`, `pipeline` and the eight protocol clients (`ftp`,
+`telnet`, `smb`, `ldap`, `ssh`, `mssql`, `vnc`, `rdp`) record structured results
+(ports with banners; URLs with status/length/words/lines; probe title/server/
+tech; a protocol finding's detail/severity/credential/hostname). Any other
+command is saved by capturing its stdout line by line (kind = the command
 name) — so use stdout, not `-o`, with `-save`. Results from older runs or other
 tools load with `srt db import`.
 
@@ -1020,7 +1022,7 @@ run, `-history` is every observation.
 | `-run` / `-history` | one run / all observations |
 | `-limit` | max rows |
 | `-json` / `-keys` / `-count` | JSON lines / bare keys (pipe-friendly) / just the number |
-| `-color` | color the default table: `auto`\|`always`\|`never` (ignored with `-json`/`-keys`/`-count`); each `-kind` value gets its own color (consistent run to run) so a mixed-kind result set reads as visually grouped, `STATUS` is colored the same way `probe`'s own table is, and the extra-data `INFO` column is dimmed |
+| `-color` | color the default table: `auto`\|`always`\|`never` (ignored with `-json`/`-keys`/`-count`); each `-kind` value gets its own color (consistent run to run) so a mixed-kind result set reads as visually grouped, `STATUS` is colored the same way `probe`'s own table is, and the extra-data `INFO` column is dimmed — except for a saved protocol-client finding, where `INFO` (its credential, hostname and detail) is colored by severity (gray/cyan/yellow/red for info/low/medium/high) instead |
 
 ```bash
 srt results -kind port -host 10.0.0.5
