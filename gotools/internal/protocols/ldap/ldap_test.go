@@ -178,10 +178,17 @@ func target(t *testing.T, addr string) protocols.Target {
 func TestProbeAnonymousBind(t *testing.T) {
 	addr := fakeLDAPServer(t, fakeConfig{checkBind: func(dn, password string) bool { return dn == "" && password == "" }})
 	findings := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 3*time.Second, false)
-	if len(findings) != 1 {
-		t.Fatalf("len(findings) = %d, want 1 (enum disabled)", len(findings))
+	if len(findings) != 2 {
+		t.Fatalf("len(findings) = %d, want 2 (rootdse + bind, enum disabled)", len(findings))
 	}
-	f := findings[0]
+	dse := findings[0]
+	if dse.Kind != KindRootDSE {
+		t.Fatalf("findings[0].Kind = %q, want %q", dse.Kind, KindRootDSE)
+	}
+	if !strings.Contains(dse.Detail, "dc01.corp.local") || !strings.Contains(dse.Detail, testBaseDN) {
+		t.Errorf("Detail = %q, want it to mention the RootDSE values", dse.Detail)
+	}
+	f := findings[1]
 	if f.Err != "" {
 		t.Fatalf("unexpected error: %s", f.Err)
 	}
@@ -191,9 +198,6 @@ func TestProbeAnonymousBind(t *testing.T) {
 	if f.Severity != protocols.High {
 		t.Errorf("Severity = %q, want %q", f.Severity, protocols.High)
 	}
-	if !strings.Contains(f.Detail, "dc01.corp.local") || !strings.Contains(f.Detail, testBaseDN) {
-		t.Errorf("Detail = %q, want it to mention the RootDSE values", f.Detail)
-	}
 }
 
 func TestProbeSimpleBindBuildsUPNFromDomain(t *testing.T) {
@@ -202,11 +206,11 @@ func TestProbeSimpleBindBuildsUPNFromDomain(t *testing.T) {
 	}})
 	creds := []protocols.Credential{protocols.Anonymous, {User: "alice", Password: "s3cret", Domain: "CORP"}}
 	findings := probe(target(t, addr), creds, 3*time.Second, false)
-	if len(findings) != 1 || findings[0].Kind != KindLoginOK {
-		t.Fatalf("findings = %+v, want exactly one login-ok", findings)
+	if len(findings) != 2 || findings[1].Kind != KindLoginOK {
+		t.Fatalf("findings = %+v, want rootdse + exactly one login-ok", findings)
 	}
-	if findings[0].Cred.User != "alice" {
-		t.Errorf("Cred.User = %q, want %q", findings[0].Cred.User, "alice")
+	if findings[1].Cred.User != "alice" {
+		t.Errorf("Cred.User = %q, want %q", findings[1].Cred.User, "alice")
 	}
 }
 
@@ -216,8 +220,8 @@ func TestProbeSimpleBindNoDomainUsesBareUser(t *testing.T) {
 	}})
 	creds := []protocols.Credential{protocols.Anonymous, {User: "cn=admin,dc=example,dc=com", Password: "pw"}}
 	findings := probe(target(t, addr), creds, 3*time.Second, false)
-	if len(findings) != 1 || findings[0].Kind != KindLoginOK {
-		t.Fatalf("findings = %+v, want exactly one login-ok", findings)
+	if len(findings) != 2 || findings[1].Kind != KindLoginOK {
+		t.Fatalf("findings = %+v, want rootdse + exactly one login-ok", findings)
 	}
 }
 
@@ -346,8 +350,8 @@ func TestEnumerateDisabledByFlag(t *testing.T) {
 		users:     []map[string][]string{{"sAMAccountName": {"alice"}, "userAccountControl": {"512"}}},
 	})
 	findings := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 3*time.Second, false)
-	if len(findings) != 1 {
-		t.Fatalf("findings = %+v, want exactly the bind finding (enum disabled)", findings)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v, want exactly rootdse + the bind finding (enum disabled)", findings)
 	}
 }
 

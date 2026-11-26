@@ -57,9 +57,11 @@ const DefaultPort = 1433
 
 // Finding kinds this package reports.
 const (
+	KindVersion         = "version"           // @@VERSION banner, independent of which credential got in
 	KindLoginOK         = "login-ok"          // a given credential (SQL or NTLM auth) was accepted
 	KindLoginOKSysadmin = "login-ok-sysadmin" // accepted AND confirmed a member of the sysadmin fixed server role
 	KindLoginFailed     = "login-failed"      // every attempt was rejected
+	KindDatabases       = "databases"         // the instance's database list -- only printed with -enum, always stored
 )
 
 // databasesToList caps how many database names summarize prints, so an
@@ -73,6 +75,7 @@ func Run(args []string) error {
 			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "CREDENTIALS", Names: []string{"u", "p", "H", "d", "local-auth", "k"}},
 			{Title: "CONNECTION", Names: []string{"port", "timeout", "c"}},
+			{Title: "ENUMERATION", Names: []string{"enum"}},
 			{Title: "OUTPUT", Names: []string{"o", "json", "color"}},
 		})
 	}
@@ -81,6 +84,7 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 20, "concurrent connections")
+	enum := fs.Bool("enum", false, "after a successful login, also print the instance's database list -- off by default, opt in")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
@@ -113,7 +117,7 @@ func Run(args []string) error {
 	}
 
 	attempts := creds.Attempts()
-	results := make([]protocols.Finding, len(targets))
+	perTarget := make([][]protocols.Finding, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -122,10 +126,15 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(t, attempts, *conn.Timeout)
+			perTarget[i] = probe(t, attempts, *conn.Timeout)
 		}(i, t)
 	}
 	wg.Wait()
+
+	var results []protocols.Finding
+	for _, fs := range perTarget {
+		results = append(results, fs...)
+	}
 
 	for _, f := range results {
 		store.CurrentSink().Add(f.Record("mssql"))
@@ -144,17 +153,20 @@ func Run(args []string) error {
 		}
 		return nil
 	}
-	printTable(w, results, cm)
+	printTable(w, results, *enum, cm)
 	return nil
 }
 
 // probe tries each credential attempt against t in turn, opening a
 // fresh *sql.DB (and so a fresh TCP connection) per attempt. The first
 // attempt the server accepts wins, followed by summarize's read-only
-// queries. A connection-level failure aborts the whole target
-// immediately, same as the other protocol commands; a login rejection
-// just moves on to the next attempt.
-func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) protocols.Finding {
+// queries: the version string becomes its own [*] KindVersion Finding
+// (always shown), the database list its own KindDatabases Finding
+// (stored either way, printed only with -enum) -- the "[+] user:pass"
+// login line itself stays bare. A connection-level failure aborts the
+// whole target immediately, same as the other protocol commands; a
+// login rejection just moves on to the next attempt.
+func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) []protocols.Finding {
 	var lastErr error
 	for _, cr := range attempts {
 		if cr.Hash != "" {
@@ -171,27 +183,34 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 				// The TCP dial itself failed (refused, no route, timed
 				// out) -- every other credential would fail the same
 				// way, so there's nothing to gain from trying them.
-				return protocols.Finding{Target: t, Err: err.Error()}
+				return []protocols.Finding{{Target: t, Err: err.Error()}}
 			}
 			lastErr = err
 			continue
 		}
 
-		detail := summarize(db, timeout)
+		version, dbList := summarize(db, timeout)
 		sysadmin := isSysadmin(db, timeout)
 		db.Close()
 		kind := KindLoginOK
 		if sysadmin {
 			kind = KindLoginOKSysadmin
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Detail: detail, Accepted: true}
+		findings := []protocols.Finding{
+			{Target: t, Kind: KindVersion, Severity: protocols.Info, Detail: version},
+			{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Accepted: true},
+		}
+		if dbList != "" {
+			findings = append(findings, protocols.Finding{Target: t, Cred: cr, Kind: KindDatabases, Severity: protocols.Info, Detail: dbList})
+		}
+		return findings
 	}
 
 	detail := "every login attempt was rejected"
 	if lastErr != nil {
 		detail = "rejected: " + lastErr.Error()
 	}
-	return protocols.Finding{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}
+	return []protocols.Finding{{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}}
 }
 
 // connect opens a *sql.DB for cr against t and verifies the login with
@@ -268,15 +287,17 @@ func buildUsername(cr protocols.Credential, t protocols.Target) string {
 }
 
 // summarize runs the two read-only queries a successful login unlocks:
-// the server's own version string and a bounded list of databases. A
+// the server's own version string and a bounded list of databases,
+// returned separately -- version is the [*] KindVersion banner (always
+// shown), dbList is KindDatabases' Detail (only printed with -enum). A
 // query that fails (insufficient permission, an unusual edition) just
 // leaves that part out rather than failing the whole login Finding over
 // it -- the login itself already succeeded.
-func summarize(db *sql.DB, timeout time.Duration) string {
+func summarize(db *sql.DB, timeout time.Duration) (version, dbList string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	version := "version unknown"
+	version = "version unknown"
 	var raw string
 	if err := db.QueryRowContext(ctx, "SELECT @@VERSION").Scan(&raw); err == nil {
 		version = firstLine(raw)
@@ -293,12 +314,10 @@ func summarize(db *sql.DB, timeout time.Duration) string {
 			}
 		}
 	}
-
-	detail := version
 	if len(dbs) > 0 {
-		detail += fmt.Sprintf("; %d database(s): %s", len(dbs), strings.Join(dbs, ", "))
+		dbList = fmt.Sprintf("%d database(s): %s", len(dbs), strings.Join(dbs, ", "))
 	}
-	return detail
+	return version, dbList
 }
 
 // isSysadmin runs a single read-only scalar check -- SELECT
@@ -332,19 +351,25 @@ func firstLine(s string) string {
 // a member of the sysadmin fixed server role via isSysadmin -- gets
 // "(Pwn3d!)": the SQL Server equivalent of local Administrator, full
 // instance control. A plain accepted login that isn't sysadmin does not.
-func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
+// A successful target is two lines, netexec-style: [*] KindVersion (the
+// @@VERSION banner, independent of the credential) then a bare
+// "[+] user:pass" line; KindDatabases is a third [*] line, shown only
+// with -enum.
+func printTable(w io.Writer, results []protocols.Finding, showEnum bool, cm colorout.Mode) {
 	for _, f := range results {
 		if f.Err != "" {
 			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymFailure, f.Err, false))
 			continue
 		}
 		switch f.Kind {
-		case KindLoginOK, KindLoginOKSysadmin:
-			msg := f.Detail
-			if up := f.Cred.UserPass(); up != "" {
-				msg = up + " " + msg
+		case KindVersion:
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymInfo, f.Detail, false))
+		case KindDatabases:
+			if showEnum {
+				fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymInfo, f.Detail, false))
 			}
-			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymSuccess, msg, f.Kind == KindLoginOKSysadmin))
+		case KindLoginOK, KindLoginOKSysadmin:
+			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymSuccess, f.Cred.CredText(), f.Kind == KindLoginOKSysadmin))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("mssql", cm, protocols.SymFailure, f.Detail, false))
 		default:

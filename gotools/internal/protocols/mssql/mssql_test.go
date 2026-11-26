@@ -86,9 +86,9 @@ func TestFirstLine(t *testing.T) {
 
 func TestProbeConnectionRefused(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	f := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
-	if f.Err == "" {
-		t.Fatalf("expected a connection error, got Finding %+v", f)
+	fs := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
+	if len(fs) != 1 || fs[0].Err == "" {
+		t.Fatalf("expected a single Finding with a connection error, got %+v", fs)
 	}
 }
 
@@ -110,7 +110,8 @@ func TestProbeAgainstNonTDSServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	creds := []protocols.Credential{{User: "sa", Password: "wrong"}}
-	f := probe(tg, creds, 2*time.Second)
+	fs := probe(tg, creds, 2*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}
@@ -130,7 +131,8 @@ func TestProbeSkipsHashAndKerberosAttempts(t *testing.T) {
 		{User: "administrator", Hash: "aad3b435b51404eeaad3b435b51404ee"},
 		{User: "administrator", Kerberos: true, Domain: "CORP", Password: "pw"},
 	}
-	f := probe(tg, creds, 2*time.Second)
+	fs := probe(tg, creds, 2*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}

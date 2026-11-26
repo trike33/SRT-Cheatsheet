@@ -117,7 +117,7 @@ func Run(args []string) error {
 	}
 
 	attempts := creds.Attempts()
-	results := make([]protocols.Finding, len(targets))
+	perTarget := make([][]protocols.Finding, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -126,10 +126,15 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(t, attempts, signer, *conn.Timeout)
+			perTarget[i] = probe(t, attempts, signer, *conn.Timeout)
 		}(i, t)
 	}
 	wg.Wait()
+
+	var results []protocols.Finding
+	for _, fs := range perTarget {
+		results = append(results, fs...)
+	}
 
 	for _, f := range results {
 		store.CurrentSink().Add(f.Record("ssh"))
@@ -177,10 +182,20 @@ func loadSigner(path string, creds *protocols.Creds) (cryptossh.Signer, error) {
 // accepts wins. A connection-level failure (refused, timed out,
 // unreachable) aborts the whole target immediately; an authentication
 // rejection just moves on to the next attempt.
-func probe(t protocols.Target, attempts []protocols.Credential, signer cryptossh.Signer, timeout time.Duration) protocols.Finding {
+//
+// It always returns the banner Finding first (when one was read at
+// all), netexec-style: a [*] line naming the server's SSH version,
+// independent of whatever the credential attempts below it find. The
+// login outcome is a second, separate Finding -- a bare "[+] user:pass
+// (Pwn3d!)" on success, with no banner text folded into it.
+func probe(t protocols.Target, attempts []protocols.Credential, signer cryptossh.Signer, timeout time.Duration) []protocols.Finding {
 	banner, err := grabBanner(t, timeout)
 	if err != nil {
-		return protocols.Finding{Target: t, Err: err.Error()}
+		return []protocols.Finding{{Target: t, Err: err.Error()}}
+	}
+	var findings []protocols.Finding
+	if banner != "" {
+		findings = append(findings, protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimBanner(banner)})
 	}
 
 	var lastErr error
@@ -188,7 +203,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, signer cryptossh
 		netx.Request()
 		raw, err := net.DialTimeout("tcp", t.String(), timeout)
 		if err != nil {
-			return protocols.Finding{Target: t, Err: err.Error()}
+			return []protocols.Finding{{Target: t, Err: err.Error()}}
 		}
 		c := netx.CountConn(raw)
 		c.SetDeadline(time.Now().Add(timeout))
@@ -216,25 +231,26 @@ func probe(t protocols.Target, attempts []protocols.Credential, signer cryptossh
 		client.Close()
 
 		if cr.IsAnonymous() {
-			return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-				Detail: "server accepted a connection with no authentication at all" + bannerSuffix(banner), Accepted: true}
+			return append(findings, protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High, Accepted: true})
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: KindLoginOK, Severity: protocols.High,
-			Detail: "login accepted" + bannerSuffix(banner), Accepted: true}
+		return append(findings, protocols.Finding{Target: t, Cred: cr, Kind: KindLoginOK, Severity: protocols.High, Accepted: true})
 	}
 
 	if len(attempts) == 1 {
 		// Anonymous only, no -u given at all: rejecting "none" is the
-		// overwhelmingly normal case, so this is a banner Finding, not a
-		// failure -- there was nothing else to try.
-		return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimBanner(banner)}
+		// overwhelmingly normal case, so the banner Finding above (if
+		// any) is all there is to report -- there was nothing else to
+		// try.
+		if len(findings) == 0 {
+			return []protocols.Finding{{Target: t, Kind: KindBanner, Severity: protocols.Info}}
+		}
+		return findings
 	}
 	detail := "every attempt was rejected"
 	if lastErr != nil {
 		detail = "rejected: " + lastErr.Error()
 	}
-	detail += bannerSuffix(banner)
-	return protocols.Finding{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}
+	return append(findings, protocols.Finding{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail})
 }
 
 // grabBanner reads the server's SSH identification line (RFC 4253
@@ -269,18 +285,15 @@ func trimBanner(s string) string {
 	return s
 }
 
-func bannerSuffix(banner string) string {
-	if banner == "" {
-		return ""
-	}
-	return "; banner: " + trimBanner(banner)
-}
-
 // printTable renders results in netexec's own one-line-per-result style
 // (see protocols.Finding.Line), not a table: "SSH  host  port  hostname
 // [symbol] message". An SSH session, with or without a credential, is an
 // interactive shell by definition -- so both KindNoAuth (no login at
 // all) and KindLoginOK (a real credential worked) are marked "(Pwn3d!)".
+// A successful target is two lines, netexec-style: the [*] KindBanner
+// line (the server's SSH version, independent of credentials) followed
+// by a [+] line naming only the credential that worked (or "(anonymous)"
+// for KindNoAuth) -- never anything from the banner folded into it.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 	for _, f := range results {
 		if f.Err != "" {
@@ -289,10 +302,9 @@ func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 		}
 		switch f.Kind {
 		case KindNoAuth:
-			fmt.Fprintln(w, f.Line("ssh", cm, protocols.SymSuccess, f.Detail, true))
+			fmt.Fprintln(w, f.Line("ssh", cm, protocols.SymSuccess, f.Cred.CredText(), true))
 		case KindLoginOK:
-			msg := f.Cred.UserPass() + " " + f.Detail
-			fmt.Fprintln(w, f.Line("ssh", cm, protocols.SymSuccess, msg, true))
+			fmt.Fprintln(w, f.Line("ssh", cm, protocols.SymSuccess, f.Cred.CredText(), true))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("ssh", cm, protocols.SymFailure, f.Detail, false))
 		default: // KindBanner

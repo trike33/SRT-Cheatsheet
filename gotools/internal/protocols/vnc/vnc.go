@@ -117,7 +117,7 @@ func Run(args []string) error {
 	// case is what the None security type itself already covers.
 	passwords := creds.RawPasswords()
 
-	results := make([]protocols.Finding, len(targets))
+	perTarget := make([][]protocols.Finding, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -126,10 +126,15 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(t, passwords, *conn.Timeout)
+			perTarget[i] = probe(t, passwords, *conn.Timeout)
 		}(i, t)
 	}
 	wg.Wait()
+
+	var results []protocols.Finding
+	for _, fs := range perTarget {
+		results = append(results, fs...)
+	}
 
 	for _, f := range results {
 		store.CurrentSink().Add(f.Record("vnc"))
@@ -159,22 +164,29 @@ func Run(args []string) error {
 // connection per attempt (the server closes the connection after a
 // failed auth, per protocol). A server offering neither is reported as
 // a banner Finding naming what it did offer.
-func probe(t protocols.Target, passwords []string, timeout time.Duration) protocols.Finding {
+//
+// It always returns a [*] KindBanner Finding first (the server's
+// version, plus the desktop name/size once a session actually gets in),
+// followed by a separate, bare success/failure Finding -- no server
+// detail folded into the "[+] (anonymous)"/"[+] <password>" line itself.
+func probe(t protocols.Target, passwords []string, timeout time.Duration) []protocols.Finding {
 	types, serverVersion, err := negotiate(t, timeout)
 	if err != nil {
-		return protocols.Finding{Target: t, Err: err.Error()}
+		return []protocols.Finding{{Target: t, Err: err.Error()}}
 	}
 	if !contains(types, secNone) && !contains(types, secVNCAuth) {
-		return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info,
-			Detail: fmt.Sprintf("%s; no supported security type offered (got %v)", serverVersion, types)}
+		return []protocols.Finding{{Target: t, Kind: KindBanner, Severity: protocols.Info,
+			Detail: fmt.Sprintf("%s; no supported security type offered (got %v)", serverVersion, types)}}
 	}
 	if contains(types, secNone) {
 		detail, err := finishLoginNoAuth(t, timeout)
 		if err != nil {
-			return protocols.Finding{Target: t, Err: err.Error()}
+			return []protocols.Finding{{Target: t, Err: err.Error()}}
 		}
-		return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-			Detail: strings.TrimSpace(serverVersion + "; " + detail), Accepted: true}
+		return []protocols.Finding{
+			{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: strings.TrimSpace(serverVersion + "; " + detail)},
+			{Target: t, Kind: KindNoAuth, Severity: protocols.High, Accepted: true},
+		}
 	}
 
 	var lastErr error
@@ -185,21 +197,23 @@ func probe(t protocols.Target, passwords []string, timeout time.Duration) protoc
 			continue
 		}
 		if ok {
-			return protocols.Finding{Target: t, Cred: protocols.Credential{Password: pw}, Kind: KindLoginOK,
-				Severity: protocols.High, Detail: strings.TrimSpace(serverVersion + "; " + detail), Accepted: true}
+			return []protocols.Finding{
+				{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: strings.TrimSpace(serverVersion + "; " + detail)},
+				{Target: t, Cred: protocols.Credential{Password: pw}, Kind: KindLoginOK, Severity: protocols.High, Accepted: true},
+			}
 		}
 		lastErr = fmt.Errorf("authentication failed")
 	}
 
 	if len(passwords) == 0 {
-		return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info,
-			Detail: serverVersion + "; VNC Authentication required, no -p password given to try"}
+		return []protocols.Finding{{Target: t, Kind: KindBanner, Severity: protocols.Info,
+			Detail: serverVersion + "; VNC Authentication required, no -p password given to try"}}
 	}
 	detail := "every password was rejected"
 	if lastErr != nil {
 		detail = "rejected: " + lastErr.Error()
 	}
-	return protocols.Finding{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}
+	return []protocols.Finding{{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}}
 }
 
 // negotiate dials t, exchanges ProtocolVersion lines, and returns the
@@ -498,10 +512,13 @@ func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 		}
 		switch f.Kind {
 		case KindNoAuth:
-			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, f.Detail, true))
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, "(anonymous)", true))
 		case KindLoginOK:
-			msg := f.Cred.Password + " " + f.Detail
-			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, msg, true))
+			// VNC's classic security types have no username (RFC 6143)
+			// -- Cred.CredText's anonymous check would misfire on a
+			// User-less-but-real password, so this shows the password
+			// directly, same as before.
+			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymSuccess, f.Cred.Password, true))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("vnc", cm, protocols.SymFailure, f.Detail, false))
 		default: // KindBanner

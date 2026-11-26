@@ -115,7 +115,7 @@ func Run(args []string) error {
 	}
 
 	attempts := creds.Attempts()
-	results := make([]protocols.Finding, len(targets))
+	perTarget := make([][]protocols.Finding, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -124,10 +124,15 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(t, attempts, *conn.Timeout)
+			perTarget[i] = probe(t, attempts, *conn.Timeout)
 		}(i, t)
 	}
 	wg.Wait()
+
+	var results []protocols.Finding
+	for _, fs := range perTarget {
+		results = append(results, fs...)
+	}
 
 	for _, f := range results {
 		store.CurrentSink().Add(f.Record("telnet"))
@@ -156,11 +161,15 @@ func Run(args []string) error {
 // nothing else needs trying; otherwise it reports the banner/prompt it
 // saw, then -- if any real credentials were given -- attempts a login
 // with each in turn until one succeeds or all are exhausted.
-func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) protocols.Finding {
+// probe always leads with a [*] KindBanner Finding (the prompt/banner it
+// saw on connect), separate from whatever login outcome follows -- a
+// bare "[+] (anonymous)" for an unauthenticated shell, "[+] user:pass"
+// for an accepted login, with no banner text folded into either.
+func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) []protocols.Finding {
 	netx.Request()
 	raw, err := net.DialTimeout("tcp", t.String(), timeout)
 	if err != nil {
-		return protocols.Finding{Target: t, Err: err.Error()}
+		return []protocols.Finding{{Target: t, Err: err.Error()}}
 	}
 	defer raw.Close()
 	c := netx.CountConn(raw)
@@ -168,16 +177,16 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 
 	banner := readText(c, 1500*time.Millisecond)
 	prompt := classifyPrompt(banner)
+	bannerFinding := protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimForDetail(banner)}
 
 	if prompt == promptShell {
-		return protocols.Finding{Target: t, Kind: KindNoAuth, Severity: protocols.High,
-			Detail: "unauthenticated shell prompt on connect: " + trimForDetail(banner), Accepted: true}
+		return []protocols.Finding{bannerFinding, {Target: t, Kind: KindNoAuth, Severity: protocols.High, Accepted: true}}
 	}
 	if prompt != promptLogin {
 		// Neither a recognized login prompt nor a shell -- still worth a
 		// record (an unusual banner, or the server closed early), just
 		// not something to attempt a login against.
-		return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimForDetail(banner)}
+		return []protocols.Finding{bannerFinding}
 	}
 
 	for _, cr := range attempts {
@@ -189,9 +198,13 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		if ok {
 			kind, sev = KindLoginOK, protocols.High
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: trimForDetail(transcript), Accepted: ok}
+		outcome := protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: sev, Accepted: ok}
+		if !ok {
+			outcome.Detail = trimForDetail(transcript) // kept for diagnosis; a success line stays bare
+		}
+		return []protocols.Finding{bannerFinding, outcome}
 	}
-	return protocols.Finding{Target: t, Kind: KindBanner, Severity: protocols.Info, Detail: trimForDetail(banner)}
+	return []protocols.Finding{bannerFinding}
 }
 
 type promptKind int
@@ -353,10 +366,9 @@ func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 		}
 		switch f.Kind {
 		case KindNoAuth:
-			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, f.Detail, true))
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, f.Cred.CredText(), true))
 		case KindLoginOK:
-			msg := f.Cred.UserPass() + " " + f.Detail
-			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, msg, true))
+			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymSuccess, f.Cred.CredText(), true))
 		case KindLoginFailed:
 			msg := f.Cred.UserPass() + " " + f.Detail
 			fmt.Fprintln(w, f.Line("telnet", cm, protocols.SymFailure, msg, false))

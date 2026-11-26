@@ -51,7 +51,11 @@ func TestProbeLoginPrompt(t *testing.T) {
 		c.Write([]byte("Ubuntu 22.04 LTS\r\nlogin: "))
 		time.Sleep(50 * time.Millisecond)
 	})
-	f := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	fs := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	if len(fs) != 1 {
+		t.Fatalf("len(fs) = %d, want 1 (banner only), got %+v", len(fs), fs)
+	}
+	f := fs[0]
 	if f.Kind != KindBanner {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindBanner, f.Detail, f.Err)
 	}
@@ -67,7 +71,11 @@ func TestProbeNoAuthShell(t *testing.T) {
 		c.Write([]byte("# "))
 		time.Sleep(50 * time.Millisecond)
 	})
-	f := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	fs := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	if len(fs) != 2 {
+		t.Fatalf("len(fs) = %d, want 2 (banner + no-auth), got %+v", len(fs), fs)
+	}
+	f := fs[1]
 	if f.Kind != KindNoAuth {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindNoAuth, f.Detail, f.Err)
 	}
@@ -95,7 +103,8 @@ func TestProbeLoginSuccess(t *testing.T) {
 		}
 	})
 	creds := []protocols.Credential{protocols.Anonymous, {User: "admin", Password: "hunter2"}}
-	f := probe(target(t, addr), creds, 2*time.Second)
+	fs := probe(target(t, addr), creds, 2*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindLoginOK {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginOK, f.Detail, f.Err)
 	}
@@ -115,7 +124,8 @@ func TestProbeLoginFailed(t *testing.T) {
 		c.Write([]byte("Login incorrect\r\nlogin: "))
 	})
 	creds := []protocols.Credential{protocols.Anonymous, {User: "admin", Password: "wrong"}}
-	f := probe(target(t, addr), creds, 2*time.Second)
+	fs := probe(target(t, addr), creds, 2*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}
@@ -127,9 +137,9 @@ func TestProbeLoginFailed(t *testing.T) {
 func TestProbeConnectionRefused(t *testing.T) {
 	// Nothing listening on this port.
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	f := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
-	if f.Err == "" {
-		t.Fatalf("expected a connection error, got Finding %+v", f)
+	fs := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
+	if len(fs) != 1 || fs[0].Err == "" {
+		t.Fatalf("expected a single Finding with a connection error, got %+v", fs)
 	}
 }
 
@@ -170,8 +180,8 @@ func TestStripIACAnswersNegotiation(t *testing.T) {
 			}
 		}
 	})
-	f := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
-	if f.Kind != KindBanner || !strings.Contains(f.Detail, "login:") {
-		t.Errorf("Finding = %+v, want a banner finding containing the login prompt with IAC bytes stripped", f)
+	fs := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 2*time.Second)
+	if len(fs) != 1 || fs[0].Kind != KindBanner || !strings.Contains(fs[0].Detail, "login:") {
+		t.Errorf("Findings = %+v, want a single banner finding containing the login prompt with IAC bytes stripped", fs)
 	}
 }

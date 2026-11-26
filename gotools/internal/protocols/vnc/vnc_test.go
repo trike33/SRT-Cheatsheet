@@ -99,7 +99,17 @@ func TestProbeNoAuthRealServer(t *testing.T) {
 	port := freePort(t)
 	startXtigervnc(t, 51, port, "None", "-desktop", "no-auth-test")
 
-	f := probe(target(t, port), nil, 5*time.Second)
+	fs := probe(target(t, port), nil, 5*time.Second)
+	if len(fs) != 2 {
+		t.Fatalf("len(fs) = %d, want 2 (banner + no-auth), got %+v", len(fs), fs)
+	}
+	banner, f := fs[0], fs[1]
+	if want := `desktop "no-auth-test"`; !containsStr(t, banner.Detail, want) {
+		t.Errorf("banner.Detail = %q, want it to contain %q", banner.Detail, want)
+	}
+	if !containsStr(t, banner.Detail, "800x600") {
+		t.Errorf("banner.Detail = %q, want it to contain the resolution", banner.Detail)
+	}
 	if f.Err != "" {
 		t.Fatalf("unexpected error: %s", f.Err)
 	}
@@ -108,12 +118,6 @@ func TestProbeNoAuthRealServer(t *testing.T) {
 	}
 	if f.Severity != protocols.High {
 		t.Errorf("Severity = %q, want %q", f.Severity, protocols.High)
-	}
-	if want := `desktop "no-auth-test"`; !containsStr(t, f.Detail, want) {
-		t.Errorf("Detail = %q, want it to contain %q", f.Detail, want)
-	}
-	if !containsStr(t, f.Detail, "800x600") {
-		t.Errorf("Detail = %q, want it to contain the resolution", f.Detail)
 	}
 }
 
@@ -134,7 +138,8 @@ func TestProbeVNCAuthRealServerWrongPassword(t *testing.T) {
 	passwdFile := writeVncPasswdFile(t, "s3cret12")
 	startXtigervnc(t, 52, port, "VncAuth", "-PasswordFile", passwdFile, "-desktop", "pwauth-test")
 
-	f := probe(target(t, port), []string{"wrongpass"}, 5*time.Second)
+	fs := probe(target(t, port), []string{"wrongpass"}, 5*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}
@@ -149,7 +154,8 @@ func TestProbeVNCAuthRealServerNoPasswordGiven(t *testing.T) {
 	// not a failure -- there was nothing to try, and this never attempts
 	// an actual auth (so it's lockout-safe to run before another case
 	// against the same server, unlike the wrong/right-password ones).
-	f := probe(target(t, port), nil, 5*time.Second)
+	fs := probe(target(t, port), nil, 5*time.Second)
+	f := fs[len(fs)-1]
 	if f.Kind != KindBanner {
 		t.Fatalf("Kind = %q, want %q (detail=%q)", f.Kind, KindBanner, f.Detail)
 	}
@@ -160,22 +166,26 @@ func TestProbeVNCAuthRealServerRightPassword(t *testing.T) {
 	passwdFile := writeVncPasswdFile(t, "s3cret12")
 	startXtigervnc(t, 54, port, "VncAuth", "-PasswordFile", passwdFile, "-desktop", "pwauth-test")
 
-	f := probe(target(t, port), []string{"s3cret12"}, 5*time.Second)
+	fs := probe(target(t, port), []string{"s3cret12"}, 5*time.Second)
+	if len(fs) != 2 {
+		t.Fatalf("len(fs) = %d, want 2 (banner + login-ok), got %+v", len(fs), fs)
+	}
+	banner, f := fs[0], fs[1]
 	if f.Kind != KindLoginOK {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginOK, f.Detail, f.Err)
 	}
 	if f.Cred.Password != "s3cret12" {
 		t.Errorf("Cred.Password = %q, want %q", f.Cred.Password, "s3cret12")
 	}
-	if !containsStr(t, f.Detail, `desktop "pwauth-test"`) {
-		t.Errorf("Detail = %q, want it to contain the desktop name", f.Detail)
+	if !containsStr(t, banner.Detail, `desktop "pwauth-test"`) {
+		t.Errorf("banner.Detail = %q, want it to contain the desktop name", banner.Detail)
 	}
 }
 
 func TestProbeConnectionRefused(t *testing.T) {
-	f := probe(protocols.Target{Host: "127.0.0.1", Port: 1}, nil, 300*time.Millisecond)
-	if f.Err == "" {
-		t.Fatalf("expected a connection error, got Finding %+v", f)
+	fs := probe(protocols.Target{Host: "127.0.0.1", Port: 1}, nil, 300*time.Millisecond)
+	if len(fs) != 1 || fs[0].Err == "" {
+		t.Fatalf("expected a single Finding with a connection error, got %+v", fs)
 	}
 }
 

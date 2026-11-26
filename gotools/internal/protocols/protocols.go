@@ -213,6 +213,19 @@ func (f Finding) Record(protoKind string) store.Record {
 	return store.Record{Kind: protoKind, Key: key, Host: f.Target.Host, Port: f.Target.Port, Data: d}
 }
 
+// CredText renders c for a success line exactly the way UserPass does
+// for a real credential (the secret itself, "domain\user:password"),
+// but falls back to String's "(anonymous)" marker when there's no
+// username to show a secret for -- the one line each protocol command
+// prints for a login/session that was accepted, kept clean of any
+// banner or enumeration text (those get their own Info lines).
+func (c Credential) CredText() string {
+	if up := c.UserPass(); up != "" {
+		return up
+	}
+	return c.String()
+}
+
 // Symbol is netexec's own bracketed per-line outcome marker.
 type Symbol string
 

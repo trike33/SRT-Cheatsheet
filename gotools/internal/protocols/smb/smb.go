@@ -84,9 +84,11 @@ const DefaultPort = 445
 
 // Finding kinds this package reports.
 const (
+	KindFingerprint     = "fingerprint"         // the OS/hostname/domain/dialect banner, independent of which credential (if any) got in
 	KindAnonymousLogin  = "anonymous-login"     // an anonymous/null session was accepted
 	KindLoginOK         = "login-ok"            // a given -u/-p/-H/-k credential was accepted
 	KindLoginFailed     = "login-failed"        // every given credential (and anonymous) was rejected
+	KindShares          = "shares"              // the share listing -- only printed with -shares, always stored
 	KindInterestingFile = "interesting-file"    // the spider found a filename that commonly carries secrets
 	KindLocalUsers      = "local-users"         // the target's local (non-domain) SAM users, via MS-SAMR
 	KindLocalAdmins     = "local-admin-members" // members of the local Administrators alias, via MS-SAMR
@@ -126,7 +128,7 @@ func Run(args []string) error {
 			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "CREDENTIALS", Names: []string{"u", "p", "H", "d", "local-auth", "k"}},
 			{Title: "CONNECTION", Names: []string{"port", "timeout", "c"}},
-			{Title: "ENUMERATION", Names: []string{"local-enum"}},
+			{Title: "ENUMERATION", Names: []string{"shares", "local-enum"}},
 			{Title: "SPIDER", Names: []string{"spider"}},
 			{Title: "OUTPUT", Names: []string{"o", "json", "color"}},
 		})
@@ -136,7 +138,8 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 10, "concurrent sessions")
-	localEnum := fs.Bool("local-enum", true, "after a successful session, also enumerate the target's local (non-domain) SAM via MS-SAMR: local users and Administrators-alias membership")
+	showShares := fs.Bool("shares", false, "after a successful session, print the per-share listing (netexec's --shares) -- off by default: the one-line fingerprint/login still shows, this just adds the share detail")
+	localEnum := fs.Bool("local-enum", false, "after a successful session, also enumerate the target's local (non-domain) SAM via MS-SAMR: local users and Administrators-alias membership -- off by default, opt in")
 	spider := fs.Bool("spider", false, "after a successful session, recursively walk every readable share (bounded depth/entries) flagging filenames that commonly carry secrets -- off by default: it's a real recursive crawl of every readable share, opt in rather than something every run does")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
@@ -211,13 +214,16 @@ func Run(args []string) error {
 	for i, t := range targets {
 		reports[t.String()] = sharesPerTarget[i]
 	}
-	printTable(w, results, reports, cm)
-	// The one-line Detail above already has the share summary (and it's
-	// what's stored to the DB/JSON); this is the netexec-style expanded
-	// view -- bold, colored, indented -- for a target where a session
-	// actually got in and found something to enumerate.
-	for i, t := range targets {
-		printShareTable(w, t, sharesPerTarget[i], cm)
+	printTable(w, results, reports, *showShares, cm)
+	// The KindShares Finding's Detail above already has the share
+	// summary (and it's always what's stored to the DB/JSON, -shares or
+	// not); this is the netexec-style expanded view -- bold, colored,
+	// indented -- printed only with -shares, for a target where a
+	// session actually got in.
+	if *showShares {
+		for i, t := range targets {
+			printShareTable(w, t, sharesPerTarget[i], cm)
+		}
 	}
 	return nil
 }
@@ -276,7 +282,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 
 		report := inspectShares(conn, t.Host)
 		hostname := targetHostname(conn)
-		detail := fingerprint(conn) + "; " + report.String()
+		fp := fingerprint(conn)
 		var hits []shareHit
 		if spider {
 			budget := spiderMaxEntries
@@ -295,13 +301,23 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 
 		kind := KindLoginOK
 		if cr.IsAnonymous() {
+			// A null/anonymous session is already noted on the
+			// fingerprint line by fingerprint itself ("(null session)",
+			// from conn.IsNullSession()), not repeated as its own [+]
+			// success line -- there's no credential to show, and it
+			// only gets here at all because every real -u/-p/-H attempt
+			// (if any) already failed, see protocols.Creds.Attempts.
 			kind = KindAnonymousLogin
 		}
 		sev := protocols.High
 		if len(report.readable) == 0 {
 			sev = protocols.Medium // session accepted, but nothing beyond IPC$ was actually readable
 		}
-		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: detail, Hostname: hostname, Accepted: true}}
+		findings := []protocols.Finding{
+			{Target: t, Kind: KindFingerprint, Severity: protocols.Info, Detail: fp, Hostname: hostname},
+			{Target: t, Cred: cr, Kind: kind, Severity: sev, Hostname: hostname, Accepted: true},
+			{Target: t, Cred: cr, Kind: KindShares, Severity: protocols.Info, Detail: report.String(), Hostname: hostname},
+		}
 		if len(hits) > 0 {
 			if len(hits) > spiderMaxHitsPerRun {
 				hits = hits[:spiderMaxHitsPerRun]
@@ -919,21 +935,31 @@ func adminShareReadable(r shareReport) bool {
 // never gets it, even with the same share access -- that's a
 // misconfiguration finding, not a credential compromise. The expanded
 // per-share view (printShareTable) is a separate, deliberately denser
-// block printed after this for a target where a session actually got in.
-func printTable(w io.Writer, results []protocols.Finding, reports map[string]shareReport, cm colorout.Mode) {
+// block printed after this, with -shares, for a target where a session
+// actually got in.
+//
+// A successful session is always two lines, netexec-style: a [*]
+// KindFingerprint (OS/name/domain/dialect, with "(Null Auth:True)" when
+// that's what got in) followed by a [+] line naming only the credential
+// that worked (or "(anonymous)"), never anything from the share listing
+// or an enumeration Finding -- those are their own [*] lines, printed
+// only when showShares/-local-enum/-spider actually asked for them.
+func printTable(w io.Writer, results []protocols.Finding, reports map[string]shareReport, showShares bool, cm colorout.Mode) {
 	for _, f := range results {
 		if f.Err != "" {
 			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymFailure, f.Err, false))
 			continue
 		}
 		switch f.Kind {
-		case KindAnonymousLogin, KindLoginOK:
-			msg := f.Detail
-			if up := f.Cred.UserPass(); up != "" {
-				msg = up + " " + msg
+		case KindFingerprint:
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymInfo, f.Detail, false))
+		case KindShares:
+			if showShares {
+				fmt.Fprintln(w, f.Line("smb", cm, protocols.SymInfo, f.Detail, false))
 			}
+		case KindAnonymousLogin, KindLoginOK:
 			pwned := f.Kind == KindLoginOK && adminShareReadable(reports[f.Target.String()])
-			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymSuccess, msg, pwned))
+			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymSuccess, f.Cred.CredText(), pwned))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("smb", cm, protocols.SymFailure, f.Detail, false))
 		default:

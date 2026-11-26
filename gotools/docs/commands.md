@@ -853,19 +853,19 @@ claim. This is unaffected by `-json`, which keeps its own one-line-per-result
 machine-readable shape.
 
 ```bash
-srt ftp -l hosts.txt                                # anonymous-login check + root listing
+srt ftp -l hosts.txt -list                          # anonymous-login check + root listing
 srt smb -l hosts.txt -u administrator -H <nthash>   # pass-the-hash: fingerprint, share enum, local SAM
 srt smb -l dc01.corp.local -u alice -p pw -d CORP.LOCAL -k    # Kerberos bind (needs the DC's hostname, not its IP)
 srt ldap -l hosts.txt -u svc-acct -p '' -d CORP      # simple bind as svc-acct@CORP + RootDSE + AD enum
 srt telnet -l hosts.txt -u root -p toor             # banner/no-auth-shell check, then try a login
 srt ssh -l hosts.txt -u deploy -key ~/.ssh/id_ed25519   # key auth check, no shell opened
-srt mssql -l hosts.txt -u sa -p '' -json            # SQL-auth login check + version/database list
+srt mssql -l hosts.txt -u sa -p '' -json -enum      # SQL-auth login check + version/database list
 srt mssql -l hosts.txt -u administrator -p pw -d CORP   # NTLM/Windows auth (any "DOMAIN\user" triggers it)
 srt vnc -l hosts.txt -p mypassword                  # no-auth check, then the given password
 srt rdp -l hosts.txt                                # security-layer fingerprint only, never logs in
 ```
 
-**`ldap`'s authenticated enumeration** (`-enum`, on by default) runs after
+**`ldap`'s authenticated enumeration** (`-enum`, off by default — opt in) runs after
 any successful bind: a bulk user search reduced to AS-REP roastable
 accounts (`userAccountControl`'s `DONT_REQ_PREAUTH` bit), membership in a
 well-known high-value group (Domain/Enterprise/Schema Admins,
@@ -889,8 +889,14 @@ pass-the-hash over Kerberos — `ldap`'s Kerberos support still can't do
 that. With neither `-p` nor `-H`, `-k` here also authenticates straight from
 `$KRB5CCNAME` (pass-the-ticket) with no extra code needed — `go-smb`'s own
 Kerberos client checks that variable itself before ever asking for a
-password; the `srt shell`'s `krb5` built-in sets it for you. **`-local-enum`**
-(on by default) additionally lists the target's
+password; the `srt shell`'s `krb5` built-in sets it for you. A successful
+session is always two lines, netexec-style: `[*]` the fingerprint (OS/name/
+domain/dialect/signing, with `(null session)` folded in when that's what got
+in) then a bare `[+] user:pass` (or `[+] (anonymous)`) line — no share or
+enumeration text crammed into either. **`-shares`** (off by default — opt
+in) prints the per-share listing, both the one-line summary and the
+expanded per-share table, for a target where a session actually got in.
+**`-local-enum`** (off by default — opt in) additionally lists the target's
 *local* (non-domain) SAM users and local Administrators-alias membership
 over MS-SAMR — the same DCE/RPC machinery as the share list, just a
 different pipe; tried regardless of which credential got the session in,
@@ -919,9 +925,12 @@ It never opens a shell or runs a command.
 is SQL Server authentication; `-u` combined with `-d` becomes
 `"DOMAIN\user"`, which activates the driver's own NTLM provider
 automatically (no extra flag). `-H` isn't supported — the NTLM provider
-takes a password only. A successful login is followed by `SELECT
-@@VERSION` and a bounded `sys.databases` list — read-only; `xp_cmdshell`
-and every other execution-capable stored procedure are never called.
+takes a password only. A successful login is always followed by a `[*]`
+`SELECT @@VERSION` banner line, then a bare `[+] user:pass` (`(Pwn3d!)` if
+`IS_SRVROLEMEMBER('sysadmin')` confirms it); **`-enum`** (off by default —
+opt in) adds a third `[*]` line with a bounded `sys.databases` list — all
+read-only; `xp_cmdshell` and every other execution-capable stored
+procedure are never called.
 
 **`vnc`** is a small hand-rolled RFB (RFC 6143) client — no maintained Go
 VNC library exists. It understands exactly the two security types every

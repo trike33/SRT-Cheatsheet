@@ -57,6 +57,7 @@ const (
 	KindAnonymousLogin = "anonymous-login" // anonymous login accepted
 	KindLoginOK        = "login-ok"        // a given -u/-p/-H credential was accepted
 	KindLoginFailed    = "login-failed"    // every given credential (and anonymous) was rejected
+	KindRootListing    = "root-listing"    // a successful login's root-directory listing -- only printed with -list, always stored
 )
 
 func Run(args []string) error {
@@ -66,6 +67,7 @@ func Run(args []string) error {
 			{Title: "INPUT", Names: []string{"l", "from", "where"}},
 			{Title: "CREDENTIALS", Names: []string{"u", "p", "H", "d", "local-auth", "k"}},
 			{Title: "CONNECTION", Names: []string{"port", "timeout", "c"}},
+			{Title: "ENUMERATION", Names: []string{"list"}},
 			{Title: "OUTPUT", Names: []string{"o", "json", "color"}},
 		})
 	}
@@ -74,6 +76,7 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 20, "concurrent connections")
+	showList := fs.Bool("list", false, "after a successful login, print the root-directory listing -- off by default, opt in")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
@@ -106,7 +109,7 @@ func Run(args []string) error {
 	}
 
 	attempts := creds.Attempts()
-	results := make([]protocols.Finding, len(targets))
+	perTarget := make([][]protocols.Finding, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, *concurrency))
 	for i, t := range targets {
@@ -115,10 +118,15 @@ func Run(args []string) error {
 		go func(i int, t protocols.Target) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(t, attempts, *conn.Timeout)
+			perTarget[i] = probe(t, attempts, *conn.Timeout)
 		}(i, t)
 	}
 	wg.Wait()
+
+	var results []protocols.Finding
+	for _, fs := range perTarget {
+		results = append(results, fs...)
+	}
 
 	for _, f := range results {
 		store.CurrentSink().Add(f.Record("ftp"))
@@ -137,7 +145,7 @@ func Run(args []string) error {
 		}
 		return nil
 	}
-	printTable(w, results, cm)
+	printTable(w, results, *showList, cm)
 	return nil
 }
 
@@ -145,8 +153,10 @@ func Run(args []string) error {
 // connection in order (anonymous first, unless -u was given -- see
 // protocols.Creds.Attempts), stopping at the first that logs in. A
 // successful login is followed by a read-only root-directory listing;
-// nothing is ever written, deleted or renamed.
-func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) protocols.Finding {
+// nothing is ever written, deleted or renamed. The listing is its own
+// Finding (KindRootListing), separate from the plain "[+] user:pass"
+// login line -- see Run's -list flag.
+func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Duration) []protocols.Finding {
 	// A custom DialFunc, not DialWithNetConn: the control connection is
 	// only the first of possibly several the library opens -- NameList
 	// (and List, were Phase 2 to add it) opens a second, separate data
@@ -169,7 +179,7 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		ftplib.DialWithTimeout(timeout),
 		ftplib.DialWithShutTimeout(timeout))
 	if err != nil {
-		return protocols.Finding{Target: t, Err: err.Error()}
+		return []protocols.Finding{{Target: t, Err: err.Error()}}
 	}
 	defer c.Quit()
 
@@ -183,22 +193,25 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 			lastErr = err
 			continue
 		}
-		detail := "login accepted"
-		if names, lerr := c.NameList(""); lerr == nil {
-			detail = fmt.Sprintf("login accepted; root listing: %s", summarizeNames(names))
-		}
 		kind := KindLoginOK
 		if cr.IsAnonymous() {
 			kind = KindAnonymousLogin
 		}
-		return protocols.Finding{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Detail: detail, Accepted: true}
+		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: protocols.High, Accepted: true}}
+		if names, lerr := c.NameList(""); lerr == nil {
+			findings = append(findings, protocols.Finding{
+				Target: t, Cred: cr, Kind: KindRootListing, Severity: protocols.Info,
+				Detail: "root listing: " + summarizeNames(names),
+			})
+		}
+		return findings
 	}
 
 	detail := "every login attempt was rejected"
 	if lastErr != nil {
 		detail = "rejected: " + lastErr.Error()
 	}
-	return protocols.Finding{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}
+	return []protocols.Finding{{Target: t, Kind: KindLoginFailed, Severity: protocols.Info, Detail: detail}}
 }
 
 // summarizeNames renders a root listing compactly for a Finding's
@@ -225,8 +238,10 @@ func summarizeNames(names []string) string {
 // style (see protocols.Finding.Line), not a table: "FTP  host  port
 // hostname  [symbol] message". ftp never marks a line "(Pwn3d!)" --
 // unlike a shell (ssh/telnet) or a desktop (vnc), read/write file
-// access alone isn't the same access-level claim.
-func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
+// access alone isn't the same access-level claim. A successful login is
+// a bare "[+] user:pass" (or "[+] (anonymous)") line; the root-directory
+// listing is its own [*] line, shown only with -list.
+func printTable(w io.Writer, results []protocols.Finding, showList bool, cm colorout.Mode) {
 	for _, f := range results {
 		if f.Err != "" {
 			fmt.Fprintln(w, f.Line("ftp", cm, protocols.SymFailure, f.Err, false))
@@ -234,11 +249,11 @@ func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 		}
 		switch f.Kind {
 		case KindAnonymousLogin, KindLoginOK:
-			msg := f.Detail
-			if up := f.Cred.UserPass(); up != "" {
-				msg = up + " " + msg
+			fmt.Fprintln(w, f.Line("ftp", cm, protocols.SymSuccess, f.Cred.CredText(), false))
+		case KindRootListing:
+			if showList {
+				fmt.Fprintln(w, f.Line("ftp", cm, protocols.SymInfo, f.Detail, false))
 			}
-			fmt.Fprintln(w, f.Line("ftp", cm, protocols.SymSuccess, msg, false))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("ftp", cm, protocols.SymFailure, f.Detail, false))
 		default:

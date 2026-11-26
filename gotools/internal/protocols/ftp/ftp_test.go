@@ -120,7 +120,11 @@ func TestProbeAnonymousLoginWithListing(t *testing.T) {
 		return user == "anonymous"
 	}, []string{"readme.txt", "pub", "incoming"})
 
-	f := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 3*time.Second)
+	fs := probe(target(t, addr), []protocols.Credential{protocols.Anonymous}, 3*time.Second)
+	if len(fs) != 2 {
+		t.Fatalf("len(fs) = %d, want 2 (login + root listing), got %+v", len(fs), fs)
+	}
+	f := fs[0]
 	if f.Err != "" {
 		t.Fatalf("unexpected error: %s", f.Err)
 	}
@@ -130,9 +134,13 @@ func TestProbeAnonymousLoginWithListing(t *testing.T) {
 	if f.Severity != protocols.High {
 		t.Errorf("Severity = %q, want %q", f.Severity, protocols.High)
 	}
+	listing := fs[1]
+	if listing.Kind != KindRootListing {
+		t.Fatalf("fs[1].Kind = %q, want %q", listing.Kind, KindRootListing)
+	}
 	for _, name := range []string{"readme.txt", "pub", "incoming"} {
-		if !strings.Contains(f.Detail, name) {
-			t.Errorf("Detail = %q, want it to mention %q", f.Detail, name)
+		if !strings.Contains(listing.Detail, name) {
+			t.Errorf("Detail = %q, want it to mention %q", listing.Detail, name)
 		}
 	}
 }
@@ -143,7 +151,8 @@ func TestProbeAnonymousRejectedThenCredsAccepted(t *testing.T) {
 	}, []string{"home"})
 
 	creds := []protocols.Credential{protocols.Anonymous, {User: "alice", Password: "s3cret"}}
-	f := probe(target(t, addr), creds, 3*time.Second)
+	fs := probe(target(t, addr), creds, 3*time.Second)
+	f := fs[0]
 	if f.Kind != KindLoginOK {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginOK, f.Detail, f.Err)
 	}
@@ -156,7 +165,8 @@ func TestProbeEveryLoginRejected(t *testing.T) {
 	addr := fakeFTPServer(t, func(user, pass string) bool { return false }, nil)
 
 	creds := []protocols.Credential{protocols.Anonymous, {User: "alice", Password: "wrong"}}
-	f := probe(target(t, addr), creds, 3*time.Second)
+	fs := probe(target(t, addr), creds, 3*time.Second)
+	f := fs[0]
 	if f.Kind != KindLoginFailed {
 		t.Fatalf("Kind = %q, want %q (detail=%q err=%q)", f.Kind, KindLoginFailed, f.Detail, f.Err)
 	}
@@ -167,9 +177,9 @@ func TestProbeEveryLoginRejected(t *testing.T) {
 
 func TestProbeConnectionRefused(t *testing.T) {
 	tg := protocols.Target{Host: "127.0.0.1", Port: 1}
-	f := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
-	if f.Err == "" {
-		t.Fatalf("expected a connection error, got Finding %+v", f)
+	fs := probe(tg, []protocols.Credential{protocols.Anonymous}, 300*time.Millisecond)
+	if len(fs) != 1 || fs[0].Err == "" {
+		t.Fatalf("expected a single Finding with a connection error, got %+v", fs)
 	}
 }
 

@@ -58,9 +58,10 @@ var rootDSEAttrs = []string{"namingContexts", "defaultNamingContext", "dnsHostNa
 
 // Finding kinds this package reports.
 const (
-	KindAnonymousBind      = "anonymous-bind"          // an anonymous bind (empty DN + empty password) was accepted
-	KindLoginOK            = "login-ok"                // a given -u/-p, -H or -k credential was accepted
-	KindLoginFailed        = "login-failed"            // every given credential (and anonymous) was rejected
+	KindRootDSE            = "rootdse"                  // the RootDSE banner (naming context/server info), independent of which credential (if any) got in
+	KindAnonymousBind      = "anonymous-bind"           // an anonymous bind (empty DN + empty password) was accepted
+	KindLoginOK            = "login-ok"                 // a given -u/-p, -H or -k credential was accepted
+	KindLoginFailed        = "login-failed"             // every given credential (and anonymous) was rejected
 	KindDomainUsers        = "domain-users"             // a bulk user search succeeded
 	KindASREPRoastable     = "asrep-roastable"          // account(s) with Kerberos pre-authentication disabled
 	KindPrivilegedMembers  = "privileged-group-members" // member(s) of a well-known high-value AD group
@@ -100,7 +101,7 @@ func Run(args []string) error {
 	creds := protocols.BindCreds(fs)
 	conn := protocols.BindConn(fs, DefaultPort, 10*time.Second)
 	concurrency := fs.Int("c", 20, "concurrent connections")
-	enum := fs.Bool("enum", true, "after a successful bind, also run authenticated AD enumeration (AS-REP roastable accounts, privileged-group members, password policy) -- read-only LDAP searches")
+	enum := fs.Bool("enum", false, "after a successful bind, also run authenticated AD enumeration (AS-REP roastable accounts, privileged-group members, password policy) -- read-only LDAP searches, off by default, opt in")
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
@@ -210,7 +211,10 @@ func probe(t protocols.Target, attempts []protocols.Credential, timeout time.Dur
 		case cr.Kerberos:
 			sev = protocols.High // confirms a usable cleartext credential over Kerberos specifically
 		}
-		findings := []protocols.Finding{{Target: t, Cred: cr, Kind: kind, Severity: sev, Detail: dse.String(), Accepted: true}}
+		findings := []protocols.Finding{
+			{Target: t, Kind: KindRootDSE, Severity: protocols.Info, Detail: dse.String()},
+			{Target: t, Cred: cr, Kind: kind, Severity: sev, Accepted: true},
+		}
 
 		if enum {
 			if base := dse.baseDN(); base != "" {
@@ -560,7 +564,11 @@ func orDash(s string) string {
 // [symbol] message". ldap never marks a line "(Pwn3d!)": even a
 // privileged-looking bind is read access to directory data, not the
 // shell/admin-share/desktop access claim the protocols that do use
-// Pwn3d are making.
+// Pwn3d are making. A successful bind is two lines: [*] KindRootDSE
+// (naming context/server info, independent of the credential) followed
+// by a bare "[+] user:pass" (or "[+] (anonymous)") line. Deeper AD
+// enumeration (KindDomainUsers, KindASREPRoastable, ...) only exists at
+// all with -enum, and prints as its own [*] line same as today.
 func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 	for _, f := range results {
 		if f.Err != "" {
@@ -569,11 +577,7 @@ func printTable(w io.Writer, results []protocols.Finding, cm colorout.Mode) {
 		}
 		switch f.Kind {
 		case KindAnonymousBind, KindLoginOK:
-			msg := f.Detail
-			if up := f.Cred.UserPass(); up != "" {
-				msg = up + " " + msg
-			}
-			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymSuccess, msg, false))
+			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymSuccess, f.Cred.CredText(), false))
 		case KindLoginFailed:
 			fmt.Fprintln(w, f.Line("ldap", cm, protocols.SymFailure, f.Detail, false))
 		default:
