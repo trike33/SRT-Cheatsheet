@@ -93,7 +93,7 @@ func Run(args []string) error {
 	}
 	defer ioutil.StartHeartbeat("mssql")()
 
-	lines, _, err := fb.Resolve(*in, fs.Args())
+	lines, _, err := protocols.ResolveTargets(fb, *in, fs.Args())
 	if err != nil {
 		return err
 	}

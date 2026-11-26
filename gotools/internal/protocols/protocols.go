@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -359,4 +360,23 @@ func BindConn(fs *flag.FlagSet, defaultPort int, defaultTimeout time.Duration) *
 		Port:    fs.Int("port", defaultPort, "override the protocol's default port"),
 		Timeout: fs.Duration("timeout", defaultTimeout, "per-connection timeout"),
 	}
+}
+
+// ResolveTargets is fb.Resolve with one addition: when -l isn't given and
+// the positional args aren't an existing file, they're taken as targets
+// themselves (`srt smb 10.0.0.5 10.0.0.6:4455`), the way netexec takes
+// them. A single arg that names a file still reads as a target list.
+func ResolveTargets(fb *store.InputFallback, flagValue string, positional []string) ([]string, string, error) {
+	if flagValue == "" && len(positional) > 0 {
+		if _, err := os.Stat(positional[0]); err != nil && os.IsNotExist(err) {
+			var lines []string
+			for _, p := range positional {
+				if p = strings.TrimSpace(p); p != "" {
+					lines = append(lines, p)
+				}
+			}
+			return lines, "", nil
+		}
+	}
+	return fb.Resolve(flagValue, positional)
 }

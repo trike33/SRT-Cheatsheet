@@ -88,7 +88,7 @@ func Run(args []string) error {
 	cm := colorout.ParseMode(*colorFlag)
 	defer ioutil.StartHeartbeat("vnc")()
 
-	lines, _, err := fb.Resolve(*in, fs.Args())
+	lines, _, err := protocols.ResolveTargets(fb, *in, fs.Args())
 	if err != nil {
 		return err
 	}
