@@ -77,6 +77,7 @@ func Run(args []string) error {
 	out := fs.String("o", "", "output file (default: stdout)")
 	jsonOut := fs.Bool("json", false, "emit JSON lines instead of a table")
 	colorFlag := fs.String("color", "auto", "color the output: auto|always|never (ignored with -json)")
+	args = cli.ReorderArgs(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
