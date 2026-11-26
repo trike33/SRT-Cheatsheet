@@ -294,14 +294,20 @@ func BindCreds(fs *flag.FlagSet) *Creds {
 }
 
 // Attempts resolves the bound flags into the credential attempts a probe
-// should try, in order: always Anonymous first (so a pure anonymous run
-// needs no flags at all), then one Credential per -u, paired
-// positionally with -p/-H (a -u with neither is tried with an empty
-// password, not skipped -- "-u alone" means "this account, blank
-// password", matching -p ''). Dangling -p/-H entries past the last -u are
-// ignored with a warning from the caller (see WarnDangling).
+// should try, in order: one Credential per -u first, paired positionally
+// with -p/-H (a -u with neither is tried with an empty password, not
+// skipped -- "-u alone" means "this account, blank password", matching
+// -p ''), then Anonymous last. Dangling -p/-H entries past the last -u
+// are ignored with a warning from the caller (see WarnDangling).
+//
+// Anonymous goes last, not first, because every probe stops at the first
+// attempt a session accepts (see e.g. smb's probe): many targets allow a
+// null/anonymous session, and trying it before an explicit -u/-p would
+// let that lesser session win and silently pre-empt the real credential
+// the person actually asked to test. A pure-anonymous run (no -u at all)
+// still gets exactly one attempt, [Anonymous], same as before.
 func (c *Creds) Attempts() []Credential {
-	out := []Credential{Anonymous}
+	var out []Credential
 	for i, u := range c.users {
 		cr := Credential{User: u, Domain: *c.domain, LocalAuth: *c.localAuth, Kerberos: *c.kerberos}
 		if i < len(c.passwords) {
@@ -312,6 +318,7 @@ func (c *Creds) Attempts() []Credential {
 		}
 		out = append(out, cr)
 	}
+	out = append(out, Anonymous)
 	return out
 }
 

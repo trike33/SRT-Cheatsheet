@@ -145,19 +145,23 @@ func TestCredsAttempts(t *testing.T) {
 	}
 	attempts := c.Attempts()
 	if len(attempts) != 3 {
-		t.Fatalf("len(attempts) = %d, want 3 (anonymous + alice + bob)", len(attempts))
+		t.Fatalf("len(attempts) = %d, want 3 (alice + bob + anonymous)", len(attempts))
 	}
-	if !attempts[0].IsAnonymous() {
-		t.Errorf("attempts[0] = %#v, want anonymous first", attempts[0])
-	}
-	if attempts[1].User != "alice" || attempts[1].Password != "pw1" || attempts[1].Domain != "CORP" || attempts[1].Hash != "" {
-		t.Errorf("attempts[1] = %#v, want alice/pw1/CORP, no hash", attempts[1])
+	if attempts[0].User != "alice" || attempts[0].Password != "pw1" || attempts[0].Domain != "CORP" || attempts[0].Hash != "" {
+		t.Errorf("attempts[0] = %#v, want alice/pw1/CORP, no hash", attempts[0])
 	}
 	// -d applies to every credential in the invocation, netexec-style --
 	// one domain per command, not per -u. bob has no -p at index 1, so
 	// his password is empty (tried with a blank password, not skipped).
-	if attempts[2].User != "bob" || attempts[2].Password != "" || attempts[2].Hash != "" || attempts[2].Domain != "CORP" {
-		t.Errorf("attempts[2] = %#v, want bob/CORP, no password or hash", attempts[2])
+	if attempts[1].User != "bob" || attempts[1].Password != "" || attempts[1].Hash != "" || attempts[1].Domain != "CORP" {
+		t.Errorf("attempts[1] = %#v, want bob/CORP, no password or hash", attempts[1])
+	}
+	// Anonymous goes last: an explicit -u/-p is what the person actually
+	// asked to test, and it must get first crack at the session before a
+	// null/anonymous login (which many targets also allow) can win and
+	// pre-empt it.
+	if !attempts[2].IsAnonymous() {
+		t.Errorf("attempts[2] = %#v, want anonymous last", attempts[2])
 	}
 	if !c.HasCreds() {
 		t.Error("HasCreds() = false, want true")
@@ -172,11 +176,11 @@ func TestCredsAttemptsHash(t *testing.T) {
 	}
 	attempts := c.Attempts()
 	if len(attempts) != 2 {
-		t.Fatalf("len(attempts) = %d, want 2 (anonymous + administrator)", len(attempts))
+		t.Fatalf("len(attempts) = %d, want 2 (administrator + anonymous)", len(attempts))
 	}
-	if attempts[1].User != "administrator" || attempts[1].Password != "" ||
-		attempts[1].Hash != "aad3b435b51404eeaad3b435b51404ee:deadbeefdeadbeefdeadbeefdeadbeef" {
-		t.Errorf("attempts[1] = %#v, want administrator with the hash, no password", attempts[1])
+	if attempts[0].User != "administrator" || attempts[0].Password != "" ||
+		attempts[0].Hash != "aad3b435b51404eeaad3b435b51404ee:deadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Errorf("attempts[0] = %#v, want administrator with the hash, no password", attempts[0])
 	}
 }
 
